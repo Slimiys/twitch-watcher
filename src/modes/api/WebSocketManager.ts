@@ -46,6 +46,26 @@ export class WebSocketManager {
   }
 
   /**
+   * Проверяет состояние WebSocket соединения
+   * @returns true если соединение активно, false в противном случае
+   */
+  isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Получает состояние WebSocket соединения
+   * @returns Состояние соединения (OPEN, CONNECTING, CLOSING, CLOSED)
+   */
+  getConnectionState(): string {
+    if (!this.ws) {
+      return 'CLOSED';
+    }
+    const states = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+    return states[this.ws.readyState] || 'UNKNOWN';
+  }
+
+  /**
    * Создает экземпляр WebSocket менеджера
    * @param authToken Токен авторизации
    * @param userId ID пользователя
