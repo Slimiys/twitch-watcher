@@ -173,7 +173,6 @@
   - StreamWatcher
   - GraphQLClient
 - [ ] Интеграционные тесты
-- [ ] E2E тесты для Puppeteer режима
 - [ ] CI/CD интеграция (GitHub Actions)
 
 **Преимущества:**
