@@ -1,0 +1,29 @@
+version: '3.5'
+services:
+  twitch_watcher:
+    build: .
+    restart: always
+    environment:
+      # Обязательные параметры
+      - token=your_auth_token_here
+      - channelsWithPriority=alkaizerx,mathil1
+      
+      # Параметры просмотра (в минутах)
+      - minWatching=15
+      - maxWatching=30
+      
+      # Параметры скриншотов
+      - browserScreenshot=true
+      - screenshotInterval=5
+      
+      # Параметры браузера (опционально)
+      # Путь к Chromium в Docker Alpine (обычно /usr/bin/chromium-browser или /usr/bin/chromium)
+      - exec=/usr/bin/chromium-browser
+      #- userAgent=Mozilla/5.0...
+      #- timeout=30000
+      
+      # Параметры прокси (опционально)
+      #- proxy=127.0.0.1:8080
+      #- proxyAuth=username:password
+    volumes:
+      - "./screenshots:/usr/src/app/screenshots"
