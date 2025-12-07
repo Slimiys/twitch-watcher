@@ -1,6 +1,6 @@
 {
   "name": "twitch-watcher",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Automatic watching Twitch streams",
   "main": "dist/app.js",
   "scripts": {
@@ -13,6 +13,11 @@
     "commitlint": "commitlint --edit"
   },
   "license": "MIT",
+  "author": "Slimiys",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Slimiys/twitch-watcher.git"
+  },
   "dependencies": {
     "cheerio": "^1.0.0-rc.3",
     "dayjs": "^1.8.24",

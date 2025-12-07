@@ -4,6 +4,7 @@
 
 import express, { Express, Request, Response } from 'express';
 import * as path from 'path';
+import * as fs from 'fs';
 import { logger } from '../modes/api/logger';
 
 /**
@@ -61,6 +62,27 @@ export interface StatisticsProvider {
     points: number;
     totalPoints: number;
   }>;
+
+  /**
+   * Получает критические уведомления
+   */
+  getCriticalNotifications(): Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }>;
+
+  /**
+   * Удаляет критическое уведомление
+   */
+  dismissCriticalNotification?(id: string): void;
+
+  /**
+   * Добавляет тестовое критическое уведомление
+   */
+  addTestCriticalNotification?(type: 'error' | 'warning'): void;
 }
 
 /**
@@ -191,6 +213,190 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error getting points history:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для сохраненных сессий просмотра
+    this.app.get('/api/sessions', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        // Получаем StatisticsStorage из провайдера
+        const streamWatcher = this.statisticsProvider as any;
+        const statisticsStorage = streamWatcher.getStatisticsStorage?.();
+        
+        if (!statisticsStorage) {
+          res.status(503).json({ error: 'Statistics storage not available' });
+          return;
+        }
+
+        const streamerName = req.query.streamer as string | undefined;
+        const limit = parseInt(req.query.limit as string) || undefined;
+        const sessions = statisticsStorage.getSessions(streamerName, limit);
+        
+        res.json(sessions);
+      } catch (error: any) {
+        logger.error('Error getting sessions:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для критических уведомлений
+    this.app.get('/api/critical-notifications', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notifications = this.statisticsProvider.getCriticalNotifications();
+        res.json(notifications);
+      } catch (error: any) {
+        logger.error('Error getting critical notifications:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для агрегированной статистики
+    this.app.get('/api/aggregated-stats', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const statisticsStorage = streamWatcher.getStatisticsStorage?.();
+        
+        if (!statisticsStorage) {
+          res.status(503).json({ error: 'Statistics storage not available' });
+          return;
+        }
+
+        const period = (req.query.period as 'day' | 'week' | 'month') || 'day';
+        const startDate = req.query.startDate ? parseInt(req.query.startDate as string) : undefined;
+        const stats = statisticsStorage.getAggregatedStatistics(period, startDate);
+        
+        res.json(stats);
+      } catch (error: any) {
+        logger.error('Error getting aggregated stats:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для закрытия критических уведомлений
+    this.app.post('/api/critical-notifications/:id/dismiss', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notificationId = req.params.id;
+        if (this.statisticsProvider.dismissCriticalNotification) {
+          this.statisticsProvider.dismissCriticalNotification(notificationId);
+          res.json({ success: true });
+        } else {
+          res.status(501).json({ error: 'Dismiss functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error dismissing notification:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для экспорта в CSV
+    this.app.get('/api/export/csv', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const statisticsStorage = streamWatcher.getStatisticsStorage?.();
+        
+        if (!statisticsStorage) {
+          res.status(503).json({ error: 'Statistics storage not available' });
+          return;
+        }
+
+        const streamerName = req.query.streamer as string | undefined;
+        const filePath = statisticsStorage.exportToCSV(undefined, streamerName);
+        
+        // Проверяем, что файл существует
+        if (!fs.existsSync(filePath)) {
+          res.status(404).json({ error: 'Export file not found' });
+          return;
+        }
+
+        const fileName = path.basename(filePath);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+        
+        fileStream.on('error', (err: any) => {
+          logger.error('Error streaming CSV file:', err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to stream CSV file' });
+          }
+        });
+      } catch (error: any) {
+        logger.error('Error exporting to CSV:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message || 'Unknown error' });
+        }
+      }
+    });
+
+    // API для экспорта в JSON
+    this.app.get('/api/export/json', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const statisticsStorage = streamWatcher.getStatisticsStorage?.();
+        
+        if (!statisticsStorage) {
+          res.status(503).json({ error: 'Statistics storage not available' });
+          return;
+        }
+
+        const streamerName = req.query.streamer as string | undefined;
+        const filePath = statisticsStorage.exportToJSON(undefined, streamerName);
+        
+        // Проверяем, что файл существует
+        if (!fs.existsSync(filePath)) {
+          res.status(404).json({ error: 'Export file not found' });
+          return;
+        }
+
+        const fileName = path.basename(filePath);
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+        
+        fileStream.on('error', (err: any) => {
+          logger.error('Error streaming JSON file:', err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to stream JSON file' });
+          }
+        });
+      } catch (error: any) {
+        logger.error('Error exporting to JSON:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message || 'Unknown error' });
+        }
       }
     });
 

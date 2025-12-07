@@ -130,6 +130,26 @@ export interface WatchStatistics {
 }
 
 /**
+ * Информация о токене из валидации Twitch API
+ */
+export interface TokenInfo {
+  client_id: string;
+  login?: string;
+  scopes?: string[];
+  user_id: string;
+  expires_in?: number; // Время истечения в секундах (если указано)
+}
+
+/**
+ * Результат валидации токена
+ */
+export interface TokenValidationResult {
+  isValid: boolean;
+  tokenInfo?: TokenInfo;
+  expiresAt?: number; // Timestamp когда токен истечет (если известен)
+}
+
+/**
  * Конфигурация retry механизмов
  */
 export interface RetryConfig {
@@ -148,5 +168,42 @@ export interface RetryConfig {
     initialDelayMs: number;
     maxDelayMs: number;
   };
+}
+
+/**
+ * Сессия просмотра стримера
+ */
+export interface WatchSession {
+  id: string; // Уникальный ID сессии
+  streamerName: string; // Имя стримера
+  startTime: number; // Время начала просмотра (timestamp)
+  endTime: number | null; // Время окончания просмотра (timestamp, null если сессия активна)
+  initialChannelPoints: number; // Начальные баллы канала
+  finalChannelPoints: number | null; // Конечные баллы канала (null если сессия активна)
+  pointsEarned: number; // Количество заработанных баллов
+  duration: number; // Длительность просмотра в миллисекундах
+  status: 'completed' | 'interrupted' | 'active'; // Статус сессии
+  game?: string | null; // Игра стримера
+  title?: string | null; // Название стрима
+}
+
+/**
+ * Агрегированная статистика
+ */
+export interface AggregatedStatistics {
+  period: 'day' | 'week' | 'month'; // Период агрегации
+  startDate: number; // Начало периода (timestamp)
+  endDate: number; // Конец периода (timestamp)
+  totalSessions: number; // Общее количество сессий
+  totalPointsEarned: number; // Общее количество заработанных баллов
+  totalWatchTime: number; // Общее время просмотра в миллисекундах
+  averagePointsPerSession: number; // Среднее количество баллов за сессию
+  averageSessionDuration: number; // Средняя длительность сессии в миллисекундах
+  streamers: Array<{
+    streamerName: string;
+    sessions: number;
+    pointsEarned: number;
+    watchTime: number;
+  }>; // Статистика по стримерам
 }
 
