@@ -306,6 +306,92 @@
             background: #5c16c5;
         }
 
+        .critical-notifications {
+            margin-bottom: 20px;
+        }
+
+        .critical-notification {
+            background: #1f1f23;
+            border-left: 4px solid #ef4444;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .critical-notification.warning {
+            border-left-color: #f59e0b;
+        }
+
+        .critical-notification.error {
+            border-left-color: #ef4444;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .critical-notification-content {
+            flex: 1;
+        }
+
+        .critical-notification-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #efeff1;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .critical-notification.warning .critical-notification-title {
+            color: #f59e0b;
+        }
+
+        .critical-notification.error .critical-notification-title {
+            color: #ef4444;
+        }
+
+        .critical-notification-message {
+            font-size: 14px;
+            color: #adadb8;
+            line-height: 1.5;
+        }
+
+        .critical-notification-dismiss {
+            background: transparent;
+            border: none;
+            color: #adadb8;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .critical-notification-dismiss:hover {
+            background: #26262c;
+            color: #efeff1;
+        }
+
         .update-interval-control {
             display: flex;
             align-items: center;
@@ -492,6 +578,11 @@
                 <div class="value" id="lastActivity">-</div>
                 <div class="label">Time ago</div>
             </div>
+        </div>
+
+        <!-- Критические уведомления -->
+        <div id="criticalNotifications" class="critical-notifications" style="display: none;">
+            <!-- Уведомления будут добавлены динамически -->
         </div>
 
         <div class="section">
@@ -993,8 +1084,53 @@
                 updateOverallStats(),
                 updateStatistics(),
                 updateEvents(),
-                updatePointsChart()
+                updatePointsChart(),
+                updateCriticalNotifications()
             ]);
+        }
+
+        async function updateCriticalNotifications() {
+            const notifications = await fetchData('/critical-notifications');
+            if (!notifications) return;
+
+            const container = document.getElementById('criticalNotifications');
+            if (!container) return;
+
+            if (notifications.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            container.innerHTML = notifications.map(notif => `
+                <div class="critical-notification ${notif.type}" data-id="${notif.id}">
+                    <div class="critical-notification-content">
+                        <div class="critical-notification-title">
+                            ${notif.type === 'error' ? '❌' : '⚠️'}
+                            ${notif.title}
+                        </div>
+                        <div class="critical-notification-message">
+                            ${notif.message}
+                        </div>
+                    </div>
+                    <button class="critical-notification-dismiss" onclick="dismissNotification('${notif.id}')" title="Dismiss">
+                        ×
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        async function dismissNotification(id) {
+            try {
+                const response = await fetch(`${API_BASE}/critical-notifications/${id}/dismiss`, {
+                    method: 'POST',
+                });
+                if (response.ok) {
+                    updateCriticalNotifications();
+                }
+            } catch (error) {
+                console.error('Error dismissing notification:', error);
+            }
         }
 
         function setUpdateInterval(seconds) {
