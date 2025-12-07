@@ -5,7 +5,6 @@
 import { TokenValidationResult } from './types';
 import { logger } from './logger';
 import { TwitchAPI } from './TwitchAPI';
-import * as notifier from 'node-notifier';
 
 /**
  * Обработчик событий токена
@@ -119,15 +118,9 @@ export class TokenManager {
 
       if (!result.isValid) {
         logger.warn('⚠️  Token validation failed - token is invalid');
-        if (this.config.enableNotifications) {
-          this.sendNotification(
-            'Token Invalid',
-            'Your Twitch token is invalid. Please update it in config.json or .env file.',
-            'error'
-          );
-          if (this.eventHandlers.onTokenInvalid) {
-            this.eventHandlers.onTokenInvalid();
-          }
+        // Критическое уведомление - токен невалиден
+        if (this.eventHandlers.onTokenInvalid) {
+          this.eventHandlers.onTokenInvalid();
         }
         return;
       }
@@ -142,15 +135,9 @@ export class TokenManager {
       const now = Date.now();
       if (result.expiresAt <= now) {
         logger.error('❌  Token has expired!');
-        if (this.config.enableNotifications) {
-          this.sendNotification(
-            'Token Expired',
-            'Your Twitch token has expired. Please update it in config.json or .env file.',
-            'error'
-          );
-          if (this.eventHandlers.onTokenExpired) {
-            this.eventHandlers.onTokenExpired();
-          }
+        // Критическое уведомление - токен истек
+        if (this.eventHandlers.onTokenExpired) {
+          this.eventHandlers.onTokenExpired();
         }
         return;
       }
@@ -159,25 +146,8 @@ export class TokenManager {
       const minutesRemaining = Math.floor((result.expiresAt - now) / 1000 / 60);
       const warningThreshold = this.config.warningThresholdMinutes;
 
-      if (minutesRemaining <= warningThreshold && this.config.enableNotifications) {
-        const hoursRemaining = Math.floor(minutesRemaining / 60);
-        const minutesPart = minutesRemaining % 60;
-        const timeText = hoursRemaining > 0 
-          ? `${hoursRemaining}h ${minutesPart}m`
-          : `${minutesRemaining}m`;
-        
-        this.sendNotification(
-          'Token Expiring Soon',
-          `Your Twitch token will expire in ${timeText}. Please update it soon.`,
-          'warning'
-        );
-        
-        if (this.eventHandlers.onTokenExpiringSoon) {
-          this.eventHandlers.onTokenExpiringSoon(result.expiresAt, minutesRemaining);
-        }
-      } else {
-        logger.verbose(`✅  Token is valid (expires in ${minutesRemaining} minutes)`);
-      }
+      // Не показываем предупреждения о скором истечении - только критические уведомления
+      logger.verbose(`✅  Token is valid (expires in ${minutesRemaining} minutes)`);
     } catch (error: any) {
       logger.error(`❌  Error checking token: ${error.message || error}`);
     }
@@ -199,24 +169,5 @@ export class TokenManager {
     return await this.twitchAPI.validateTokenWithInfo();
   }
 
-  /**
-   * Отправляет уведомление через node-notifier
-   * @param title Заголовок уведомления
-   * @param message Текст уведомления
-   * @param type Тип уведомления
-   */
-  private sendNotification(title: string, message: string, type: 'info' | 'warning' | 'error'): void {
-    try {
-      notifier.notify({
-        title: `Twitch Watcher - ${title}`,
-        message: message,
-        sound: type === 'error',
-        wait: false,
-      });
-      logger.info(`📢  Notification sent: ${title} - ${message}`);
-    } catch (error: any) {
-      logger.warn(`⚠️  Failed to send notification: ${error.message || error}`);
-    }
-  }
 }
 
