@@ -32,7 +32,7 @@ function askQuestion(rl: readline.Interface, question: string, isPassword: boole
 /**
  * Функция для интерактивного запроса данных авторизации
  * Поддерживает вставку текста через Ctrl+V в Windows
- * @returns Промис с данными для входа (токен и путь к исполняемому файлу)
+ * @returns Промис с данными для входа (токен)
  */
 export const askLogin = async (): Promise<LoginInput> => {
   const rl = createReadlineInterface();
@@ -42,7 +42,6 @@ export const askLogin = async (): Promise<LoginInput> => {
     console.log('💡 Подсказка: Вы можете вставить текст через Ctrl+V (или правой кнопкой мыши)\n');
     
     let token = '';
-    let exec = '';
     
     // Запрос токена
     while (!token) {
@@ -52,24 +51,7 @@ export const askLogin = async (): Promise<LoginInput> => {
       }
     }
     
-    // Запрос пути к браузеру с путем по умолчанию для Windows
-    const defaultPath = process.platform === 'win32' 
-      ? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-      : '/usr/bin/chromium-browser';
-    
-    const execPrompt = process.platform === 'win32'
-      ? `Enter the browser executable path [${defaultPath}]: `
-      : `Enter the chromium executable path (usually /usr/bin/chromium-browser or /usr/bin/chromium) [${defaultPath}]: `;
-    
-    exec = await askQuestion(rl, execPrompt);
-    
-    // Если пользователь не ввел путь, используем путь по умолчанию
-    if (!exec) {
-      exec = defaultPath;
-      console.log(`✅ Using default path: ${exec}`);
-    }
-    
-    return { token, exec };
+    return { token };
   } finally {
     rl.close();
   }

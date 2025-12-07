@@ -1,11 +1,8 @@
-import { Browser, Page } from 'puppeteer-core';
-
 /**
  * Интерфейс конфигурации приложения
  */
 export interface AppConfig {
   token: string;
-  exec: string;
 }
 
 /**
@@ -13,15 +10,6 @@ export interface AppConfig {
  */
 export interface LoginInput {
   token: string;
-  exec: string;
-}
-
-/**
- * Интерфейс для результата создания браузера
- */
-export interface BrowserSpawn {
-  browser: Browser;
-  page: Page;
 }
 
 /**
