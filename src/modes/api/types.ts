@@ -150,3 +150,40 @@ export interface RetryConfig {
   };
 }
 
+/**
+ * Сессия просмотра стримера
+ */
+export interface WatchSession {
+  id: string; // Уникальный ID сессии
+  streamerName: string; // Имя стримера
+  startTime: number; // Время начала просмотра (timestamp)
+  endTime: number | null; // Время окончания просмотра (timestamp, null если сессия активна)
+  initialChannelPoints: number; // Начальные баллы канала
+  finalChannelPoints: number | null; // Конечные баллы канала (null если сессия активна)
+  pointsEarned: number; // Количество заработанных баллов
+  duration: number; // Длительность просмотра в миллисекундах
+  status: 'completed' | 'interrupted' | 'active'; // Статус сессии
+  game?: string | null; // Игра стримера
+  title?: string | null; // Название стрима
+}
+
+/**
+ * Агрегированная статистика
+ */
+export interface AggregatedStatistics {
+  period: 'day' | 'week' | 'month'; // Период агрегации
+  startDate: number; // Начало периода (timestamp)
+  endDate: number; // Конец периода (timestamp)
+  totalSessions: number; // Общее количество сессий
+  totalPointsEarned: number; // Общее количество заработанных баллов
+  totalWatchTime: number; // Общее время просмотра в миллисекундах
+  averagePointsPerSession: number; // Среднее количество баллов за сессию
+  averageSessionDuration: number; // Средняя длительность сессии в миллисекундах
+  streamers: Array<{
+    streamerName: string;
+    sessions: number;
+    pointsEarned: number;
+    watchTime: number;
+  }>; // Статистика по стримерам
+}
+
