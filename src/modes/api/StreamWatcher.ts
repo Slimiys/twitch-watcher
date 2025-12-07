@@ -12,6 +12,8 @@ import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
 import { GQL_URL, CLIENT_ID } from './constants';
 import { WebServer, StatisticsProvider } from '../../web';
+import { StatisticsStorage } from './StatisticsStorage';
+import { loadStatisticsConfig } from './configLoader';
 
 /**
  * Менеджер просмотра стримов
@@ -44,6 +46,8 @@ export class StreamWatcher {
     totalPoints: number;
   }> = [];
   private maxPointsHistory: number = 1000;
+  private statisticsStorage: StatisticsStorage | null = null;
+  private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -71,6 +75,15 @@ export class StreamWatcher {
     }
     
     logger.verbose(`📊  Max simultaneous channels: ${this.maxSimultaneousChannels}`);
+    
+    // Инициализируем модуль сохранения статистики
+    try {
+      const statsConfig = loadStatisticsConfig();
+      this.statisticsStorage = new StatisticsStorage(statsConfig);
+      logger.verbose(`📊  Statistics storage initialized`);
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
+    }
   }
 
   /**
@@ -106,6 +119,12 @@ export class StreamWatcher {
           const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
           this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
+          // Обновляем активную сессию
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
+            this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
+          }
+          
           // Добавляем в историю баллов
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
@@ -122,13 +141,24 @@ export class StreamWatcher {
             this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
           }
         },
-        onStreamUp: (streamerInfo) => {
+        onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
           streamerInfo.startTime = Date.now();
           this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
           // Получаем начальные баллы
-          this.updateInitialPoints(streamerInfo);
+          await this.updateInitialPoints(streamerInfo);
+          
+          // Создаем сессию просмотра для статистики
+          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+          }
           
           // Добавляем начальную точку в историю баллов
           const stats = this.getStatistics();
@@ -138,6 +168,14 @@ export class StreamWatcher {
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
           this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
+          
+          // Завершаем сессию просмотра
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId) {
+            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            this.activeSessions.delete(streamerInfo.username);
+          }
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
           logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
@@ -204,6 +242,20 @@ export class StreamWatcher {
       this.statsInterval = null;
     }
 
+    // Завершаем все активные сессии как прерванные
+    if (this.statisticsStorage) {
+      for (const [streamerName, sessionId] of this.activeSessions.entries()) {
+        const streamerInfo = this.streamers.get(streamerName);
+        if (streamerInfo) {
+          const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+          this.statisticsStorage.endSession(sessionId, finalPoints, 'interrupted');
+        }
+      }
+      this.activeSessions.clear();
+      this.statisticsStorage.save();
+      logger.verbose(`💾  All active sessions saved`);
+    }
+
     if (this.wsManager) {
       this.wsManager.stop();
       this.wsManager = null;
@@ -236,6 +288,17 @@ export class StreamWatcher {
 
           if (streamerInfo.isOnline) {
             logger.info(`✅  [${username}] Initialized - ONLINE`);
+            
+            // Создаем сессию для стримера, который уже онлайн при инициализации
+            if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+              const sessionId = this.statisticsStorage.createSession(
+                streamerInfo.username,
+                streamerInfo.initialChannelPoints,
+                streamerInfo.game,
+                streamerInfo.title
+              );
+              this.activeSessions.set(streamerInfo.username, sessionId);
+            }
           } else {
             logger.info(`😴  [${username}] Initialized - OFFLINE`);
           }
@@ -532,6 +595,17 @@ export class StreamWatcher {
             logger.warn(`⚠️  [${streamerInfo.username}] Failed to update initial points: ${error.message || error}`);
           }
           
+          // Создаем сессию просмотра для статистики
+          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+          }
+          
           // Добавляем начальную точку в историю баллов
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
@@ -539,6 +613,14 @@ export class StreamWatcher {
         } else if (wasOnline && !streamerInfo.isOnline) {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+          
+          // Завершаем сессию просмотра
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId) {
+            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            this.activeSessions.delete(streamerInfo.username);
+          }
         }
       } catch (error: any) {
         // Graceful degradation: при ошибке проверки статуса изолируем этого стримера и продолжаем с остальными
@@ -802,6 +884,14 @@ export class StreamWatcher {
     totalPoints: number;
   }> {
     return [...this.pointsHistory]; // Хронологический порядок
+  }
+
+  /**
+   * Получает модуль сохранения статистики
+   * @returns StatisticsStorage или null
+   */
+  getStatisticsStorage(): StatisticsStorage | null {
+    return this.statisticsStorage;
   }
 }
 
