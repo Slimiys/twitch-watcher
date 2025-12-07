@@ -10,6 +10,7 @@ import { formatElapsedTime } from './utils';
 import { logger } from './logger';
 import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
+import { GQL_URL, CLIENT_ID } from './constants';
 
 /**
  * Менеджер просмотра стримов
@@ -449,20 +450,21 @@ export class StreamWatcher {
       },
       checkAPI: async () => {
         try {
-          // Простая проверка доступности Twitch API
-          const response = await fetch('https://api.twitch.tv/helix/', {
-            method: 'GET',
+          // Проверяем доступность через GraphQL endpoint (который реально используется приложением)
+          const response = await fetch(GQL_URL, {
+            method: 'HEAD',
             headers: {
-              'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+              'Client-ID': CLIENT_ID,
             },
           });
 
           return {
             status: response.ok ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
-            message: `Twitch API status: ${response.status}`,
+            message: `Twitch GraphQL API status: ${response.status}`,
             lastCheck: Date.now(),
             details: {
-              statusCode: response.status
+              statusCode: response.status,
+              endpoint: 'gql.twitch.tv'
             }
           };
         } catch (error: any) {
