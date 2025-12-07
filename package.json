@@ -19,7 +19,6 @@
     "dotenv": "^8.2.0",
     "express": "^5.2.1",
     "node-notifier": "^10.0.1",
-    "puppeteer-core": "^2.1.1",
     "tree-kill": "^1.2.2",
     "ws": "^8.18.0"
   },
