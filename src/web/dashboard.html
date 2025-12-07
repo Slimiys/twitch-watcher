@@ -731,6 +731,36 @@
             return date.toLocaleTimeString();
         }
 
+        /**
+         * Генерирует детерминированный цвет на основе текста
+         * @param {string} text Текст для генерации цвета
+         * @returns {string} Цвет в формате HSL для использования в CSS
+         */
+        function generateColorFromText(text) {
+            // Простая хеш-функция для преобразования текста в число
+            let hash = 0;
+            for (let i = 0; i < text.length; i++) {
+                const char = text.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Преобразуем в 32-битное число
+            }
+            
+            // Используем абсолютное значение хеша
+            hash = Math.abs(hash);
+            
+            // Генерируем HSL значения
+            // Hue: 0-360 (полный спектр цветов)
+            const hue = hash % 360;
+            
+            // Saturation: 50-80% (достаточно насыщенные, но не слишком яркие)
+            const saturation = 50 + (hash % 30);
+            
+            // Lightness: 35-50% (темные, но читаемые цвета)
+            const lightness = 35 + (hash % 15);
+            
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        }
+
         async function fetchData(endpoint) {
             try {
                 const response = await fetch(`${API_BASE}${endpoint}`);
@@ -1126,12 +1156,21 @@
                                  event.type.includes('stream') ? 'event-type-stream' :
                                  event.type.includes('claim') ? 'event-type-claim' : '';
                 
+                // Если нет специального класса, генерируем цвет на основе типа события
+                let styleAttr = '';
+                if (!typeClass) {
+                    const bgColor = generateColorFromText(event.type);
+                    // Определяем цвет текста на основе яркости фона
+                    const textColor = '#ffffff'; // Белый текст для темных фонов
+                    styleAttr = `style="background: ${bgColor}; color: ${textColor};"`;
+                }
+                
                 const isNew = newEvents.some(ne => ne.timestamp === event.timestamp && ne.streamer === event.streamer);
                 
                 return `
                     <div class="event-item ${isNew ? 'new' : ''}" data-timestamp="${event.timestamp}">
                         <span class="event-time">${formatTimestamp(event.timestamp)}</span>
-                        <span class="event-type ${typeClass}">${event.type}</span>
+                        <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
                         <strong>${event.streamer}</strong>: ${event.message}
                     </div>
                 `;
