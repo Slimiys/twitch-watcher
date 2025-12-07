@@ -100,7 +100,11 @@ export class StreamWatcher {
       const eventHandlers: WebSocketEventHandler = {
         onPointsEarned: (streamerInfo, points, reason) => {
           logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
-          this.addEvent('points-earned', streamerInfo.username, `Earned ${points} points (${reason})`);
+          
+          // Используем разные типы событий в зависимости от причины
+          // CLAIM должен иметь свой тег, остальные - points-earned
+          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
           // Добавляем в историю баллов
           const stats = this.getStatistics();
