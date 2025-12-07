@@ -11,6 +11,7 @@ import { logger } from './logger';
 import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
 import { GQL_URL, CLIENT_ID } from './constants';
+import { WebServer, StatisticsProvider } from '../../web';
 
 /**
  * Менеджер просмотра стримов
@@ -28,6 +29,21 @@ export class StreamWatcher {
   private validatedUserId: string | null = null;
   private maxSimultaneousChannels: number;
   private healthCheckServer: HealthCheckServer | null = null;
+  private webServer: WebServer | null = null;
+  private eventsHistory: Array<{
+    timestamp: number;
+    type: string;
+    streamer: string;
+    message: string;
+  }> = [];
+  private maxEventsHistory: number = 1000;
+  private pointsHistory: Array<{
+    timestamp: number;
+    streamer: string;
+    points: number;
+    totalPoints: number;
+  }> = [];
+  private maxPointsHistory: number = 1000;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -84,33 +100,50 @@ export class StreamWatcher {
       const eventHandlers: WebSocketEventHandler = {
         onPointsEarned: (streamerInfo, points, reason) => {
           logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+          this.addEvent('points-earned', streamerInfo.username, `Earned ${points} points (${reason})`);
+          
+          // Добавляем в историю баллов
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, points, totalPoints);
         },
         onClaimAvailable: async (streamerInfo, claimId) => {
           logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
           const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
           if (success) {
             logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+            this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
           } else {
             logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
+            this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
           }
         },
         onStreamUp: (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
           streamerInfo.startTime = Date.now();
+          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
           // Получаем начальные баллы
           this.updateInitialPoints(streamerInfo);
+          
+          // Добавляем начальную точку в историю баллов
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
           logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
           const success = await graphqlClient.joinRaid(raidId);
           if (success) {
             logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
+            this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
           } else {
             logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
+            this.addEvent('raid-failed', streamerInfo.username, `Failed to join raid to ${targetLogin}`);
           }
         },
       };
@@ -137,9 +170,18 @@ export class StreamWatcher {
 
     // Запускаем периодическую статистику
     this.startStatistics();
+    
+    // Добавляем начальные точки в историю баллов для всех онлайн стримеров
+    // Используем setTimeout чтобы дать время на инициализацию стримеров
+    setTimeout(() => {
+      this.initializePointsHistory();
+    }, 2000);
 
     // Запускаем health check server
     this.startHealthCheckServer();
+    
+    // Запускаем веб-сервер
+    this.startWebServer();
   }
 
   /**
@@ -346,20 +388,25 @@ export class StreamWatcher {
 
   /**
    * Получает статистику просмотра
+   * @param includeOffline Включать ли офлайн стримеров (по умолчанию false для обратной совместимости)
    * @returns Массив статистики
    */
-  private getStatistics(): WatchStatistics[] {
+  getStatistics(includeOffline: boolean = false): WatchStatistics[] {
     const stats: WatchStatistics[] = [];
 
     for (const streamerInfo of this.streamers.values()) {
-      if (!streamerInfo.isOnline || streamerInfo.startTime === 0) {
+      // Если не включаем офлайн, пропускаем офлайн стримеров
+      if (!includeOffline && (!streamerInfo.isOnline || streamerInfo.startTime === 0)) {
         continue;
       }
 
-      const elapsed = Date.now() - streamerInfo.startTime;
+      // Для офлайн стримеров используем 0 для elapsedTime и pointsEarned
+      const elapsed = streamerInfo.isOnline && streamerInfo.startTime > 0 
+        ? Date.now() - streamerInfo.startTime 
+        : 0;
+      
       let pointsEarned = 0;
-
-      if (streamerInfo.initialChannelPoints !== null && streamerInfo.lastChannelPoints !== null) {
+      if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.lastChannelPoints !== null) {
         pointsEarned = streamerInfo.lastChannelPoints - streamerInfo.initialChannelPoints;
       }
 
@@ -412,6 +459,11 @@ export class StreamWatcher {
         logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
         streamerInfo.startTime = Date.now();
         await this.updateInitialPoints(streamerInfo);
+        
+        // Добавляем начальную точку в историю баллов
+        const stats = this.getStatistics();
+        const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+        this.addPointsHistory(streamerInfo.username, 0, totalPoints);
       } else if (wasOnline && !streamerInfo.isOnline) {
         // Стример перешел из онлайн в офлайн
         logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
@@ -537,6 +589,142 @@ export class StreamWatcher {
 
     this.healthCheckServer = new HealthCheckServer(port, providers);
     this.healthCheckServer.start();
+  }
+
+  /**
+   * Запускает веб-сервер для dashboard
+   */
+  private startWebServer(): void {
+    const port = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
+    
+    this.webServer = new WebServer(port);
+    this.webServer.setStatisticsProvider(this);
+    this.webServer.start();
+  }
+
+  /**
+   * Добавляет событие в историю
+   * @param type Тип события
+   * @param streamer Имя стримера
+   * @param message Сообщение
+   */
+  private addEvent(type: string, streamer: string, message: string): void {
+    this.eventsHistory.push({
+      timestamp: Date.now(),
+      type,
+      streamer,
+      message
+    });
+
+    // Ограничиваем размер истории
+    if (this.eventsHistory.length > this.maxEventsHistory) {
+      this.eventsHistory.shift();
+    }
+  }
+
+  /**
+   * Добавляет запись в историю баллов
+   * @param streamer Имя стримера
+   * @param points Количество заработанных баллов
+   * @param totalPoints Общее количество заработанных баллов
+   */
+  private addPointsHistory(streamer: string, points: number, totalPoints: number): void {
+    this.pointsHistory.push({
+      timestamp: Date.now(),
+      streamer,
+      points,
+      totalPoints
+    });
+
+    // Ограничиваем размер истории
+    if (this.pointsHistory.length > this.maxPointsHistory) {
+      this.pointsHistory.shift();
+    }
+  }
+
+  /**
+   * Инициализирует начальные точки в истории баллов для всех онлайн стримеров
+   */
+  private initializePointsHistory(): void {
+    const stats = this.getStatistics();
+    const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+    
+    // Добавляем начальную точку для каждого активного стримера
+    for (const stat of stats) {
+      this.addPointsHistory(stat.streamerName, 0, totalPoints);
+    }
+    
+    // Если нет активных стримеров, добавляем общую точку
+    if (stats.length === 0) {
+      this.addPointsHistory('system', 0, 0);
+    }
+  }
+
+  // Реализация интерфейса StatisticsProvider
+
+  /**
+   * Получает информацию о всех стримерах (реализация StatisticsProvider)
+   */
+  getStreamersInfo(): Array<{
+    username: string;
+    isOnline: boolean;
+    channelPoints: number;
+    startTime: number;
+  }> {
+    return Array.from(this.streamers.values()).map(s => ({
+      username: s.username,
+      isOnline: s.isOnline,
+      channelPoints: s.channelPoints,
+      startTime: s.startTime
+    }));
+  }
+
+  /**
+   * Получает общую статистику (реализация StatisticsProvider)
+   */
+  getOverallStats(): {
+    activeWatches: number;
+    totalPointsEarned: number;
+    lastActivity: number;
+    streamersCount: number;
+  } {
+    // Для общей статистики используем только активные просмотры
+    const stats = this.getStatistics(false);
+    const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+    const lastActivity = stats.length > 0 
+      ? Math.max(...stats.map(s => s.elapsedTime))
+      : 0;
+
+    return {
+      activeWatches: stats.length,
+      totalPointsEarned,
+      lastActivity,
+      streamersCount: this.streamers.size
+    };
+  }
+
+  /**
+   * Получает историю событий (реализация StatisticsProvider)
+   */
+  getEventsHistory(): Array<{
+    timestamp: number;
+    type: string;
+    streamer: string;
+    message: string;
+  }> {
+    return [...this.eventsHistory].reverse(); // Новые события первыми
+  }
+
+  /**
+   * Получает историю баллов (реализация StatisticsProvider)
+   */
+  getPointsHistory(): Array<{
+    timestamp: number;
+    streamer: string;
+    points: number;
+    totalPoints: number;
+  }> {
+    return [...this.pointsHistory]; // Хронологический порядок
   }
 }
 
