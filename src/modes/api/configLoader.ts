@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import { RetryConfig } from './types';
+import { StatisticsStorageConfig } from './StatisticsStorage';
 
 /**
  * Загружает конфигурацию retry из config.json
@@ -41,6 +42,39 @@ export function loadRetryConfig(): RetryConfig {
       initialDelayMs: 1000,
       maxDelayMs: 60000,
     },
+  };
+}
+
+/**
+ * Загружает конфигурацию статистики из config.json
+ * @returns Конфигурация статистики или значения по умолчанию
+ */
+export function loadStatisticsConfig(): StatisticsStorageConfig {
+  const configPath = './config.json';
+  
+  try {
+    if (fs.existsSync(configPath)) {
+      const configFile = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      
+      if (configFile.statistics) {
+        return {
+          storagePath: configFile.statistics.storagePath || './statistics',
+          format: configFile.statistics.format || 'json',
+          rotationDays: configFile.statistics.rotationDays ?? 30,
+          autoSave: configFile.statistics.autoSave !== false,
+        };
+      }
+    }
+  } catch (error) {
+    // Игнорируем ошибки загрузки, используем значения по умолчанию
+  }
+  
+  // Значения по умолчанию
+  return {
+    storagePath: './statistics',
+    format: 'json',
+    rotationDays: 30,
+    autoSave: true,
   };
 }
 
