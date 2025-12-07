@@ -130,6 +130,26 @@ export interface WatchStatistics {
 }
 
 /**
+ * Информация о токене из валидации Twitch API
+ */
+export interface TokenInfo {
+  client_id: string;
+  login?: string;
+  scopes?: string[];
+  user_id: string;
+  expires_in?: number; // Время истечения в секундах (если указано)
+}
+
+/**
+ * Результат валидации токена
+ */
+export interface TokenValidationResult {
+  isValid: boolean;
+  tokenInfo?: TokenInfo;
+  expiresAt?: number; // Timestamp когда токен истечет (если известен)
+}
+
+/**
  * Конфигурация retry механизмов
  */
 export interface RetryConfig {
