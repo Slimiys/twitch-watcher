@@ -31,7 +31,7 @@ export interface HealthReport {
   status: 'healthy' | 'unhealthy' | 'degraded';
   timestamp: number;
   uptime: number;
-  mode: 'api' | 'puppeteer' | 'unknown';
+  mode: 'api' | 'unknown';
   components: {
     websocket?: ComponentHealth;
     api?: ComponentHealth;
@@ -54,7 +54,7 @@ export interface HealthCheckProviders {
   checkToken?: () => Promise<ComponentHealth>;
   checkWatching?: () => Promise<ComponentHealth>;
   getMetrics?: () => Promise<Record<string, any>>;
-  getMode?: () => 'api' | 'puppeteer' | 'unknown';
+  getMode?: () => 'api' | 'unknown';
 }
 
 /**
