@@ -394,9 +394,14 @@ docker-compose up -d
 # Проверить текущие переменные окружения контейнера
 docker-compose exec twitch_watcher env | grep -E "token|channelsWithPriority|minWatching"
 
-# Или посмотреть конфигурацию
+# Или посмотреть конфигурацию (показывает все переменные, включая из .env)
 docker-compose config
+
+# Проверить, что .env файл загружается правильно
+docker-compose config | grep -E "token|channelsWithPriority"
 ```
+
+**Примечание:** Команда `docker-compose config` показывает финальную конфигурацию со всеми подставленными значениями из `.env` файла. Это полезно для проверки, что переменные загружаются корректно перед запуском контейнера.
 
 ## Скриншоты
 
