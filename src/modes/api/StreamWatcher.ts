@@ -12,6 +12,7 @@ import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
 import { GQL_URL, CLIENT_ID } from './constants';
 import { WebServer, StatisticsProvider } from '../../web';
+import { TokenManager, TokenManagerConfig } from './TokenManager';
 
 /**
  * Менеджер просмотра стримов
@@ -44,6 +45,7 @@ export class StreamWatcher {
     totalPoints: number;
   }> = [];
   private maxPointsHistory: number = 1000;
+  private tokenManager: TokenManager | null = null;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -71,6 +73,41 @@ export class StreamWatcher {
     }
     
     logger.verbose(`📊  Max simultaneous channels: ${this.maxSimultaneousChannels}`);
+    
+    // Инициализируем TokenManager для отслеживания истечения токена
+    try {
+      const tokenManagerConfig: TokenManagerConfig = {
+        checkIntervalMs: process.env.TOKEN_CHECK_INTERVAL_MS 
+          ? parseInt(process.env.TOKEN_CHECK_INTERVAL_MS, 10) 
+          : 5 * 60 * 1000, // 5 минут по умолчанию
+        warningThresholdMinutes: process.env.TOKEN_WARNING_THRESHOLD_MINUTES
+          ? parseInt(process.env.TOKEN_WARNING_THRESHOLD_MINUTES, 10)
+          : 60, // 60 минут по умолчанию
+        enableNotifications: process.env.TOKEN_NOTIFICATIONS_ENABLED !== 'false',
+      };
+
+      this.tokenManager = new TokenManager(
+        this.twitchAPI,
+        tokenManagerConfig,
+        {
+          onTokenExpiringSoon: (expiresAt, minutesRemaining) => {
+            logger.warn(`⚠️  Token will expire in ${minutesRemaining} minutes (at ${new Date(expiresAt).toLocaleString()})`);
+            this.addEvent('token-warning', 'system', `Token expires in ${minutesRemaining} minutes`);
+          },
+          onTokenExpired: () => {
+            logger.error('❌  Token has expired! Application may stop working.');
+            this.addEvent('token-expired', 'system', 'Token has expired - please update it');
+          },
+          onTokenInvalid: () => {
+            logger.error('❌  Token is invalid! Application may stop working.');
+            this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
+          },
+        }
+      );
+      logger.verbose(`🔐  TokenManager initialized`);
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to initialize TokenManager: ${error.message || error}`);
+    }
   }
 
   /**
@@ -175,6 +212,11 @@ export class StreamWatcher {
     // Запускаем периодическую статистику
     this.startStatistics();
     
+    // Запускаем TokenManager для отслеживания истечения токена
+    if (this.tokenManager) {
+      this.tokenManager.start();
+    }
+    
     // Добавляем начальные точки в историю баллов для всех онлайн стримеров
     // Используем setTimeout чтобы дать время на инициализацию стримеров
     setTimeout(() => {
@@ -212,6 +254,11 @@ export class StreamWatcher {
     if (this.healthCheckServer) {
       this.healthCheckServer.stop();
       this.healthCheckServer = null;
+    }
+
+    if (this.tokenManager) {
+      this.tokenManager.stop();
+      this.tokenManager = null;
     }
 
     logger.info('🛑 API mode watcher stopped');
