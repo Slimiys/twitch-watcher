@@ -474,8 +474,10 @@
         const API_BASE = '/api';
         let pointsChart = null;
         let updateInterval = null;
-        let showOffline = true; // По умолчанию показываем всех стримеров
-        let updateIntervalMs = 5000; // Интервал обновления в миллисекундах (по умолчанию 5 секунд)
+        
+        // Загружаем состояние из localStorage или используем значения по умолчанию
+        let showOffline = localStorage.getItem('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
+        let updateIntervalMs = parseInt(localStorage.getItem('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
 
         function formatTime(ms) {
             if (ms < 0) return '-';
@@ -831,6 +833,9 @@
         function setUpdateInterval(seconds) {
             updateIntervalMs = seconds * 1000;
             
+            // Сохраняем интервал в localStorage
+            localStorage.setItem('updateIntervalMs', updateIntervalMs.toString());
+            
             // Обновляем активную кнопку
             document.querySelectorAll('.interval-btn').forEach(btn => {
                 btn.classList.remove('active');
@@ -856,6 +861,10 @@
 
         function toggleOfflineStreamers() {
             showOffline = !showOffline;
+            
+            // Сохраняем состояние в localStorage
+            localStorage.setItem('showOffline', showOffline.toString());
+            
             const toggleBtn = document.getElementById('toggleOfflineBtn');
             const toggleText = document.getElementById('toggleOfflineText');
             
@@ -870,6 +879,21 @@
         }
 
         window.addEventListener('load', () => {
+            // Восстанавливаем состояние кнопки показа/скрытия офлайн стримеров
+            const toggleText = document.getElementById('toggleOfflineText');
+            if (toggleText) {
+                toggleText.textContent = showOffline ? 'Hide Offline' : 'Show Offline';
+            }
+            
+            // Восстанавливаем активную кнопку интервала обновления
+            const savedIntervalSeconds = updateIntervalMs / 1000;
+            document.querySelectorAll('.interval-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (parseInt(btn.dataset.interval) === savedIntervalSeconds) {
+                    btn.classList.add('active');
+                }
+            });
+            
             startAutoUpdate();
             
             // Добавляем обработчик для кнопки переключения офлайн стримеров
