@@ -451,20 +451,32 @@ export class StreamWatcher {
       checkAPI: async () => {
         try {
           // Проверяем доступность через GraphQL endpoint (который реально используется приложением)
+          // GraphQL требует POST запросы, но для проверки доступности можно использовать простой запрос
+          // Или проверять, что сервер отвечает (даже 405 означает, что сервер доступен)
           const response = await fetch(GQL_URL, {
-            method: 'HEAD',
+            method: 'POST',
             headers: {
               'Client-ID': CLIENT_ID,
+              'Content-Type': 'application/json',
             },
+            body: JSON.stringify({ query: '{ __typename }' }), // Минимальный GraphQL запрос
           });
 
+          // 200 - успешный ответ (API работает)
+          // 400/401 - сервер доступен, но запрос неверный (это нормально для проверки доступности)
+          // 405 - метод не поддерживается (но сервер доступен)
+          // 500+ - проблемы с сервером
+          // Любой ответ кроме сетевой ошибки означает, что API доступен
+          const isAvailable = response.status < 500 || response.status === 405;
+          
           return {
-            status: response.ok ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
+            status: isAvailable ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
             message: `Twitch GraphQL API status: ${response.status}`,
             lastCheck: Date.now(),
             details: {
               statusCode: response.status,
-              endpoint: 'gql.twitch.tv'
+              endpoint: 'gql.twitch.tv',
+              available: isAvailable
             }
           };
         } catch (error: any) {
