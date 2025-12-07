@@ -605,8 +605,12 @@
             setTimeout(() => table.classList.remove('updating'), 300);
         }
 
+        let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
+
         async function updatePointsChart() {
             const history = await fetchData('/points-history?limit=200');
+            pointsHistoryCache = history || []; // Сохраняем в кэш для tooltip
+            
             if (!history || history.length === 0) {
                 // Если истории нет, показываем пустой график
                 if (pointsChart) {
@@ -627,13 +631,21 @@
                 }
                 streamersMap.get(entry.streamer).push({
                     x: new Date(entry.timestamp),
-                    y: entry.points
+                    y: entry.points,
+                    totalPoints: entry.totalPoints
                 });
             });
             
-            // Сортируем данные по времени для каждого стримера
+            // Сортируем данные по времени для каждого стримера и вычисляем накопленную сумму
             streamersMap.forEach((data, streamer) => {
                 data.sort((a, b) => a.x.getTime() - b.x.getTime());
+                
+                // Вычисляем накопленную сумму баллов для каждого стримера
+                let accumulatedPoints = 0;
+                data.forEach(point => {
+                    accumulatedPoints += point.y;
+                    point.y = accumulatedPoints; // Заменяем на накопленную сумму
+                });
             });
 
             // Создаем цвета для каждого стримера
@@ -695,7 +707,18 @@
                                         return date.toLocaleTimeString();
                                     },
                                     label: function(context) {
-                                        return `${context.dataset.label}: +${context.parsed.y} points`;
+                                        const pointIndex = context.dataIndex;
+                                        const dataset = context.dataset;
+                                        const dataPoint = dataset.data[pointIndex];
+                                        
+                                        // Находим исходное значение points для этого события
+                                        const historyEntry = pointsHistoryCache.find(e => 
+                                            e.streamer === dataset.label && 
+                                            Math.abs(new Date(e.timestamp).getTime() - dataPoint.x.getTime()) < 1000
+                                        );
+                                        
+                                        const pointsGained = historyEntry ? historyEntry.points : 0;
+                                        return `${dataset.label}: ${context.parsed.y} total (+${pointsGained} this time)`;
                                     }
                                 }
                             }
@@ -738,7 +761,7 @@
                                 },
                                 title: {
                                     display: true,
-                                    text: 'Points Earned',
+                                    text: 'Total Points Earned',
                                     color: '#adadb8'
                                 },
                                 beginAtZero: true
