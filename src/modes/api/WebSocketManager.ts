@@ -7,6 +7,7 @@ import { StreamerInfo, PointsEarnedMessage, ClaimAvailableMessage, VideoPlayback
 import { WEBSOCKET_URL, PUBSUB_TOPICS } from './constants';
 import { GraphQLClient } from './GraphQLClient';
 import { logger } from './logger';
+import { loadRetryConfig } from './configLoader';
 
 /**
  * Обработчик событий WebSocket
@@ -30,8 +31,10 @@ export class WebSocketManager {
   private streamers: Map<string, StreamerInfo> = new Map();
   private eventHandlers: WebSocketEventHandler;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 5000; // 5 секунд
+  private maxReconnectAttempts: number;
+  private initialReconnectDelay: number;
+  private maxReconnectDelay: number;
+  private reconnectMultiplier: number;
   private isRunning = false;
   private subscribedTopics: Set<string> = new Set(); // Отслеживание подписанных топиков
   private isFirstConnection = true; // Флаг первого подключения
@@ -82,6 +85,37 @@ export class WebSocketManager {
     this.userId = userId;
     this.graphqlClient = graphqlClient;
     this.eventHandlers = eventHandlers;
+    
+    // Загружаем конфигурацию retry для WebSocket
+    const retryConfig = loadRetryConfig();
+    const wsConfig = retryConfig.websocket || {
+      maxReconnectAttempts: 10,
+      initialDelayMs: 1000,
+      maxDelayMs: 60000,
+    };
+    
+    this.maxReconnectAttempts = wsConfig.maxReconnectAttempts;
+    this.initialReconnectDelay = wsConfig.initialDelayMs;
+    this.maxReconnectDelay = wsConfig.maxDelayMs;
+    this.reconnectMultiplier = 2; // Экспоненциальный множитель
+  }
+  
+  /**
+   * Вычисляет задержку для переподключения с экспоненциальным backoff
+   * @param attemptNumber Номер попытки (начиная с 1)
+   * @returns Задержка в миллисекундах
+   */
+  private calculateReconnectDelay(attemptNumber: number): number {
+    // Экспоненциальная задержка: initialDelay * (multiplier ^ (attemptNumber - 1))
+    const exponentialDelay = this.initialReconnectDelay * Math.pow(this.reconnectMultiplier, attemptNumber - 1);
+    
+    // Ограничиваем максимальной задержкой
+    const delay = Math.min(exponentialDelay, this.maxReconnectDelay);
+    
+    // Добавляем jitter (случайную задержку до 20% от основной задержки)
+    const jitterAmount = delay * 0.2 * Math.random();
+    
+    return Math.floor(delay + jitterAmount);
   }
 
   /**
@@ -205,10 +239,11 @@ export class WebSocketManager {
           
           if (this.isRunning && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            logger.info(`🔄  Reconnecting WebSocket (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-            setTimeout(() => this.connect(), this.reconnectDelay);
+            const delay = this.calculateReconnectDelay(this.reconnectAttempts);
+            logger.info(`🔄  Reconnecting WebSocket (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}) через ${Math.floor(delay)}ms...`);
+            setTimeout(() => this.connect(), delay);
           } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            logger.error('❌  Max reconnection attempts reached');
+            logger.error(`❌  Max reconnection attempts (${this.maxReconnectAttempts}) reached`);
             this.isRunning = false;
           }
         });

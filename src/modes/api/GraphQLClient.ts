@@ -5,6 +5,10 @@
 import { GraphQLOperation, GraphQLResponse } from './types';
 import { GQL_URL, CLIENT_ID } from './constants';
 import { logger } from './logger';
+import { retryWithExponentialBackoff, RetryConfig } from './retry';
+import { CircuitBreaker } from './CircuitBreaker';
+import { loadRetryConfig } from './configLoader';
+import { shouldRetry } from './errorUtils';
 
 /**
  * Клиент для выполнения GraphQL запросов к Twitch
@@ -12,6 +16,8 @@ import { logger } from './logger';
 export class GraphQLClient {
   private authToken: string;
   private userAgent: string;
+  private circuitBreaker: CircuitBreaker;
+  private retryConfig: RetryConfig;
 
   /**
    * Создает экземпляр GraphQL клиента
@@ -21,64 +27,108 @@ export class GraphQLClient {
   constructor(authToken: string, userAgent: string) {
     this.authToken = authToken;
     this.userAgent = userAgent;
+    
+    // Загружаем конфигурацию retry
+    const config = loadRetryConfig();
+    this.retryConfig = config;
+    
+    // Создаем Circuit Breaker для защиты от каскадных сбоев
+    const cbConfig = config.circuitBreaker || {
+      failureThreshold: 5,
+      resetTimeoutMs: 30000,
+      halfOpenMaxAttempts: 1,
+    };
+    this.circuitBreaker = new CircuitBreaker('GraphQL', cbConfig);
   }
 
   /**
-   * Выполняет GraphQL запрос
+   * Выполняет GraphQL запрос с retry и Circuit Breaker
    * @param operation GraphQL операция
    * @returns Ответ от сервера
    */
   async postRequest(operation: GraphQLOperation): Promise<GraphQLResponse> {
-    try {
-      const response = await fetch(GQL_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `OAuth ${this.authToken}`,
-          'Client-Id': CLIENT_ID,
-          'User-Agent': this.userAgent,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(operation),
-      });
+    // Используем Circuit Breaker для защиты от каскадных сбоев
+    return this.circuitBreaker.execute(async () => {
+      // Используем retry с экспоненциальной задержкой
+      return retryWithExponentialBackoff(
+        async () => {
+          const response = await fetch(GQL_URL, {
+            method: 'POST',
+            headers: {
+              'Authorization': `OAuth ${this.authToken}`,
+              'Client-Id': CLIENT_ID,
+              'User-Agent': this.userAgent,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(operation),
+          });
 
-      if (!response.ok) {
-        throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
-      }
+          // Проверяем статус ответа
+          if (!response.ok) {
+            const error: any = new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+            error.status = response.status;
+            error.statusCode = response.status;
+            error.response = response;
+            
+            // Если это не временная ошибка, не повторяем
+            if (!shouldRetry(error, response.status)) {
+              throw error;
+            }
+            
+            throw error;
+          }
 
-      const data = await response.json();
-      
-      // Логируем ошибки из ответа
-      if (data.errors && data.errors.length > 0) {
-        for (const error of data.errors) {
-          // Улучшаем читаемость для конкретных ошибок
-          if (error.message === 'failed integrity check') {
-            // Это нормальная ошибка - бонус уже собран или недоступен
-            // Не логируем как ошибку, так как это обрабатывается в вызывающем коде
-            // Можно логировать только в debug режиме, если нужно
-          } else if (error.message && error.message.includes('service timeout')) {
-            // Service timeout - это нормально при переходе стримера в офлайн, не логируем как ошибку
-          } else {
-            // Для других ошибок выводим полную информацию
-            logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
-            if (error.path && error.path.length > 0) {
-              logger.verbose(`   Path: ${error.path.join(' -> ')}`);
+          const data = await response.json();
+          
+          // Логируем ошибки из ответа
+          if (data.errors && data.errors.length > 0) {
+            for (const error of data.errors) {
+              // Улучшаем читаемость для конкретных ошибок
+              if (error.message === 'failed integrity check') {
+                // Это нормальная ошибка - бонус уже собран или недоступен
+                // Не логируем как ошибку, так как это обрабатывается в вызывающем коде
+                // Можно логировать только в debug режиме, если нужно
+              } else if (error.message && error.message.includes('service timeout')) {
+                // Service timeout - это нормально при переходе стримера в офлайн, не логируем как ошибку
+              } else {
+                // Для других ошибок выводим полную информацию
+                logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
+                if (error.path && error.path.length > 0) {
+                  logger.verbose(`   Path: ${error.path.join(' -> ')}`);
+                }
+              }
             }
           }
-        }
+          
+          // Логируем пустой ответ для отладки
+          if (!data || Object.keys(data).length === 0) {
+            logger.error(`Empty response for ${operation.operationName}. Status: ${response.status}`);
+            const text = await response.text();
+            logger.verbose(`Response text: ${text.substring(0, 500)}`);
+          }
+          
+          return data;
+        },
+        {
+          maxAttempts: this.retryConfig.maxAttempts,
+          initialDelayMs: this.retryConfig.initialDelayMs,
+          maxDelayMs: this.retryConfig.maxDelayMs,
+          multiplier: this.retryConfig.multiplier,
+          jitter: this.retryConfig.jitter,
+        },
+        `GraphQL:${operation.operationName}`
+      );
+    }).catch((error: any) => {
+      // Если Circuit Breaker открыт, логируем это
+      if (error.circuitBreakerOpen) {
+        logger.warn(`⚠️  [GraphQL:${operation.operationName}] Circuit Breaker OPEN, запрос заблокирован`);
+        return {};
       }
       
-      // Логируем пустой ответ для отладки
-      if (!data || Object.keys(data).length === 0) {
-        logger.error(`Empty response for ${operation.operationName}. Status: ${response.status}`);
-        const text = await response.text();
-        logger.verbose(`Response text: ${text.substring(0, 500)}`);
-      }
-      
-      return data;
-    } catch (error: any) {
+      // Для других ошибок логируем и возвращаем пустой ответ
       logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
       return {};
-    }
+    });
   }
 
   /**

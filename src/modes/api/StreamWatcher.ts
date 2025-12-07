@@ -100,7 +100,11 @@ export class StreamWatcher {
       const eventHandlers: WebSocketEventHandler = {
         onPointsEarned: (streamerInfo, points, reason) => {
           logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
-          this.addEvent('points-earned', streamerInfo.username, `Earned ${points} points (${reason})`);
+          
+          // Используем разные типы событий в зависимости от причины
+          // CLAIM должен иметь свой тег, остальные - points-earned
+          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
           // Добавляем в историю баллов
           const stats = this.getStatistics();
@@ -214,28 +218,65 @@ export class StreamWatcher {
   }
 
   /**
-   * Инициализирует стримеров
+   * Инициализирует стримеров с graceful degradation
    */
   private async initializeStreamers(): Promise<void> {
     logger.verbose(`📋  Initializing ${this.priorityChannels.length} streamers...`);
 
     for (const username of this.priorityChannels) {
-      const streamerInfo = await this.twitchAPI.initializeStreamer(username);
-      
-      if (streamerInfo) {
-        this.streamers.set(username, streamerInfo);
+      try {
+        const streamerInfo = await this.twitchAPI.initializeStreamer(username);
         
-        if (this.wsManager) {
-          this.wsManager.addStreamer(streamerInfo);
-        }
+        if (streamerInfo) {
+          this.streamers.set(username, streamerInfo);
+          
+          if (this.wsManager) {
+            this.wsManager.addStreamer(streamerInfo);
+          }
 
-        if (streamerInfo.isOnline) {
-          logger.info(`✅  [${username}] Initialized - ONLINE`);
+          if (streamerInfo.isOnline) {
+            logger.info(`✅  [${username}] Initialized - ONLINE`);
+          } else {
+            logger.info(`😴  [${username}] Initialized - OFFLINE`);
+          }
         } else {
-          logger.info(`😴  [${username}] Initialized - OFFLINE`);
+          // Graceful degradation: создаем базовую запись для стримера, даже если инициализация не удалась
+          logger.warn(`⚠️  [${username}] Failed to initialize, creating fallback entry`);
+          const fallbackStreamerInfo: StreamerInfo = {
+            username,
+            channelId: '',
+            channelPoints: 0,
+            isOnline: false,
+            broadcastId: null,
+            game: null,
+            title: null,
+            tags: [],
+            spadeUrl: null,
+            startTime: 0,
+            initialChannelPoints: null,
+            lastChannelPoints: null,
+          };
+          this.streamers.set(username, fallbackStreamerInfo);
         }
-      } else {
-        logger.error(`❌  [${username}] Failed to initialize`);
+      } catch (error: any) {
+        // Graceful degradation: при ошибке инициализации создаем базовую запись
+        logger.error(`❌  [${username}] Error during initialization: ${error.message || error}`);
+        logger.warn(`⚠️  [${username}] Creating fallback entry, will retry later`);
+        const fallbackStreamerInfo: StreamerInfo = {
+          username,
+          channelId: '',
+          channelPoints: 0,
+          isOnline: false,
+          broadcastId: null,
+          game: null,
+          title: null,
+          tags: [],
+          spadeUrl: null,
+          startTime: 0,
+          initialChannelPoints: null,
+          lastChannelPoints: null,
+        };
+        this.streamers.set(username, fallbackStreamerInfo);
       }
     }
   }
@@ -284,17 +325,28 @@ export class StreamWatcher {
 
     logger.verbose(`📺  Sending minute-watched events for ${onlineStreamers.length} streamer(s): ${onlineStreamers.map(s => s.username).join(', ')}`);
 
-    // Обновляем информацию о стримерах перед отправкой
+    // Обновляем информацию о стримерах перед отправкой с graceful degradation
     for (const streamerInfo of onlineStreamers) {
-      await this.twitchAPI.updateStreamerInfo(streamerInfo);
-      
-      // Если spade_url еще не получен, пытаемся получить его
-      if (!streamerInfo.spadeUrl && streamerInfo.isOnline) {
-        logger.verbose(`🔄  [${streamerInfo.username}] Attempting to get spade_url...`);
-        streamerInfo.spadeUrl = await this.twitchAPI.getSpadeUrl(streamerInfo.username);
-        if (streamerInfo.spadeUrl) {
-          logger.verbose(`✅  [${streamerInfo.username}] Spade URL obtained`);
+      try {
+        await this.twitchAPI.updateStreamerInfo(streamerInfo);
+        
+        // Если spade_url еще не получен, пытаемся получить его
+        if (!streamerInfo.spadeUrl && streamerInfo.isOnline) {
+          logger.verbose(`🔄  [${streamerInfo.username}] Attempting to get spade_url...`);
+          try {
+            streamerInfo.spadeUrl = await this.twitchAPI.getSpadeUrl(streamerInfo.username);
+            if (streamerInfo.spadeUrl) {
+              logger.verbose(`✅  [${streamerInfo.username}] Spade URL obtained`);
+            }
+          } catch (error: any) {
+            // Graceful degradation: если не удалось получить spade_url, продолжаем с остальными стримерами
+            logger.warn(`⚠️  [${streamerInfo.username}] Failed to get spade_url: ${error.message || error}`);
+          }
         }
+      } catch (error: any) {
+        // Graceful degradation: при ошибке обновления информации продолжаем с последними известными данными
+        logger.warn(`⚠️  [${streamerInfo.username}] Failed to update streamer info: ${error.message || error}`);
+        logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known data`);
       }
     }
 
@@ -323,21 +375,29 @@ export class StreamWatcher {
       // Проверяем, что spade_url есть перед отправкой
       if (!streamerInfo.spadeUrl) {
         logger.warn(`⚠️  [${streamerInfo.username}] Spade URL not available, skipping event`);
+        // Graceful degradation: продолжаем с остальными стримерами
         continue;
       }
       
-      const success = await this.twitchAPI.sendMinuteWatched(streamerInfo);
-      
-      if (success) {
-        logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
-      } else {
-        // Если не удалось отправить, возможно стример ушел офлайн
-        // Проверяем статус еще раз
-        if (!streamerInfo.isOnline) {
-          logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
+      try {
+        const success = await this.twitchAPI.sendMinuteWatched(streamerInfo);
+        
+        if (success) {
+          logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
         } else {
-          logger.error(`❌  [${streamerInfo.username}] Failed to send minute watched event`);
+          // Если не удалось отправить, возможно стример ушел офлайн
+          // Проверяем статус еще раз
+          if (!streamerInfo.isOnline) {
+            logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
+          } else {
+            logger.warn(`⚠️  [${streamerInfo.username}] Failed to send minute watched event (will retry next cycle)`);
+            // Graceful degradation: продолжаем с остальными стримерами
+          }
         }
+      } catch (error: any) {
+        // Graceful degradation: при ошибке отправки изолируем этого стримера и продолжаем с остальными
+        logger.error(`❌  [${streamerInfo.username}] Error sending minute watched event: ${error.message || error}`);
+        logger.verbose(`ℹ️  [${streamerInfo.username}] Isolated due to error, continuing with other streamers`);
       }
     }
   }
@@ -361,9 +421,15 @@ export class StreamWatcher {
   private async printStatistics(): Promise<void> {
     // Обновляем статус стримеров перед выводом статистики для актуальности данных
     // Проверяем только онлайн стримеров для оптимизации (офлайн стримеры не нужны в статистике)
+    // Graceful degradation: при ошибках обновления используем последние известные данные
     const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline);
     for (const streamerInfo of onlineStreamers) {
-      await this.twitchAPI.updateStreamerInfo(streamerInfo);
+      try {
+        await this.twitchAPI.updateStreamerInfo(streamerInfo);
+      } catch (error: any) {
+        // Graceful degradation: при ошибке обновления используем последние известные данные
+        logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update for statistics: ${error.message || error}`);
+      }
     }
 
     const stats = this.getStatistics();
@@ -447,26 +513,37 @@ export class StreamWatcher {
   }
 
   /**
-   * Проверяет статус всех стримеров
+   * Проверяет статус всех стримеров с graceful degradation
    */
   private async checkStreamersStatus(): Promise<void> {
     for (const streamerInfo of this.streamers.values()) {
-      const wasOnline = streamerInfo.isOnline;
-      await this.twitchAPI.updateStreamerInfo(streamerInfo);
+      try {
+        const wasOnline = streamerInfo.isOnline;
+        await this.twitchAPI.updateStreamerInfo(streamerInfo);
 
-      if (!wasOnline && streamerInfo.isOnline) {
-        // Стример перешел из офлайн в онлайн
-        logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
-        streamerInfo.startTime = Date.now();
-        await this.updateInitialPoints(streamerInfo);
-        
-        // Добавляем начальную точку в историю баллов
-        const stats = this.getStatistics();
-        const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-        this.addPointsHistory(streamerInfo.username, 0, totalPoints);
-      } else if (wasOnline && !streamerInfo.isOnline) {
-        // Стример перешел из онлайн в офлайн
-        logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+        if (!wasOnline && streamerInfo.isOnline) {
+          // Стример перешел из офлайн в онлайн
+          logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
+          streamerInfo.startTime = Date.now();
+          try {
+            await this.updateInitialPoints(streamerInfo);
+          } catch (error: any) {
+            // Graceful degradation: если не удалось обновить баллы, продолжаем
+            logger.warn(`⚠️  [${streamerInfo.username}] Failed to update initial points: ${error.message || error}`);
+          }
+          
+          // Добавляем начальную точку в историю баллов
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+        } else if (wasOnline && !streamerInfo.isOnline) {
+          // Стример перешел из онлайн в офлайн
+          logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+        }
+      } catch (error: any) {
+        // Graceful degradation: при ошибке проверки статуса изолируем этого стримера и продолжаем с остальными
+        logger.warn(`⚠️  [${streamerInfo.username}] Error checking status: ${error.message || error}`);
+        logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known status`);
       }
     }
   }
