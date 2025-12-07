@@ -4,7 +4,8 @@
   "description": "Automatic watching Twitch streams",
   "main": "dist/app.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy:web",
+    "copy:web": "copyfiles -u 1 src/web/**/*.html src/web/**/*.css src/web/**/*.js dist",
     "start": "node dist/app.js",
     "start:dev": "ts-node src/app.ts",
     "dev": "ts-node src/app.ts",
@@ -16,6 +17,7 @@
     "cheerio": "^1.0.0-rc.3",
     "dayjs": "^1.8.24",
     "dotenv": "^8.2.0",
+    "express": "^5.2.1",
     "node-notifier": "^10.0.1",
     "puppeteer-core": "^2.1.1",
     "tree-kill": "^1.2.2",
@@ -24,9 +26,11 @@
   "devDependencies": {
     "@commitlint/cli": "^18.4.3",
     "@commitlint/config-conventional": "^18.4.3",
+    "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/node-notifier": "^8.0.5",
     "@types/ws": "^8.5.13",
+    "copyfiles": "^2.4.1",
     "husky": "^8.0.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
