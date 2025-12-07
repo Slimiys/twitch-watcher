@@ -6,8 +6,6 @@ services:
     env_file:
       - .env
     environment:
-      # Режим работы: api или puppeteer (по умолчанию puppeteer)
-      - MODE=${MODE:-api}
       - LOG_LEVEL=${LOG_LEVEL:-normal}
       - MAX_SIMULTANEOUS_CHANNELS=${MAX_SIMULTANEOUS_CHANNELS:-2}
 
@@ -21,20 +19,6 @@ services:
       - token=${token}
       - channelsWithPriority=${channelsWithPriority}
       
-      # Параметры просмотра (в минутах) - только для puppeteer режима
-      - minWatching=${minWatching:-15}
-      - maxWatching=${maxWatching:-30}
-      
-      # Параметры скриншотов - только для puppeteer режима
-      - browserScreenshot=${browserScreenshot:-false}
-      - screenshotInterval=${screenshotInterval:-0}
-      
-      # Параметры браузера (опционально) - только для puppeteer режима
-      # Путь к Chromium в Docker Alpine (обычно /usr/bin/chromium-browser или /usr/bin/chromium)
-      - exec=${exec:-/usr/bin/chromium-browser}
-      #- userAgent=${userAgent}
-      #- timeout=${timeout}
-      
       # Параметры прокси (опционально)
       #- proxy=${proxy}
       #- proxyAuth=${proxyAuth}
@@ -47,5 +31,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    volumes:
-      - "./screenshots:/usr/src/app/screenshots"
