@@ -46,6 +46,14 @@ export class StreamWatcher {
   }> = [];
   private maxPointsHistory: number = 1000;
   private tokenManager: TokenManager | null = null;
+  private criticalNotifications: Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }> = [];
+  private maxCriticalNotifications: number = 10;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -91,15 +99,25 @@ export class StreamWatcher {
         tokenManagerConfig,
         {
           onTokenExpiringSoon: (expiresAt, minutesRemaining) => {
-            logger.warn(`⚠️  Token will expire in ${minutesRemaining} minutes (at ${new Date(expiresAt).toLocaleString()})`);
-            this.addEvent('token-warning', 'system', `Token expires in ${minutesRemaining} minutes`);
+            // Не добавляем предупреждения - только критические уведомления
+            logger.verbose(`ℹ️  Token will expire in ${minutesRemaining} minutes`);
           },
           onTokenExpired: () => {
             logger.error('❌  Token has expired! Application may stop working.');
+            this.addCriticalNotification(
+              'error',
+              'Token Expired',
+              'Your Twitch token has expired. Please update it in config.json or .env file to continue watching streams.'
+            );
             this.addEvent('token-expired', 'system', 'Token has expired - please update it');
           },
           onTokenInvalid: () => {
             logger.error('❌  Token is invalid! Application may stop working.');
+            this.addCriticalNotification(
+              'error',
+              'Token Invalid',
+              'Your Twitch token is invalid. Please update it in config.json or .env file to continue watching streams.'
+            );
             this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
           },
         }
@@ -849,6 +867,72 @@ export class StreamWatcher {
     totalPoints: number;
   }> {
     return [...this.pointsHistory]; // Хронологический порядок
+  }
+
+  /**
+   * Добавляет критическое уведомление
+   * @param type Тип уведомления
+   * @param title Заголовок
+   * @param message Сообщение
+   */
+  private addCriticalNotification(type: 'error' | 'warning', title: string, message: string): void {
+    const notification = {
+      id: `critical_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      type,
+      title,
+      message,
+      timestamp: Date.now(),
+    };
+
+    this.criticalNotifications.push(notification);
+
+    // Ограничиваем размер списка
+    if (this.criticalNotifications.length > this.maxCriticalNotifications) {
+      this.criticalNotifications.shift();
+    }
+
+    logger.warn(`🚨  Critical notification: ${title} - ${message}`);
+  }
+
+  /**
+   * Получает критические уведомления (реализация StatisticsProvider)
+   */
+  getCriticalNotifications(): Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }> {
+    return [...this.criticalNotifications].reverse(); // Новые первыми
+  }
+
+  /**
+   * Удаляет критическое уведомление по ID
+   * @param id ID уведомления
+   */
+  dismissCriticalNotification(id: string): void {
+    this.criticalNotifications = this.criticalNotifications.filter(n => n.id !== id);
+  }
+
+  /**
+   * Добавляет тестовое критическое уведомление (для тестирования)
+   * @param type Тип уведомления
+   */
+  addTestCriticalNotification(type: 'error' | 'warning' = 'error'): void {
+    if (type === 'error') {
+      this.addCriticalNotification(
+        'error',
+        'Test Error Notification',
+        'This is a test error notification. Your application is working correctly!'
+      );
+    } else {
+      this.addCriticalNotification(
+        'warning',
+        'Test Warning Notification',
+        'This is a test warning notification. Your application is working correctly!'
+      );
+    }
   }
 }
 
