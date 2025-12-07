@@ -58,6 +58,8 @@ export class StreamWatcher {
   private maxCriticalNotifications: number = 10;
   private statisticsStorage: StatisticsStorage | null = null;
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
+  private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
+  private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -233,14 +235,36 @@ export class StreamWatcher {
           }
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
+          const now = Date.now();
+          const lastAttempt = this.processedRaids.get(raidId);
+          
+          // Проверяем, не пытались ли мы уже присоединиться к этому рейду недавно
+          if (lastAttempt && (now - lastAttempt) < this.raidCooldownMs) {
+            logger.verbose(`⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`);
+            return;
+          }
+          
+          // Отмечаем, что мы обрабатываем этот рейд
+          this.processedRaids.set(raidId, now);
+          
+          // Очищаем старые записи (старше 5 минут)
+          const fiveMinutesAgo = now - 5 * 60 * 1000;
+          for (const [id, timestamp] of this.processedRaids.entries()) {
+            if (timestamp < fiveMinutesAgo) {
+              this.processedRaids.delete(id);
+            }
+          }
+          
           logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
           const success = await graphqlClient.joinRaid(raidId);
           if (success) {
             logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
             this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
+            // После успешного присоединения не нужно больше пытаться
           } else {
             logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
-            this.addEvent('raid-failed', streamerInfo.username, `Failed to join raid to ${targetLogin}`);
+            // Не добавляем событие raid-failed для каждого неудачного запроса, чтобы не засорять лог
+            // this.addEvent('raid-failed', streamerInfo.username, `Failed to join raid to ${targetLogin}`);
           }
         },
       };
