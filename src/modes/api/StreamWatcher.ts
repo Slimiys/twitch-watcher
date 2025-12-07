@@ -462,12 +462,12 @@ export class StreamWatcher {
             body: JSON.stringify({ query: '{ __typename }' }), // Минимальный GraphQL запрос
           });
 
+          // Любой HTTP ответ (кроме сетевых ошибок) означает, что API доступен
           // 200 - успешный ответ (API работает)
           // 400/401 - сервер доступен, но запрос неверный (это нормально для проверки доступности)
-          // 405 - метод не поддерживается (но сервер доступен)
-          // 500+ - проблемы с сервером
-          // Любой ответ кроме сетевой ошибки означает, что API доступен
-          const isAvailable = response.status < 500 || response.status === 405;
+          // 500+ - проблемы с сервером, но сервер все равно доступен и отвечает
+          // Только сетевые ошибки (catch блок) означают, что API недоступен
+          const isAvailable = response.status < 600; // Любой валидный HTTP статус
           
           return {
             status: isAvailable ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
