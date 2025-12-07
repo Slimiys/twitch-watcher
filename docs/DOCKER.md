@@ -191,11 +191,18 @@ restart: always
 - `no` — не перезапускать автоматически
 
 ```yaml
-environment:
-  - token=your_auth_token_here
-  - channelsWithPriority=...
+env_file:
+  - .env
 ```
-Переменные окружения, доступные внутри контейнера. Эти значения можно получить через `process.env` в Node.js.
+Загружает переменные окружения из файла `.env`. Это безопасный способ хранения секретных данных (токенов, паролей), так как `.env` файл не попадает в репозиторий.
+
+```yaml
+environment:
+  - token=${token}
+  - channelsWithPriority=${channelsWithPriority}
+  - MODE=${MODE:-api}
+```
+Переменные окружения, доступные внутри контейнера. Значения берутся из `.env` файла или имеют значения по умолчанию (например, `MODE:-api` означает, что если `MODE` не указан, будет использоваться `api`).
 
 ```yaml
 volumes:
@@ -231,35 +238,40 @@ Docker использует слоистую файловую систему (Un
 
 ### 1. Настройка конфигурации
 
-Скопируйте файл `docker-compose-example.yml` в `docker-compose.yml`:
+Создайте файл `.env` на основе примера:
 
 ```bash
-cp docker-compose-example.yml docker-compose.yml
+# Windows (PowerShell)
+Copy-Item .env.example .env
+
+# Linux/macOS
+cp .env.example .env
 ```
 
-### 2. Редактирование конфигурации
+### 2. Редактирование .env файла
 
-Откройте `docker-compose.yml` и настройте параметры:
+Откройте `.env` и настройте обязательные параметры:
 
-```yaml
-environment:
-  # ОБЯЗАТЕЛЬНО: Замените на ваш токен Twitch
-  - token=your_auth_token_here
-  
-  # ОБЯЗАТЕЛЬНО: Укажите список приоритетных стримеров
-  - channelsWithPriority=alkaizerx,mathil1
-  
-  # Параметры просмотра (в минутах)
-  - minWatching=15
-  - maxWatching=30
-  
-  # Параметры скриншотов
-  - browserScreenshot=true
-  - screenshotInterval=5
-  
-  # Путь к Chromium (уже настроен для Docker)
-  - exec=/usr/bin/chromium-browser
+```env
+# ОБЯЗАТЕЛЬНО: Замените на ваш токен Twitch
+token=your_auth_token_here
+
+# ОБЯЗАТЕЛЬНО: Укажите список приоритетных стримеров
+channelsWithPriority=alkaizerx,mathil1
+
+# Режим работы: api или puppeteer (по умолчанию puppeteer)
+MODE=api
+
+# Параметры просмотра (в минутах) - только для puppeteer режима
+minWatching=15
+maxWatching=30
+
+# Параметры скриншотов - только для puppeteer режима
+browserScreenshot=false
+screenshotInterval=0
 ```
+
+**Важно:** Файл `.env` содержит секретные данные (токен) и не должен попадать в репозиторий. Он уже добавлен в `.gitignore`.
 
 ### 3. Запуск контейнера
 
@@ -392,10 +404,20 @@ docker-compose config
 
 ## Переменные окружения
 
+Все переменные окружения настраиваются в файле `.env`. Создайте его на основе `.env.example`:
+
+```bash
+# Windows (PowerShell)
+Copy-Item .env.example .env
+
+# Linux/macOS
+cp .env.example .env
+```
+
 ### Обязательные параметры:
 
-- `token` - Токен авторизации Twitch
-- `channelsWithPriority` - Список приоритетных стримеров через запятую
+- `token` - Токен авторизации Twitch (обязательно)
+- `channelsWithPriority` - Список приоритетных стримеров через запятую (обязательно)
 
 ### Параметры просмотра:
 

@@ -100,12 +100,21 @@ npm start
 
 ### Быстрый старт
 
-1. Скопируйте `docker-compose-example.yml` в `docker-compose.yml`
-2. Отредактируйте `docker-compose.yml` и укажите:
+1. Создайте файл `.env` на основе примера:
+   ```bash
+   # Windows (PowerShell)
+   Copy-Item .env.example .env
+   
+   # Linux/macOS
+   cp .env.example .env
+   ```
+2. Отредактируйте `.env` и укажите:
    - Ваш токен Twitch (`token`)
    - Список приоритетных стримеров (`channelsWithPriority`)
 3. Запустите: `docker-compose up -d`
 4. Просмотр логов: `docker-compose logs -f`
+
+**Важно:** Файл `.env` содержит секретные данные и не должен попадать в репозиторий (уже добавлен в `.gitignore`).
 
 ## Решение проблем
 

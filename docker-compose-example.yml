@@ -3,27 +3,49 @@ services:
   twitch_watcher:
     build: .
     restart: always
+    env_file:
+      - .env
     environment:
-      # Обязательные параметры
-      - token=your_auth_token_here
-      - channelsWithPriority=alkaizerx,mathil1
+      # Режим работы: api или puppeteer (по умолчанию puppeteer)
+      - MODE=${MODE:-api}
+      - LOG_LEVEL=${LOG_LEVEL:-normal}
+      - MAX_SIMULTANEOUS_CHANNELS=${MAX_SIMULTANEOUS_CHANNELS:-2}
+
+      # Health Check настройки
+      - HEALTH_CHECK_PORT=${HEALTH_CHECK_PORT:-3000}
       
-      # Параметры просмотра (в минутах)
-      - minWatching=15
-      - maxWatching=30
+      # Web Server настройки
+      - WEB_SERVER_PORT=${WEB_SERVER_PORT:-3001}
+
+      # Обязательные параметры (должны быть указаны в .env файле)
+      - token=${token}
+      - channelsWithPriority=${channelsWithPriority}
       
-      # Параметры скриншотов
-      - browserScreenshot=true
-      - screenshotInterval=5
+      # Параметры просмотра (в минутах) - только для puppeteer режима
+      - minWatching=${minWatching:-15}
+      - maxWatching=${maxWatching:-30}
       
-      # Параметры браузера (опционально)
+      # Параметры скриншотов - только для puppeteer режима
+      - browserScreenshot=${browserScreenshot:-false}
+      - screenshotInterval=${screenshotInterval:-0}
+      
+      # Параметры браузера (опционально) - только для puppeteer режима
       # Путь к Chromium в Docker Alpine (обычно /usr/bin/chromium-browser или /usr/bin/chromium)
-      - exec=/usr/bin/chromium-browser
-      #- userAgent=Mozilla/5.0...
-      #- timeout=30000
+      - exec=${exec:-/usr/bin/chromium-browser}
+      #- userAgent=${userAgent}
+      #- timeout=${timeout}
       
       # Параметры прокси (опционально)
-      #- proxy=127.0.0.1:8080
-      #- proxyAuth=username:password
+      #- proxy=${proxy}
+      #- proxyAuth=${proxyAuth}
+    ports:
+      - "3000:3000"  # Проброс порта для health check
+      - "3001:3001"  # Проброс порта для web dashboard
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     volumes:
       - "./screenshots:/usr/src/app/screenshots"
