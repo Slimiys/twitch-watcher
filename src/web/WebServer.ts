@@ -61,6 +61,27 @@ export interface StatisticsProvider {
     points: number;
     totalPoints: number;
   }>;
+
+  /**
+   * Получает критические уведомления
+   */
+  getCriticalNotifications(): Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }>;
+
+  /**
+   * Удаляет критическое уведомление
+   */
+  dismissCriticalNotification?(id: string): void;
+
+  /**
+   * Добавляет тестовое критическое уведомление
+   */
+  addTestCriticalNotification?(type: 'error' | 'warning'): void;
 }
 
 /**
@@ -190,6 +211,61 @@ export class WebServer {
         res.json(limitedHistory);
       } catch (error: any) {
         logger.error('Error getting points history:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/critical-notifications', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notifications = this.statisticsProvider.getCriticalNotifications();
+        res.json(notifications);
+      } catch (error: any) {
+        logger.error('Error getting critical notifications:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/critical-notifications/:id/dismiss', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notificationId = req.params.id;
+        if (this.statisticsProvider.dismissCriticalNotification) {
+          this.statisticsProvider.dismissCriticalNotification(notificationId);
+          res.json({ success: true });
+        } else {
+          res.status(501).json({ error: 'Dismiss functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error dismissing notification:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/critical-notifications/test', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const type = (req.body.type || 'error') as 'error' | 'warning';
+        if (this.statisticsProvider.addTestCriticalNotification) {
+          this.statisticsProvider.addTestCriticalNotification(type);
+          res.json({ success: true, message: 'Test notification added' });
+        } else {
+          res.status(501).json({ error: 'Test notification functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error creating test notification:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });
