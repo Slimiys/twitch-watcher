@@ -1,8 +1,11 @@
+import { RetryConfig } from './modes/api/types';
+
 /**
  * Интерфейс конфигурации приложения
  */
 export interface AppConfig {
   token: string;
+  retry?: RetryConfig;
 }
 
 /**

@@ -129,3 +129,24 @@ export interface WatchStatistics {
   status: 'ONLINE' | 'OFFLINE';
 }
 
+/**
+ * Конфигурация retry механизмов
+ */
+export interface RetryConfig {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  multiplier: number;
+  jitter?: boolean;
+  circuitBreaker?: {
+    failureThreshold: number;
+    resetTimeoutMs: number;
+    halfOpenMaxAttempts: number;
+  };
+  websocket?: {
+    maxReconnectAttempts: number;
+    initialDelayMs: number;
+    maxDelayMs: number;
+  };
+}
+

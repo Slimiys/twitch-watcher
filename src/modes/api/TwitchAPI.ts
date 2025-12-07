@@ -6,6 +6,8 @@ import { GraphQLClient } from './GraphQLClient';
 import { StreamerInfo, MinuteWatchedPayload } from './types';
 import { extractSpadeUrl, extractSettingsUrl, encodePayload } from './utils';
 import { logger } from './logger';
+import { fetchWithRetry, RetryConfig } from './retry';
+import { loadRetryConfig } from './configLoader';
 
 /**
  * API клиент для работы с Twitch
@@ -16,6 +18,7 @@ export class TwitchAPI {
   private userId: string | null = null;
   private authToken: string;
   private validatedUserId: string | null = null; // User ID из валидации токена (правильный ID пользователя)
+  private retryConfig: RetryConfig;
 
   /**
    * Создает экземпляр Twitch API клиента
@@ -27,6 +30,7 @@ export class TwitchAPI {
     this.authToken = authToken;
     this.graphqlClient = new GraphQLClient(authToken, userAgent);
     this.userAgent = userAgent;
+    this.retryConfig = loadRetryConfig();
     if (validatedUserId) {
       this.validatedUserId = validatedUserId;
     }
@@ -41,17 +45,28 @@ export class TwitchAPI {
   }
 
   /**
-   * Проверяет валидность токена через Twitch API
+   * Проверяет валидность токена через Twitch API с retry
    * @returns true если токен валиден, false в противном случае
    */
   async validateToken(): Promise<boolean> {
     try {
-      const response = await fetch('https://id.twitch.tv/oauth2/validate', {
-        method: 'GET',
-        headers: {
-          'Authorization': `OAuth ${this.authToken}`,
+      const response = await fetchWithRetry(
+        'https://id.twitch.tv/oauth2/validate',
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `OAuth ${this.authToken}`,
+          },
         },
-      });
+        {
+          maxAttempts: this.retryConfig.maxAttempts,
+          initialDelayMs: this.retryConfig.initialDelayMs,
+          maxDelayMs: this.retryConfig.maxDelayMs,
+          multiplier: this.retryConfig.multiplier,
+          jitter: this.retryConfig.jitter,
+        },
+        'validateToken'
+      );
 
       return response.status === 200;
     } catch (error: any) {
@@ -117,24 +132,31 @@ export class TwitchAPI {
   }
 
   /**
-   * Получает spade_url для стримера
+   * Получает spade_url для стримера с retry
    * @param username Имя стримера
    * @returns Spade URL или null
    */
   async getSpadeUrl(username: string): Promise<string | null> {
     try {
       // Точно как в Channel Points Miner: get_spade_url
-      // 1. Загружаем главную страницу стримера
+      // 1. Загружаем главную страницу стримера с retry
       const streamerUrl = `https://www.twitch.tv/${username}`;
-      const pageResponse = await fetch(streamerUrl, {
-        headers: {
-          'User-Agent': this.userAgent,
+      const pageResponse = await fetchWithRetry(
+        streamerUrl,
+        {
+          headers: {
+            'User-Agent': this.userAgent,
+          },
         },
-      });
-
-      if (!pageResponse.ok) {
-        throw new Error(`Failed to load page: ${pageResponse.status} ${pageResponse.statusText}`);
-      }
+        {
+          maxAttempts: this.retryConfig.maxAttempts,
+          initialDelayMs: this.retryConfig.initialDelayMs,
+          maxDelayMs: this.retryConfig.maxDelayMs,
+          multiplier: this.retryConfig.multiplier,
+          jitter: this.retryConfig.jitter,
+        },
+        `getSpadeUrl:${username}`
+      );
 
       const pageContent = await pageResponse.text();
 
@@ -183,16 +205,23 @@ export class TwitchAPI {
       }
       logger.verbose(`✅  Found settings URL for ${username}: ${settingsUrl}`);
 
-      // 3. Загружаем конфигурационный файл
-      const settingsResponse = await fetch(settingsUrl, {
-        headers: {
-          'User-Agent': this.userAgent,
+      // 3. Загружаем конфигурационный файл с retry
+      const settingsResponse = await fetchWithRetry(
+        settingsUrl,
+        {
+          headers: {
+            'User-Agent': this.userAgent,
+          },
         },
-      });
-
-      if (!settingsResponse.ok) {
-        throw new Error(`Failed to load settings: ${settingsResponse.status} ${settingsResponse.statusText}`);
-      }
+        {
+          maxAttempts: this.retryConfig.maxAttempts,
+          initialDelayMs: this.retryConfig.initialDelayMs,
+          maxDelayMs: this.retryConfig.maxDelayMs,
+          multiplier: this.retryConfig.multiplier,
+          jitter: this.retryConfig.jitter,
+        },
+        `getSpadeUrl:settings:${username}`
+      );
 
       const settingsContent = await settingsResponse.text();
 
@@ -331,12 +360,23 @@ export class TwitchAPI {
       // Пытаемся получить user_id через валидацию токена
       logger.verbose(`⚠️  [${streamerInfo.username}] User ID not cached, attempting to get from token validation...`);
       try {
-        const response = await fetch('https://id.twitch.tv/oauth2/validate', {
-          method: 'GET',
-          headers: {
-            'Authorization': `OAuth ${this.authToken}`,
+        const response = await fetchWithRetry(
+          'https://id.twitch.tv/oauth2/validate',
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `OAuth ${this.authToken}`,
+            },
           },
-        });
+          {
+            maxAttempts: this.retryConfig.maxAttempts,
+            initialDelayMs: this.retryConfig.initialDelayMs,
+            maxDelayMs: this.retryConfig.maxDelayMs,
+            multiplier: this.retryConfig.multiplier,
+            jitter: this.retryConfig.jitter,
+          },
+          'getUserIdFromToken'
+        );
         
         if (response.status === 200) {
           const data = await response.json();
@@ -402,14 +442,25 @@ export class TwitchAPI {
       const formData = new URLSearchParams();
       formData.append('data', payload.data);
 
-      const response = await fetch(streamerInfo.spadeUrl, {
-        method: 'POST',
-        headers: {
-          'User-Agent': this.userAgent,
-          'Content-Type': 'application/x-www-form-urlencoded',
+      const response = await fetchWithRetry(
+        streamerInfo.spadeUrl,
+        {
+          method: 'POST',
+          headers: {
+            'User-Agent': this.userAgent,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: formData.toString(),
         },
-        body: formData.toString(),
-      });
+        {
+          maxAttempts: this.retryConfig.maxAttempts,
+          initialDelayMs: this.retryConfig.initialDelayMs,
+          maxDelayMs: this.retryConfig.maxDelayMs,
+          multiplier: this.retryConfig.multiplier,
+          jitter: this.retryConfig.jitter,
+        },
+        `sendMinuteWatched:${streamerInfo.username}`
+      );
 
       const isSuccess = response.status === 204;
       
