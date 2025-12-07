@@ -62,6 +62,27 @@ export interface StatisticsProvider {
     points: number;
     totalPoints: number;
   }>;
+
+  /**
+   * Получает критические уведомления
+   */
+  getCriticalNotifications(): Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }>;
+
+  /**
+   * Удаляет критическое уведомление
+   */
+  dismissCriticalNotification?(id: string): void;
+
+  /**
+   * Добавляет тестовое критическое уведомление
+   */
+  addTestCriticalNotification?(type: 'error' | 'warning'): void;
 }
 
 /**
@@ -223,6 +244,22 @@ export class WebServer {
       }
     });
 
+    // API для критических уведомлений
+    this.app.get('/api/critical-notifications', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notifications = this.statisticsProvider.getCriticalNotifications();
+        res.json(notifications);
+      } catch (error: any) {
+        logger.error('Error getting critical notifications:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     // API для агрегированной статистики
     this.app.get('/api/aggregated-stats', (req: Request, res: Response) => {
       try {
@@ -246,6 +283,27 @@ export class WebServer {
         res.json(stats);
       } catch (error: any) {
         logger.error('Error getting aggregated stats:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для закрытия критических уведомлений
+    this.app.post('/api/critical-notifications/:id/dismiss', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const notificationId = req.params.id;
+        if (this.statisticsProvider.dismissCriticalNotification) {
+          this.statisticsProvider.dismissCriticalNotification(notificationId);
+          res.json({ success: true });
+        } else {
+          res.status(501).json({ error: 'Dismiss functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error dismissing notification:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });

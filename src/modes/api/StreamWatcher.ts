@@ -12,6 +12,7 @@ import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
 import { GQL_URL, CLIENT_ID } from './constants';
 import { WebServer, StatisticsProvider } from '../../web';
+import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
 import { loadStatisticsConfig } from './configLoader';
 
@@ -46,6 +47,15 @@ export class StreamWatcher {
     totalPoints: number;
   }> = [];
   private maxPointsHistory: number = 1000;
+  private tokenManager: TokenManager | null = null;
+  private criticalNotifications: Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }> = [];
+  private maxCriticalNotifications: number = 10;
   private statisticsStorage: StatisticsStorage | null = null;
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
 
@@ -76,6 +86,51 @@ export class StreamWatcher {
     
     logger.verbose(`📊  Max simultaneous channels: ${this.maxSimultaneousChannels}`);
     
+    // Инициализируем TokenManager для отслеживания истечения токена
+    try {
+      const tokenManagerConfig: TokenManagerConfig = {
+        checkIntervalMs: process.env.TOKEN_CHECK_INTERVAL_MS 
+          ? parseInt(process.env.TOKEN_CHECK_INTERVAL_MS, 10) 
+          : 5 * 60 * 1000, // 5 минут по умолчанию
+        warningThresholdMinutes: process.env.TOKEN_WARNING_THRESHOLD_MINUTES
+          ? parseInt(process.env.TOKEN_WARNING_THRESHOLD_MINUTES, 10)
+          : 60, // 60 минут по умолчанию
+        enableNotifications: process.env.TOKEN_NOTIFICATIONS_ENABLED !== 'false',
+      };
+
+      this.tokenManager = new TokenManager(
+        this.twitchAPI,
+        tokenManagerConfig,
+        {
+          onTokenExpiringSoon: (expiresAt, minutesRemaining) => {
+            // Не добавляем предупреждения - только критические уведомления
+            logger.verbose(`ℹ️  Token will expire in ${minutesRemaining} minutes`);
+          },
+          onTokenExpired: () => {
+            logger.error('❌  Token has expired! Application may stop working.');
+            this.addCriticalNotification(
+              'error',
+              'Token Expired',
+              'Your Twitch token has expired. Please update it in config.json or .env file to continue watching streams.'
+            );
+            this.addEvent('token-expired', 'system', 'Token has expired - please update it');
+          },
+          onTokenInvalid: () => {
+            logger.error('❌  Token is invalid! Application may stop working.');
+            this.addCriticalNotification(
+              'error',
+              'Token Invalid',
+              'Your Twitch token is invalid. Please update it in config.json or .env file to continue watching streams.'
+            );
+            this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
+          },
+        }
+      );
+      logger.verbose(`🔐  TokenManager initialized`);
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to initialize TokenManager: ${error.message || error}`);
+    }
+
     // Инициализируем модуль сохранения статистики
     try {
       const statsConfig = loadStatisticsConfig();
@@ -213,6 +268,11 @@ export class StreamWatcher {
     // Запускаем периодическую статистику
     this.startStatistics();
     
+    // Запускаем TokenManager для отслеживания истечения токена
+    if (this.tokenManager) {
+      this.tokenManager.start();
+    }
+    
     // Добавляем начальные точки в историю баллов для всех онлайн стримеров
     // Используем setTimeout чтобы дать время на инициализацию стримеров
     setTimeout(() => {
@@ -264,6 +324,11 @@ export class StreamWatcher {
     if (this.healthCheckServer) {
       this.healthCheckServer.stop();
       this.healthCheckServer = null;
+    }
+
+    if (this.tokenManager) {
+      this.tokenManager.stop();
+      this.tokenManager = null;
     }
 
     logger.info('🛑 API mode watcher stopped');
@@ -884,6 +949,73 @@ export class StreamWatcher {
     totalPoints: number;
   }> {
     return [...this.pointsHistory]; // Хронологический порядок
+  }
+
+  /**
+<<<<<<< HEAD
+   * Добавляет критическое уведомление
+   * @param type Тип уведомления
+   * @param title Заголовок
+   * @param message Сообщение
+   */
+  private addCriticalNotification(type: 'error' | 'warning', title: string, message: string): void {
+    const notification = {
+      id: `critical_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      type,
+      title,
+      message,
+      timestamp: Date.now(),
+    };
+
+    this.criticalNotifications.push(notification);
+
+    // Ограничиваем размер списка
+    if (this.criticalNotifications.length > this.maxCriticalNotifications) {
+      this.criticalNotifications.shift();
+    }
+
+    logger.warn(`🚨  Critical notification: ${title} - ${message}`);
+  }
+
+  /**
+   * Получает критические уведомления (реализация StatisticsProvider)
+   */
+  getCriticalNotifications(): Array<{
+    id: string;
+    type: 'error' | 'warning';
+    title: string;
+    message: string;
+    timestamp: number;
+  }> {
+    return [...this.criticalNotifications].reverse(); // Новые первыми
+  }
+
+  /**
+   * Удаляет критическое уведомление по ID
+   * @param id ID уведомления
+   */
+  dismissCriticalNotification(id: string): void {
+    this.criticalNotifications = this.criticalNotifications.filter(n => n.id !== id);
+  }
+
+  /**
+   * Добавляет тестовое критическое уведомление (для тестирования)
+   * @param type Тип уведомления
+   */
+  addTestCriticalNotification(type: 'error' | 'warning' = 'error'): void {
+    if (type === 'error') {
+      this.addCriticalNotification(
+        'error',
+        'Test Error Notification',
+        'This is a test error notification. Your application is working correctly!'
+      );
+    } else {
+      this.addCriticalNotification(
+        'warning',
+        'Test Warning Notification',
+        'This is a test warning notification. Your application is working correctly!'
+      );
+    }
   }
 
   /**

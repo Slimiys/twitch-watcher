@@ -3,7 +3,7 @@
  */
 
 import { GraphQLClient } from './GraphQLClient';
-import { StreamerInfo, MinuteWatchedPayload } from './types';
+import { StreamerInfo, MinuteWatchedPayload, TokenValidationResult, TokenInfo } from './types';
 import { extractSpadeUrl, extractSettingsUrl, encodePayload } from './utils';
 import { logger } from './logger';
 import { fetchWithRetry, RetryConfig } from './retry';
@@ -49,29 +49,50 @@ export class TwitchAPI {
    * @returns true если токен валиден, false в противном случае
    */
   async validateToken(): Promise<boolean> {
-    try {
-      const response = await fetchWithRetry(
-        'https://id.twitch.tv/oauth2/validate',
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `OAuth ${this.authToken}`,
-          },
-        },
-        {
-          maxAttempts: this.retryConfig.maxAttempts,
-          initialDelayMs: this.retryConfig.initialDelayMs,
-          maxDelayMs: this.retryConfig.maxDelayMs,
-          multiplier: this.retryConfig.multiplier,
-          jitter: this.retryConfig.jitter,
-        },
-        'validateToken'
-      );
+    const result = await this.validateTokenWithInfo();
+    return result.isValid;
+  }
 
-      return response.status === 200;
+  /**
+   * Проверяет валидность токена и получает информацию о нем
+   * @returns Результат валидации с информацией о токене
+   */
+  async validateTokenWithInfo(): Promise<TokenValidationResult> {
+    try {
+      // Используем обычный fetch, так как нам нужно обработать 401 как нормальный случай
+      const response = await fetch('https://id.twitch.tv/oauth2/validate', {
+        method: 'GET',
+        headers: {
+          'Authorization': `OAuth ${this.authToken}`,
+        },
+      });
+
+      if (response.status === 200) {
+        const tokenInfo: TokenInfo = await response.json();
+        const now = Date.now();
+        let expiresAt: number | undefined;
+
+        // Если Twitch вернул expires_in, вычисляем точное время истечения
+        if (tokenInfo.expires_in) {
+          expiresAt = now + (tokenInfo.expires_in * 1000);
+        }
+
+        return {
+          isValid: true,
+          tokenInfo,
+          expiresAt,
+        };
+      } else {
+        // Токен невалиден (401) или другая ошибка
+        return {
+          isValid: false,
+        };
+      }
     } catch (error: any) {
       logger.verbose(`⚠️  Token validation error: ${error.message || error}`);
-      return false;
+      return {
+        isValid: false,
+      };
     }
   }
 
