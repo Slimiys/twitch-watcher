@@ -2,7 +2,7 @@
 
 ## Проблема: Стримеры не находятся
 
-Если вы видите сообщение `⚠️ No streamers found, waiting...`, попробуйте следующие решения:
+Если вы видите сообщение `No streamers found, waiting...`, попробуйте следующие решения:
 
 ### 1. Увеличьте параметры прокрутки
 
@@ -72,9 +72,9 @@ proxyAuth=username:password
 ### 6. Проверьте логи
 
 После запуска проверьте логи:
-- `🌐 Opening streamers page:` - открывается ли страница
-- `🔍 Found X channel links on page` - сколько ссылок найдено
-- `✅ Found X unique streamers` - сколько уникальных стримеров найдено
+- `Opening streamers page:` - открывается ли страница
+- `Found X channel links on page` - сколько ссылок найдено
+- `Found X unique streamers` - сколько уникальных стримеров найдено
 
 Если видите `Found 0 channel links`, значит селектор не находит элементы. Попробуйте увеличить `scrollTimes` и `scrollDelay`.
 
