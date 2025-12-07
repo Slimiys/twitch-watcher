@@ -41,6 +41,26 @@ export class TwitchAPI {
   }
 
   /**
+   * Проверяет валидность токена через Twitch API
+   * @returns true если токен валиден, false в противном случае
+   */
+  async validateToken(): Promise<boolean> {
+    try {
+      const response = await fetch('https://id.twitch.tv/oauth2/validate', {
+        method: 'GET',
+        headers: {
+          'Authorization': `OAuth ${this.authToken}`,
+        },
+      });
+
+      return response.status === 200;
+    } catch (error: any) {
+      logger.verbose(`⚠️  Token validation error: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  /**
    * Получает ID пользователя
    * @param username Имя пользователя (обязательно для получения через GraphQL)
    * @returns ID пользователя

@@ -9,6 +9,8 @@ import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime } from './utils';
 import { logger } from './logger';
 import dayjs from 'dayjs';
+import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
+import { GQL_URL, CLIENT_ID } from './constants';
 
 /**
  * Менеджер просмотра стримов
@@ -25,6 +27,7 @@ export class StreamWatcher {
   private userAgent: string;
   private validatedUserId: string | null = null;
   private maxSimultaneousChannels: number;
+  private healthCheckServer: HealthCheckServer | null = null;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -134,6 +137,9 @@ export class StreamWatcher {
 
     // Запускаем периодическую статистику
     this.startStatistics();
+
+    // Запускаем health check server
+    this.startHealthCheckServer();
   }
 
   /**
@@ -155,6 +161,11 @@ export class StreamWatcher {
     if (this.wsManager) {
       this.wsManager.stop();
       this.wsManager = null;
+    }
+
+    if (this.healthCheckServer) {
+      this.healthCheckServer.stop();
+      this.healthCheckServer = null;
     }
 
     logger.info('🛑 API mode watcher stopped');
@@ -406,6 +417,126 @@ export class StreamWatcher {
         logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
       }
     }
+  }
+
+  /**
+   * Запускает health check server
+   */
+  private startHealthCheckServer(): void {
+    const port = process.env.HEALTH_CHECK_PORT ? parseInt(process.env.HEALTH_CHECK_PORT, 10) : 3000;
+    
+    const providers: HealthCheckProviders = {
+      checkWebSocket: async () => {
+        if (!this.wsManager) {
+          return {
+            status: ComponentStatus.UNKNOWN,
+            message: 'WebSocket manager not initialized',
+            lastCheck: Date.now()
+          };
+        }
+
+        const isConnected = this.wsManager.isConnected();
+        const state = this.wsManager.getConnectionState();
+
+        return {
+          status: isConnected ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
+          message: `WebSocket state: ${state}`,
+          lastCheck: Date.now(),
+          details: {
+            state,
+            isConnected
+          }
+        };
+      },
+      checkAPI: async () => {
+        try {
+          // Проверяем доступность через GraphQL endpoint (который реально используется приложением)
+          // GraphQL требует POST запросы, но для проверки доступности можно использовать простой запрос
+          // Или проверять, что сервер отвечает (даже 405 означает, что сервер доступен)
+          const response = await fetch(GQL_URL, {
+            method: 'POST',
+            headers: {
+              'Client-ID': CLIENT_ID,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ query: '{ __typename }' }), // Минимальный GraphQL запрос
+          });
+
+          // Любой HTTP ответ (кроме сетевых ошибок) означает, что API доступен
+          // 200 - успешный ответ (API работает)
+          // 400/401 - сервер доступен, но запрос неверный (это нормально для проверки доступности)
+          // 500+ - проблемы с сервером, но сервер все равно доступен и отвечает
+          // Только сетевые ошибки (catch блок) означают, что API недоступен
+          const isAvailable = response.status < 600; // Любой валидный HTTP статус
+          
+          return {
+            status: isAvailable ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
+            message: `Twitch GraphQL API status: ${response.status}`,
+            lastCheck: Date.now(),
+            details: {
+              statusCode: response.status,
+              endpoint: 'gql.twitch.tv',
+              available: isAvailable
+            }
+          };
+        } catch (error: any) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `API check failed: ${error.message || error}`,
+            lastCheck: Date.now()
+          };
+        }
+      },
+      checkToken: async () => {
+        try {
+          const isValid = await this.twitchAPI.validateToken();
+          return {
+            status: isValid ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
+            message: isValid ? 'Token is valid' : 'Token validation failed',
+            lastCheck: Date.now()
+          };
+        } catch (error: any) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `Token check error: ${error.message || error}`,
+            lastCheck: Date.now()
+          };
+        }
+      },
+      checkWatching: async () => {
+        const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline);
+        const activeWatches = onlineStreamers.filter(s => s.startTime > 0);
+
+        return {
+          status: activeWatches.length > 0 ? ComponentStatus.HEALTHY : ComponentStatus.UNKNOWN,
+          message: `${activeWatches.length} active watch(es), ${onlineStreamers.length} online streamer(s)`,
+          lastCheck: Date.now(),
+          details: {
+            activeWatches: activeWatches.length,
+            onlineStreamers: onlineStreamers.length,
+            totalStreamers: this.streamers.size
+          }
+        };
+      },
+      getMetrics: async () => {
+        const stats = this.getStatistics();
+        const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+        const lastActivity = stats.length > 0 
+          ? Math.max(...stats.map(s => s.elapsedTime))
+          : 0;
+
+        return {
+          activeWatches: stats.length,
+          totalPointsEarned,
+          lastActivity,
+          streamersCount: this.streamers.size
+        };
+      },
+      getMode: () => 'api'
+    };
+
+    this.healthCheckServer = new HealthCheckServer(port, providers);
+    this.healthCheckServer.start();
   }
 }
 
