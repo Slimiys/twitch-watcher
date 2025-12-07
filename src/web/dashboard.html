@@ -219,6 +219,57 @@
             color: #000;
         }
 
+        .event-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+            padding: 12px;
+            background: #18181b;
+            border-radius: 6px;
+            border: 1px solid #26262c;
+        }
+
+        .filter-label {
+            color: #adadb8;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-right: 8px;
+            align-self: center;
+        }
+
+        .filter-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            background: #26262c;
+            border: 1px solid #3a3a3d;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #adadb8;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .filter-tag:hover {
+            background: #2f2f32;
+            border-color: #9147ff;
+            color: #efeff1;
+        }
+
+        .filter-tag.active {
+            background: #9147ff;
+            border-color: #9147ff;
+            color: white;
+        }
+
+        .filter-tag input[type="checkbox"] {
+            display: none;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -464,6 +515,9 @@
 
         <div class="section">
             <h2>Recent Events</h2>
+            <div class="event-filters" id="eventFilters">
+                <span class="filter-label">Filter:</span>
+            </div>
             <div class="events-list" id="eventsList">
                 <div class="loading">Loading events</div>
             </div>
@@ -478,6 +532,8 @@
         // Загружаем состояние из localStorage или используем значения по умолчанию
         let showOffline = localStorage.getItem('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
         let updateIntervalMs = parseInt(localStorage.getItem('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
+        let selectedEventTags = new Set(JSON.parse(localStorage.getItem('selectedEventTags') || '[]')); // Выбранные теги событий
+        let availableEventTags = new Set(); // Доступные теги из событий
 
         function formatTime(ms) {
             if (ms < 0) return '-';
@@ -778,26 +834,118 @@
         }
 
         let lastEventTimestamp = 0;
+        let cachedEvents = []; // Кэш последних загруженных событий
 
-        async function updateEvents() {
-            const events = await fetchData('/events?limit=20');
-            if (!events) return;
+        /**
+         * Обновляет список доступных тегов из событий
+         * @param events Массив событий
+         */
+        function updateAvailableTags(events) {
+            const newTags = new Set();
+            events.forEach(event => {
+                if (event.type) {
+                    newTags.add(event.type);
+                }
+            });
+            
+            // Добавляем новые теги к доступным
+            newTags.forEach(tag => availableEventTags.add(tag));
+            
+            // Обновляем UI фильтров
+            updateFiltersUI();
+        }
 
+        /**
+         * Обновляет UI фильтров тегов
+         */
+        function updateFiltersUI() {
+            const filtersContainer = document.getElementById('eventFilters');
+            if (!filtersContainer) return;
+            
+            // Сортируем теги для консистентности
+            const sortedTags = Array.from(availableEventTags).sort();
+            
+            // Если тегов нет, скрываем контейнер фильтров
+            if (sortedTags.length === 0) {
+                filtersContainer.style.display = 'none';
+                return;
+            }
+            
+            filtersContainer.style.display = 'flex';
+            
+            // Сохраняем label
+            const label = filtersContainer.querySelector('.filter-label');
+            const existingTags = filtersContainer.querySelectorAll('.filter-tag');
+            
+            // Удаляем старые теги
+            existingTags.forEach(tag => tag.remove());
+            
+            // Добавляем новые теги
+            sortedTags.forEach(tag => {
+                const tagElement = document.createElement('label');
+                tagElement.className = `filter-tag ${selectedEventTags.has(tag) ? 'active' : ''}`;
+                tagElement.innerHTML = `
+                    <input type="checkbox" value="${tag}" ${selectedEventTags.has(tag) ? 'checked' : ''}>
+                    ${tag}
+                `;
+                
+                tagElement.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    toggleEventTag(tag);
+                });
+                
+                filtersContainer.appendChild(tagElement);
+            });
+        }
+
+        /**
+         * Переключает выбранный тег
+         * @param tag Тег для переключения
+         */
+        function toggleEventTag(tag) {
+            if (selectedEventTags.has(tag)) {
+                selectedEventTags.delete(tag);
+            } else {
+                selectedEventTags.add(tag);
+            }
+            
+            // Сохраняем в localStorage
+            localStorage.setItem('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+            
+            // Обновляем UI
+            updateFiltersUI();
+            
+            // Перефильтровываем кэшированные события без нового запроса
+            renderFilteredEvents(cachedEvents);
+        }
+
+        /**
+         * Отображает отфильтрованные события
+         * @param events Массив событий для отображения
+         */
+        function renderFilteredEvents(events) {
             const list = document.getElementById('eventsList');
             
             if (events.length === 0) {
                 list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
-                lastEventTimestamp = 0;
                 return;
             }
 
-            // Определяем новые события
-            const newEvents = events.filter(e => e.timestamp > lastEventTimestamp);
-            if (events.length > 0) {
-                lastEventTimestamp = events[0].timestamp;
+            // Фильтруем события по выбранным тегам
+            let filteredEvents = events;
+            if (selectedEventTags.size > 0) {
+                filteredEvents = events.filter(event => selectedEventTags.has(event.type));
             }
 
-            list.innerHTML = events.map((event, index) => {
+            if (filteredEvents.length === 0) {
+                list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
+                return;
+            }
+
+            // Определяем новые события (из отфильтрованных)
+            const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
+
+            list.innerHTML = filteredEvents.map((event, index) => {
                 const typeClass = event.type.includes('point') ? 'event-type-points' :
                                  event.type.includes('stream') ? 'event-type-stream' :
                                  event.type.includes('claim') ? 'event-type-claim' : '';
@@ -819,6 +967,25 @@
                     item.classList.remove('new');
                 });
             }, 400);
+        }
+
+        async function updateEvents() {
+            const events = await fetchData('/events?limit=20');
+            if (!events) return;
+
+            // Сохраняем события в кэш
+            cachedEvents = events;
+
+            // Обновляем доступные теги
+            updateAvailableTags(events);
+
+            // Обновляем timestamp для определения новых событий
+            if (events.length > 0) {
+                lastEventTimestamp = events[0].timestamp;
+            }
+
+            // Отображаем отфильтрованные события
+            renderFilteredEvents(events);
         }
 
         async function updateAll() {
