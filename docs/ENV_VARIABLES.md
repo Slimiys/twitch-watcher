@@ -4,7 +4,8 @@
 
 ### Обязательные:
 - `token` - Токен авторизации Twitch (обязательно)
-- `channelsWithPriority` - Список приоритетных стримеров через запятую (обязательно)
+
+**Примечание:** Список стримеров теперь хранится в `config.json` и может управляться через веб-интерфейс. Переменная окружения `channelsWithPriority` больше не используется.
 
 ### Параметры прокси (опционально):
 - `proxy` - Прокси сервер (формат: ip:port)
@@ -41,7 +42,6 @@
 ```env
 # Обязательные параметры
 token=your_auth_token_here
-channelsWithPriority=alkaizerx,mathil1
 
 # Параметры логирования (опционально)
 LOG_LEVEL=normal
@@ -53,13 +53,10 @@ LOG_LEVEL=normal
 MAX_SIMULTANEOUS_CHANNELS=2
 ```
 
-### Пример с увеличенным количеством каналов:
-```env
-token=your_auth_token_here
-channelsWithPriority=streamer1,streamer2,streamer3,streamer4
-
-# Пробуем просматривать 3 канала одновременно
-# Если каналов больше 3, будет использоваться ротация
-MAX_SIMULTANEOUS_CHANNELS=3
+**Примечание:** Список стримеров настраивается через веб-интерфейс (http://localhost:3001) или вручную в файле `config.json`:
+```json
+{
+  "streamers": ["alkaizerx", "mathil1"]
+}
 ```
 

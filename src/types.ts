@@ -4,8 +4,9 @@ import { RetryConfig } from './modes/api/types';
  * Интерфейс конфигурации приложения
  */
 export interface AppConfig {
-  token: string;
+  token?: string;
   retry?: RetryConfig;
+  streamers?: string[]; // Список стримеров для отслеживания
 }
 
 /**

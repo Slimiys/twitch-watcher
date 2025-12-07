@@ -60,9 +60,12 @@ Docker — это платформа для контейнеризации пр�
 │                                         │
 │  Environment Variables:                │
 │  - token                                │
-│  - channelsWithPriority                 │
 │  - LOG_LEVEL                            │
 │  - MAX_SIMULTANEOUS_CHANNELS            │
+│                                         │
+│  Примечание: Список стримеров           │
+│  настраивается в config.json            │
+│  или через веб-интерфейс                │
 └─────────────────────────────────────────┘
 ```
 
@@ -165,7 +168,6 @@ env_file:
 ```yaml
 environment:
   - token=${token}
-  - channelsWithPriority=${channelsWithPriority}
   - MODE=${MODE:-api}
 ```
 Переменные окружения, доступные внутри контейнера. Значения берутся из `.env` файла или имеют значения по умолчанию (например, `MODE:-api` означает, что если `MODE` не указан, будет использоваться `api`).
@@ -210,13 +212,6 @@ cp .env.example .env
 ```env
 # ОБЯЗАТЕЛЬНО: Замените на ваш токен Twitch
 token=your_auth_token_here
-
-# ОБЯЗАТЕЛЬНО: Укажите список приоритетных стримеров
-channelsWithPriority=alkaizerx,mathil1
-
-# Обязательные параметры
-token=your_auth_token_here
-channelsWithPriority=alkaizerx,mathil1
 
 # Опциональные параметры
 LOG_LEVEL=normal
@@ -344,14 +339,16 @@ docker-compose up -d
 
 ```bash
 # Проверить текущие переменные окружения контейнера
-docker-compose exec twitch_watcher env | grep -E "token|channelsWithPriority"
+docker-compose exec twitch_watcher env | grep -E "token"
 
 # Или посмотреть конфигурацию (показывает все переменные, включая из .env)
 docker-compose config
 
 # Проверить, что .env файл загружается правильно
-docker-compose config | grep -E "token|channelsWithPriority"
+docker-compose config | grep -E "token"
 ```
+
+**Примечание:** Список стримеров теперь хранится в `config.json` и может управляться через веб-интерфейс. Для проверки списка стримеров используйте веб-интерфейс или проверьте файл `config.json` внутри контейнера.
 
 **Примечание:** Команда `docker-compose config` показывает финальную конфигурацию со всеми подставленными значениями из `.env` файла. Это полезно для проверки, что переменные загружаются корректно перед запуском контейнера.
 
@@ -370,7 +367,13 @@ cp .env.example .env
 ### Обязательные параметры:
 
 - `token` - Токен авторизации Twitch (обязательно)
-- `channelsWithPriority` - Список приоритетных стримеров через запятую (обязательно)
+
+**Примечание:** Список стримеров теперь хранится в `config.json` и может управляться через веб-интерфейс (http://localhost:3001) или вручную в файле `config.json`:
+```json
+{
+  "streamers": ["alkaizerx", "mathil1"]
+}
+```
 
 ### Опциональные параметры:
 

@@ -467,104 +467,73 @@ export class WebSocketManager {
       if (channelId) {
         // Сравниваем как строки, чтобы избежать проблем с типами
         streamerInfo = Array.from(this.streamers.values()).find(s => String(s.channelId) === channelId);
-      }
-      
-      // Если не нашли по channel_id, пытаемся найти по балансу
-      // Это работает, потому что баланс уникален для каждого канала
-      // и обычно соответствует одному из отслеживаемых стримеров
-      if (!streamerInfo) {
-        // Ищем стримера, у которого баланс близок к полученному (с учетом начисленных баллов)
-        // Проверяем, что новый баланс соответствует старому + earned
+        
+        // Если channel_id есть, но не найден в списке отслеживаемых - это событие для неотслеживаемого стримера
+        // Игнорируем его, чтобы не приписывать баллы неправильному стримеру
+        if (!streamerInfo) {
+          logger.verbose(`⚠️  Received points-earned for unknown channel_id: ${channelId} (balance: ${balance}, earned: ${earned})`);
+          logger.verbose(`   This channel is not in the tracking list. Ignoring event to prevent incorrect attribution.`);
+          logger.verbose(`   Tracked channels: ${Array.from(this.streamers.values()).map(s => `${s.username} (channelId: ${s.channelId})`).join(', ')}`);
+          return; // Игнорируем событие для неотслеживаемого канала
+        }
+      } else {
+        // Если channel_id нет, пытаемся найти по точному совпадению баланса
+        // Проверяем, что новый баланс точно соответствует: lastChannelPoints + earned = balance
+        // Это безопасно, потому что баланс уникален для каждого канала
         streamerInfo = Array.from(this.streamers.values()).find(s => {
           if (s.lastChannelPoints !== null && s.isOnline) {
-            // Проверяем, что баланс соответствует: старый + earned = новый
-            return Math.abs((s.lastChannelPoints + earned) - balance) < 5; // Допускаем небольшую погрешность
+            // Проверяем точное совпадение: старый баланс + earned = новый баланс
+            const expectedBalance = s.lastChannelPoints + earned;
+            const diff = Math.abs(expectedBalance - balance);
+            // Допускаем только небольшую погрешность округления (до 2 баллов)
+            return diff <= 2;
           }
           return false;
         });
         
         // Если не нашли по lastChannelPoints, пробуем найти по текущему channelPoints
-        // (для случаев, когда lastChannelPoints еще не обновлен)
-        if (!streamerInfo) {
+        // (для случаев, когда lastChannelPoints еще не обновлен, но earned = 0)
+        if (!streamerInfo && earned === 0) {
           streamerInfo = Array.from(this.streamers.values()).find(s => {
-            if (s.isOnline && s.channelPoints !== null && s.channelPoints > 0) {
-              // Проверяем, что баланс близок к текущему балансу стримера
-              return Math.abs(s.channelPoints - balance) < 5;
+            if (s.isOnline && s.channelPoints !== null) {
+              // Для earned = 0 баланс должен точно совпадать
+              return Math.abs(s.channelPoints - balance) <= 2;
             }
             return false;
           });
         }
         
-        // Если не нашли по балансу, но есть только один онлайн стример, используем его
+        // Если не удалось точно определить стримера - игнорируем событие
+        // Это безопаснее, чем приписывать баллы неправильному стримеру
         if (!streamerInfo) {
           const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline);
-          if (onlineStreamers.length === 1) {
-            streamerInfo = onlineStreamers[0];
-            logger.verbose(`   Using single online streamer ${streamerInfo.username} for points-earned event`);
-          } else if (onlineStreamers.length > 1 && earned > 0) {
-            // Если несколько онлайн стримеров и earned > 0, логируем для диагностики
-            logger.verbose(`   Multiple online streamers (${onlineStreamers.length}), trying to determine by balance`);
+          logger.verbose(`⚠️  No channel_id in points-earned message, and cannot determine streamer by exact balance match`);
+          logger.verbose(`   Event balance: ${balance}, earned: ${earned}`);
+          if (onlineStreamers.length > 0) {
             logger.verbose(`   Online streamers: ${onlineStreamers.map(s => `${s.username} (balance: ${s.channelPoints}, last: ${s.lastChannelPoints})`).join(', ')}`);
-            logger.verbose(`   Event balance: ${balance}, earned: ${earned}`);
-            
-            // Пробуем найти стримера, у которого баланс наиболее близок к полученному
-            // (даже если не точно совпадает с lastChannelPoints + earned)
-            let bestMatch: StreamerInfo | undefined;
-            let bestDiff = Infinity;
-            
-            for (const s of onlineStreamers) {
-              if (s.channelPoints !== null) {
-                const diff = Math.abs(s.channelPoints - balance);
-                if (diff < bestDiff && diff < 100) { // Допускаем разницу до 100 баллов
-                  bestDiff = diff;
-                  bestMatch = s;
-                }
-              }
-            }
-            
-            if (bestMatch) {
-              streamerInfo = bestMatch;
-              logger.verbose(`   Matched to ${streamerInfo.username} by closest balance (diff: ${bestDiff})`);
-            }
           }
+          logger.verbose(`   Ignoring event to prevent incorrect attribution.`);
+          return; // Игнорируем событие, если не можем точно определить стримера
         }
       }
       
-      if (streamerInfo) {
-        const oldBalance = streamerInfo.channelPoints;
-        streamerInfo.channelPoints = balance;
-        streamerInfo.lastChannelPoints = balance;
+      // Если мы дошли сюда, значит streamerInfo точно найден (иначе был бы return выше)
+      // Обрабатываем событие для найденного стримера
+      const oldBalance = streamerInfo.channelPoints;
+      streamerInfo.channelPoints = balance;
+      streamerInfo.lastChannelPoints = balance;
 
-        // Если initialChannelPoints еще не установлен, устанавливаем его
-        if (streamerInfo.initialChannelPoints === null) {
-          streamerInfo.initialChannelPoints = balance;
-        }
+      // Если initialChannelPoints еще не установлен, устанавливаем его
+      if (streamerInfo.initialChannelPoints === null) {
+        streamerInfo.initialChannelPoints = balance;
+      }
 
-        if (oldBalance !== balance) {
-          logger.info(`📊  [${streamerInfo.username}] Balance updated: ${oldBalance} → ${balance} (earned: ${earned}, reason: ${reason})`);
-        }
+      if (oldBalance !== balance) {
+        logger.info(`📊  [${streamerInfo.username}] Balance updated: ${oldBalance} → ${balance} (earned: ${earned}, reason: ${reason})`);
+      }
 
-        if (this.eventHandlers.onPointsEarned) {
-          this.eventHandlers.onPointsEarned(streamerInfo, earned, reason);
-        }
-      } else {
-        // Если channel_id не найден и не удалось определить стримера по балансу
-        const allStreamers = Array.from(this.streamers.values());
-        const onlineStreamers = allStreamers.filter(s => s.isOnline);
-        
-        if (channelId) {
-          logger.verbose(`⚠️  Received points-earned for unknown channel_id: ${channelId} (balance: ${balance}, earned: ${earned})`);
-          logger.verbose(`   This channel is not in the tracking list. Tracked channels: ${allStreamers.map(s => `${s.username} (channelId: ${s.channelId})`).join(', ')}`);
-          if (onlineStreamers.length > 0) {
-            logger.verbose(`   Online streamers: ${onlineStreamers.map(s => `${s.username} (channelId: ${s.channelId}, balance: ${s.channelPoints})`).join(', ')}`);
-          }
-        } else {
-          logger.verbose(`⚠️  No channel_id in points-earned message, cannot determine which streamer earned points (balance: ${balance}, earned: ${earned})`);
-          if (onlineStreamers.length > 0) {
-            logger.verbose(`   Online streamers: ${onlineStreamers.map(s => `${s.username} (balance: ${s.channelPoints}, last: ${s.lastChannelPoints})`).join(', ')}`);
-          }
-          logger.verbose(`   Message data:`, JSON.stringify(messageData, null, 2).substring(0, 500));
-        }
+      if (this.eventHandlers.onPointsEarned) {
+        this.eventHandlers.onPointsEarned(streamerInfo, earned, reason);
       }
     } else if (messageData.type === 'claim-available') {
       const claimMessage = messageData as ClaimAvailableMessage;
