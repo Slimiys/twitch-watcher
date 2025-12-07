@@ -585,6 +585,39 @@
                 width: 100%;
                 justify-content: center;
             }
+
+            /* Адаптация секции управления стримерами */
+            .section > div:first-child {
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 15px !important;
+            }
+
+            .section > div:first-child > div:last-child {
+                width: 100% !important;
+                flex-direction: column !important;
+                gap: 10px !important;
+                align-items: stretch !important;
+            }
+
+            .section > div:first-child > div:last-child > div:first-child {
+                width: 100% !important;
+                flex-direction: row !important;
+            }
+
+            .section > div:first-child > div:last-child > div:first-child input {
+                width: 100% !important;
+                max-width: 100% !important;
+                flex: 1 !important;
+            }
+
+            .section > div:first-child > div:last-child > div:first-child button {
+                flex-shrink: 0 !important;
+            }
+
+            .section > div:first-child > div:last-child > button.toggle-btn {
+                width: 100% !important;
+            }
         }
 
         @media (max-width: 480px) {
@@ -594,6 +627,20 @@
 
             .stat-card {
                 padding: 15px;
+            }
+
+            /* Дополнительная адаптация для очень маленьких экранов */
+            .section > div:first-child > div:last-child > div:first-child {
+                flex-direction: column !important;
+                gap: 8px !important;
+            }
+
+            .section > div:first-child > div:last-child > div:first-child button {
+                width: 100% !important;
+            }
+
+            .section > div:first-child > div:last-child > button.toggle-btn {
+                width: 100% !important;
             }
 
             .stat-card .value {
@@ -673,9 +720,19 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2 style="margin: 0;">All Streamers</h2>
-                <button id="toggleOfflineBtn" class="toggle-btn">
-                    <span id="toggleOfflineText">Hide Offline</span>
-                </button>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
+                               style="padding: 6px 12px; background: #18181b; border: 1px solid #26262c; border-radius: 4px; color: #efeff1; font-size: 14px; width: 200px;"
+                               onkeypress="if(event.key === 'Enter') addStreamer()">
+                        <button onclick="addStreamer()" class="add-btn" style="padding: 6px 16px; background: #9147ff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600;">
+                            Add
+                        </button>
+                    </div>
+                    <button id="toggleOfflineBtn" class="toggle-btn">
+                        <span id="toggleOfflineText">Hide Offline</span>
+                    </button>
+                </div>
             </div>
             <div id="watchesTable">
                 <div class="loading">Loading statistics</div>
@@ -764,7 +821,18 @@
         async function fetchData(endpoint) {
             try {
                 const response = await fetch(`${API_BASE}${endpoint}`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!response.ok) {
+                    // Если сервис недоступен (503), пытаемся получить сообщение об ошибке
+                    if (response.status === 503) {
+                        try {
+                            const errorData = await response.json();
+                            console.warn(`Service unavailable for ${endpoint}:`, errorData.error || errorData.message);
+                        } catch (e) {
+                            // Игнорируем ошибки парсинга JSON
+                        }
+                    }
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 return await response.json();
             } catch (error) {
                 console.error(`Error fetching ${endpoint}:`, error);
@@ -791,6 +859,11 @@
             const stats = await fetchData('/overall');
             if (!stats) {
                 updateConnectionStatus(false);
+                // Показываем сообщение об ошибке, если сервис недоступен
+                const statusText = document.getElementById('statusText');
+                if (statusText) {
+                    statusText.textContent = 'Service unavailable';
+                }
                 return;
             }
 
@@ -847,6 +920,7 @@
                             <th>Watch Time</th>
                             <th>Points Earned</th>
                             <th>Current Points</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -860,6 +934,14 @@
                                 <td>${formatTime(s.elapsedTime)}</td>
                                 <td>${s.pointsEarned}</td>
                                 <td>${s.currentPoints}</td>
+                                <td>
+                                    <button onclick="removeStreamer('${s.streamerName}')" 
+                                            class="remove-btn" 
+                                            style="padding: 4px 12px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
+                                            title="Remove streamer">
+                                        Remove
+                                    </button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1398,6 +1480,16 @@
                 });
             });
             
+            // Обработчик для Enter в поле добавления стримера
+            const addStreamerInput = document.getElementById('addStreamerInput');
+            if (addStreamerInput) {
+                addStreamerInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        addStreamer();
+                    }
+                });
+            }
+            
             // Закрываем меню при клике вне его
             document.addEventListener('click', (e) => {
                 if (exportDropdown && !exportDropdown.contains(e.target) && !exportBtn.contains(e.target)) {
@@ -1405,6 +1497,145 @@
                 }
             });
         });
+
+        /**
+         * Добавляет стримера для отслеживания
+         */
+        async function addStreamer() {
+            const input = document.getElementById('addStreamerInput');
+            if (!input) return;
+            
+            const username = input.value.trim();
+            if (!username) {
+                alert('Please enter a streamer name');
+                return;
+            }
+
+            // Отключаем кнопку и поле ввода
+            input.disabled = true;
+            const addBtn = input.nextElementSibling;
+            if (addBtn) addBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/streamers`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username }),
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Очищаем поле ввода
+                    input.value = '';
+                    
+                    // Обновляем статистику
+                    await updateStatistics();
+                    await updateOverallStats();
+                    
+                    // Показываем уведомление об успехе
+                    showNotification('success', `Streamer ${username} added successfully`);
+                } else {
+                    alert(result.message || 'Failed to add streamer');
+                }
+            } catch (error) {
+                console.error('Error adding streamer:', error);
+                alert('Failed to add streamer. Please try again.');
+            } finally {
+                // Включаем кнопку и поле ввода
+                input.disabled = false;
+                if (addBtn) addBtn.disabled = false;
+                input.focus();
+            }
+        }
+
+        /**
+         * Удаляет стримера из отслеживания
+         * @param {string} username Имя стримера
+         */
+        async function removeStreamer(username) {
+            if (!confirm(`Are you sure you want to remove ${username} from tracking?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/streamers/${encodeURIComponent(username)}`, {
+                    method: 'DELETE',
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Обновляем статистику
+                    await updateStatistics();
+                    await updateOverallStats();
+                    
+                    // Показываем уведомление об успехе
+                    showNotification('success', `Streamer ${username} removed successfully`);
+                } else {
+                    alert(result.message || 'Failed to remove streamer');
+                }
+            } catch (error) {
+                console.error('Error removing streamer:', error);
+                alert('Failed to remove streamer. Please try again.');
+            }
+        }
+
+        /**
+         * Показывает уведомление
+         * @param {string} type Тип уведомления (success, error, info)
+         * @param {string} message Текст уведомления
+         */
+        function showNotification(type, message) {
+            // Создаем элемент уведомления
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#00d166' : type === 'error' ? '#ef4444' : '#9147ff'};
+                color: white;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                z-index: 10000;
+                font-size: 14px;
+                font-weight: 600;
+                animation: slideIn 0.3s ease-out;
+            `;
+            notification.textContent = message;
+            
+            // Добавляем анимацию
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes slideIn {
+                    from {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                }
+            `;
+            if (!document.head.querySelector('style[data-notification]')) {
+                style.setAttribute('data-notification', 'true');
+                document.head.appendChild(style);
+            }
+            
+            document.body.appendChild(notification);
+            
+            // Удаляем уведомление через 3 секунды
+            setTimeout(() => {
+                notification.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => {
+                    notification.remove();
+                }, 300);
+            }, 3000);
+        }
 
         window.addEventListener('beforeunload', () => {
             if (updateInterval) {

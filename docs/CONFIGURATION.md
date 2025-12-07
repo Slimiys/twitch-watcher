@@ -58,8 +58,8 @@ scrollTimes=10
 minWatching=15
 maxWatching=30
 
-# Приоритетные каналы
-channelsWithPriority=streamer1,streamer2
+# Примечание: Список стримеров теперь настраивается через веб-интерфейс или в config.json
+# См. раздел "Управление стримерами" ниже
 
 # Всегда смотреть топ-стримера
 watchAlwaysTopStreamer=false
@@ -86,7 +86,7 @@ scrollDelay=5000
 scrollTimes=15
 minWatching=10
 maxWatching=20
-channelsWithPriority=your_favorite_streamer
+# Список стримеров настраивается в config.json или через веб-интерфейс
 watchAlwaysTopStreamer=false
 ```
 

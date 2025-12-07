@@ -83,6 +83,16 @@ export interface StatisticsProvider {
    * Добавляет тестовое критическое уведомление
    */
   addTestCriticalNotification?(type: 'error' | 'warning'): void;
+
+  /**
+   * Добавляет стримера для отслеживания
+   */
+  addStreamer?(username: string): Promise<{ success: boolean; message: string }>;
+
+  /**
+   * Удаляет стримера из отслеживания
+   */
+  removeStreamer?(username: string): Promise<{ success: boolean; message: string }>;
 }
 
 /**
@@ -113,7 +123,7 @@ export class WebServer {
     // CORS для API
     this.app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       
       if (req.method === 'OPTIONS') {
@@ -136,7 +146,7 @@ export class WebServer {
     this.app.get('/api/statistics', (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
-          res.status(503).json({ error: 'Statistics provider not available' });
+          res.status(503).json({ error: 'Statistics provider not available. Please check if the watcher is running and token is configured.' });
           return;
         }
 
@@ -165,10 +175,71 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/overall', (req: Request, res: Response) => {
+    this.app.post('/api/streamers', async (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
           res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const { username } = req.body;
+        if (!username || typeof username !== 'string') {
+          res.status(400).json({ error: 'Username is required' });
+          return;
+        }
+
+        if (this.statisticsProvider.addStreamer) {
+          const result = await this.statisticsProvider.addStreamer(username);
+          if (result.success) {
+            res.json(result);
+          } else {
+            res.status(400).json(result);
+          }
+        } else {
+          res.status(501).json({ error: 'Add streamer functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error adding streamer:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.delete('/api/streamers/:username', async (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const { username } = req.params;
+        if (!username) {
+          res.status(400).json({ error: 'Username is required' });
+          return;
+        }
+
+        if (this.statisticsProvider.removeStreamer) {
+          const result = await this.statisticsProvider.removeStreamer(username);
+          if (result.success) {
+            res.json(result);
+          } else {
+            res.status(400).json(result);
+          }
+        } else {
+          res.status(501).json({ error: 'Remove streamer functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error removing streamer:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/overall', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ 
+            error: 'Statistics provider not available',
+            message: 'Watcher is not running. Please check token configuration.'
+          });
           return;
         }
 

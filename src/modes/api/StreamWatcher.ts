@@ -15,6 +15,9 @@ import { WebServer, StatisticsProvider } from '../../web';
 import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
 import { loadStatisticsConfig } from './configLoader';
+import * as fs from 'fs';
+import * as path from 'path';
+import { AppConfig } from '../../types';
 
 /**
  * Менеджер просмотра стримов
@@ -60,6 +63,7 @@ export class StreamWatcher {
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
+  private configPath: string = './config.json'; // Путь к файлу конфигурации
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -157,14 +161,26 @@ export class StreamWatcher {
     // Инициализируем WebSocket
     try {
       logger.verbose('🔌  Initializing WebSocket connection...');
-      // Получаем user ID, используя первый стример из списка
+      
+      // Получаем user ID из токена или используя первый стример из списка
+      let userId: string;
       if (this.priorityChannels.length === 0) {
-        throw new Error('No priority channels configured, cannot get user ID');
+        // Если список стримеров пустой, получаем user ID из валидации токена
+        logger.verbose('No streamers configured, getting user ID from token validation...');
+        const tokenValidation = await this.twitchAPI.validateTokenWithInfo();
+        if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
+          throw new Error('Token is invalid or user_id not found in token validation');
+        }
+        userId = tokenValidation.tokenInfo.user_id;
+        this.twitchAPI.setValidatedUserId(userId);
+        logger.verbose(`✅  User ID obtained from token validation: ${userId}`);
+      } else {
+        // Используем первый стример для получения user ID (для обратной совместимости)
+        const username = this.priorityChannels[0];
+        logger.verbose(`Getting user ID using username: ${username}`);
+        userId = await this.twitchAPI.getUserId(username);
       }
       
-      const username = this.priorityChannels[0];
-      logger.verbose(`Getting user ID using username: ${username}`);
-      const userId = await this.twitchAPI.getUserId(username);
       const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
       
       const eventHandlers: WebSocketEventHandler = {
@@ -1048,6 +1064,191 @@ export class StreamWatcher {
    */
   getStatisticsStorage(): StatisticsStorage | null {
     return this.statisticsStorage;
+  }
+
+  /**
+   * Добавляет стримера для отслеживания
+   * @param username Имя стримера
+   * @returns Результат операции
+   */
+  async addStreamer(username: string): Promise<{ success: boolean; message: string }> {
+    // Нормализуем имя стримера (убираем пробелы, приводим к нижнему регистру)
+    const normalizedUsername = username.trim().toLowerCase();
+    
+    if (!normalizedUsername) {
+      return { success: false, message: 'Username cannot be empty' };
+    }
+
+    // Проверяем, не добавлен ли уже стример
+    if (this.streamers.has(normalizedUsername)) {
+      const existingStreamer = this.streamers.get(normalizedUsername);
+      const status = existingStreamer?.isOnline ? 'ONLINE' : 'OFFLINE';
+      logger.warn(`⚠️  Attempted to add already tracked streamer: ${normalizedUsername} (${status})`);
+      return { 
+        success: false, 
+        message: `Streamer "${normalizedUsername}" is already being tracked (Status: ${status})` 
+      };
+    }
+
+    try {
+      logger.info(`➕  Adding streamer: ${normalizedUsername}`);
+      
+      // Сначала проверяем существование стримера через GraphQL клиент
+      const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
+      const channelId = await graphqlClient.getChannelId(normalizedUsername);
+      if (!channelId) {
+        logger.error(`❌  Streamer ${normalizedUsername} not found`);
+        return { success: false, message: `Streamer "${normalizedUsername}" not found. Please check the username and try again.` };
+      }
+
+      // Инициализируем стримера (теперь мы знаем, что он существует)
+      const streamerInfo = await this.twitchAPI.initializeStreamer(normalizedUsername);
+      
+      if (!streamerInfo) {
+        // Если инициализация не удалась, но канал существует, это временная проблема
+        logger.warn(`⚠️  [${normalizedUsername}] Failed to initialize, but channel exists. This might be a temporary issue.`);
+        return { success: false, message: `Failed to initialize streamer "${normalizedUsername}". This might be a temporary issue. Please try again later.` };
+      }
+
+      // Стример успешно инициализирован
+      this.streamers.set(normalizedUsername, streamerInfo);
+      
+      // Добавляем в WebSocket менеджер
+      if (this.wsManager) {
+        this.wsManager.addStreamer(streamerInfo);
+      }
+
+      // Если стример онлайн, создаем сессию
+      if (streamerInfo.isOnline) {
+        logger.info(`✅  [${normalizedUsername}] Added - ONLINE`);
+        
+        if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+          const sessionId = this.statisticsStorage.createSession(
+            streamerInfo.username,
+            streamerInfo.initialChannelPoints,
+            streamerInfo.game,
+            streamerInfo.title
+          );
+          this.activeSessions.set(streamerInfo.username, sessionId);
+        }
+      } else {
+        logger.info(`😴  [${normalizedUsername}] Added - OFFLINE`);
+      }
+
+      // Добавляем событие
+      this.addEvent('streamer-added', normalizedUsername, `Streamer ${normalizedUsername} added to tracking`);
+
+      // Сохраняем список стримеров в config.json
+      this.saveStreamersToConfig();
+
+      return { success: true, message: `Streamer ${normalizedUsername} added successfully` };
+    } catch (error: any) {
+      logger.error(`❌  Error adding streamer ${normalizedUsername}: ${error.message || error}`);
+      return { success: false, message: `Failed to add streamer: ${error.message || 'Unknown error'}` };
+    }
+  }
+
+  /**
+   * Удаляет стримера из отслеживания
+   * @param username Имя стримера
+   * @returns Результат операции
+   */
+  async removeStreamer(username: string): Promise<{ success: boolean; message: string }> {
+    const normalizedUsername = username.trim().toLowerCase();
+    
+    if (!this.streamers.has(normalizedUsername)) {
+      return { success: false, message: `Streamer ${normalizedUsername} is not being tracked` };
+    }
+
+    try {
+      logger.info(`➖  Removing streamer: ${normalizedUsername}`);
+      
+      const streamerInfo = this.streamers.get(normalizedUsername);
+      
+      // Завершаем активную сессию, если есть
+      if (this.activeSessions.has(normalizedUsername)) {
+        const sessionId = this.activeSessions.get(normalizedUsername);
+        if (sessionId && this.statisticsStorage && streamerInfo) {
+          const finalPoints = streamerInfo.channelPoints || streamerInfo.lastChannelPoints || 0;
+          this.statisticsStorage.endSession(sessionId, finalPoints, 'interrupted');
+        }
+        this.activeSessions.delete(normalizedUsername);
+      }
+
+      // Удаляем из WebSocket менеджера
+      if (this.wsManager && streamerInfo) {
+        this.wsManager.removeStreamer(streamerInfo.channelId);
+      }
+
+      // Удаляем из Map
+      this.streamers.delete(normalizedUsername);
+
+      // Добавляем событие
+      this.addEvent('streamer-removed', normalizedUsername, `Streamer ${normalizedUsername} removed from tracking`);
+
+      // Сохраняем список стримеров в config.json
+      this.saveStreamersToConfig();
+
+      logger.info(`✅  [${normalizedUsername}] Removed successfully`);
+      return { success: true, message: `Streamer ${normalizedUsername} removed successfully` };
+    } catch (error: any) {
+      logger.error(`❌  Error removing streamer ${normalizedUsername}: ${error.message || error}`);
+      return { success: false, message: `Failed to remove streamer: ${error.message || 'Unknown error'}` };
+    }
+  }
+
+  /**
+   * Сохраняет список стримеров в config.json
+   */
+  private saveStreamersToConfig(): void {
+    try {
+      const streamersList = Array.from(this.streamers.keys());
+      
+      // Читаем существующий config.json или создаем новый
+      let config: AppConfig = {};
+      if (fs.existsSync(this.configPath)) {
+        try {
+          const configContent = fs.readFileSync(this.configPath, 'utf8');
+          config = JSON.parse(configContent);
+        } catch (error: any) {
+          logger.warn(`⚠️  Failed to parse config.json: ${error.message}, creating new config`);
+          config = {};
+        }
+      }
+
+      // Обновляем список стримеров
+      config.streamers = streamersList;
+
+      // Сохраняем обратно в файл
+      fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2), 'utf8');
+      logger.verbose(`💾  Saved ${streamersList.length} streamers to config.json`);
+    } catch (error: any) {
+      logger.error(`❌  Error saving streamers to config: ${error.message || error}`);
+    }
+  }
+
+  /**
+   * Загружает список стримеров из config.json
+   * @returns Список стримеров или null, если не удалось загрузить
+   */
+  static loadStreamersFromConfig(configPath: string = './config.json'): string[] | null {
+    try {
+      if (!fs.existsSync(configPath)) {
+        return null;
+      }
+
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      const config: AppConfig = JSON.parse(configContent);
+
+      if (config.streamers && Array.isArray(config.streamers)) {
+        return config.streamers;
+      }
+
+      return null;
+    } catch (error: any) {
+      logger.error(`❌  Error loading streamers from config: ${error.message || error}`);
+      return null;
+    }
   }
 }
 

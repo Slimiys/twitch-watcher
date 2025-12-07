@@ -10,7 +10,31 @@ import { logger } from './modes/api/logger';
 
 // ========================================== CONFIG SECTION =================================================================
 const configPath = './config.json';
-const channelsWithPriority = process.env.channelsWithPriority ? process.env.channelsWithPriority.split(",") : [];
+
+// Загружаем список стримеров из config.json
+let channelsWithPriority: string[] = [];
+
+if (fs.existsSync(configPath)) {
+  try {
+    const configFile: AppConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (configFile.streamers && Array.isArray(configFile.streamers)) {
+      channelsWithPriority = configFile.streamers;
+      if (channelsWithPriority.length > 0) {
+        console.log(`✅  Loaded ${channelsWithPriority.length} streamer(s) from config.json`);
+      } else {
+        console.log(`ℹ️  No streamers in config.json (you can add them via web interface)`);
+      }
+    } else {
+      console.log(`ℹ️  No streamers array in config.json (you can add them via web interface)`);
+    }
+  } catch (error: any) {
+    console.log(`⚠️  Failed to load streamers from config.json: ${error.message}`);
+    console.log(`ℹ️  You can add streamers via web interface after application starts`);
+  }
+} else {
+  console.log(`ℹ️  config.json not found, will be created on first run`);
+  console.log(`ℹ️  You can add streamers via web interface after application starts`);
+}
 
 let cookie: CookieData[] | null = null;
 // ========================================== CONFIG SECTION =================================================================
@@ -41,29 +65,47 @@ async function readLoginData(): Promise<CookieData[]> {
       console.log('✅  Json config found!');
 
       const configFile: AppConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      cookie[0].value = configFile.token;
+      if (configFile.token) {
+        cookie[0].value = configFile.token;
+        return cookie;
+      }
+    }
 
-      return cookie;
-    } else if (process.env.token) {
-      console.log('✅  Env config found');
+    // Если токена нет в config.json, проверяем переменную окружения
+    if (process.env.token) {
+      console.log('✅  Token found in environment variable');
       cookie[0].value = process.env.token;
-
-      return cookie;
-    } else {
-      console.log('❌ No config file found!');
-
-      const input: LoginInput = await askLogin();
-
-      fs.writeFile(configPath, JSON.stringify(input), (err) => {
-        if (err) {
-          console.log(err);
-        }
-      });
-
-      cookie[0].value = input.token;
-
       return cookie;
     }
+
+    // Если токена нет ни в config.json, ни в переменной окружения
+    if (fs.existsSync(configPath)) {
+      console.log('⚠️  Token not found in config.json, checking environment variable...');
+    } else {
+      console.log('❌ No config file found!');
+    }
+
+    // В Docker или неинтерактивном режиме не можем запросить токен
+    if (process.env.NODE_ENV === 'production' || !process.stdin.isTTY) {
+      throw new Error('Token not found in config.json or environment variable. Please set token in .env file or config.json');
+    }
+
+    const input: LoginInput = await askLogin();
+
+    // Сохраняем токен в config.json
+    let configFile: AppConfig = {};
+    if (fs.existsSync(configPath)) {
+      try {
+        configFile = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      } catch (error) {
+        // Игнорируем ошибки парсинга
+      }
+    }
+    configFile.token = input.token;
+    fs.writeFileSync(configPath, JSON.stringify(configFile, null, 2), 'utf8');
+
+    cookie[0].value = input.token;
+    return cookie;
   } catch (err) {
     console.log('🤬 Error: ', err);
     console.log('Please visit my discord channel to solve this problem: https://discord.gg/s8AH4aZ');
@@ -84,12 +126,23 @@ async function shutDown(): Promise<void> {
  */
 async function startAPIMode(): Promise<void> {
   const { StreamWatcher } = await import('./modes/api/StreamWatcher');
+  const { WebServer } = await import('./web/WebServer');
   const userAgent = process.env.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36';
   
   cookie = await readLoginData();
   if (!cookie || !cookie[0] || !cookie[0].value) {
     console.error('❌ ERROR: No auth token found!');
-    process.exit(1);
+    console.error('💡 Please set token in .env file or config.json');
+    console.error('💡 The web interface will be available, but the watcher will not start');
+    
+    // Запускаем веб-сервер даже без токена, чтобы показать ошибку в интерфейсе
+    const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
+    const webServer = new WebServer(webPort);
+    webServer.start();
+    console.log(`✅  Web server started on port ${webPort} (watcher disabled - no token)`);
+    
+    // Не выходим из процесса, чтобы веб-сервер продолжал работать
+    return;
   }
 
   const authToken = cookie[0].value;
@@ -100,7 +153,8 @@ async function startAPIMode(): Promise<void> {
     watcher.startStatusCheck();
   } catch (error: any) {
     console.error('❌ Error starting API mode:', error.message || error);
-    process.exit(1);
+    // Не выходим из процесса, чтобы веб-сервер продолжал работать
+    // process.exit(1);
   }
 }
 
@@ -111,15 +165,12 @@ async function main(): Promise<void> {
   console.clear();
   console.log("=========================");
   
-  // Проверяем, что приоритетные каналы настроены
-  if (channelsWithPriority.length === 0) {
-    console.log('❌ ERROR: No priority channels configured!');
-    console.log('💡 Please set channelsWithPriority in .env file');
-    console.log('💡 Example: channelsWithPriority=alkaizerx,mathil1');
-    process.exit(1);
+  // Информируем о количестве загруженных стримеров
+  if (channelsWithPriority.length > 0) {
+    console.log(`✅  Streamers configured: ${channelsWithPriority.join(', ')}`);
+  } else {
+    console.log(`ℹ️  No streamers in config.json - you can add them via web interface at http://localhost:3001`);
   }
-  
-  console.log(`✅  Priority channels configured: ${channelsWithPriority.join(', ')}`);
   console.log("=========================");
   
   logger.verbose(`🔍  Environment check:`);

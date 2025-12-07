@@ -70,7 +70,9 @@ MODE=api
 LOG_LEVEL=normal
 MAX_SIMULTANEOUS_CHANNELS=2
 token=your_auth_token_here
-channelsWithPriority=karmikkoala,madarapoe,dub_ok_tv
+
+# Примечание: Список стримеров теперь настраивается в config.json
+# или через веб-интерфейс после запуска приложения
 ```
 
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)

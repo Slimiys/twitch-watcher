@@ -51,7 +51,13 @@
 ```env
 # Обязательные параметры
 token=your_auth_token_here
-channelsWithPriority=alkaizerx,mathil1
+```
+
+**Примечание:** Список стримеров настраивается через веб-интерфейс (http://localhost:3001) или вручную в файле `config.json`:
+```json
+{
+  "streamers": ["alkaizerx", "mathil1"]
+}
 ```
 
 Подробнее о настройке см. [CONFIGURATION.md](docs/CONFIGURATION.md)
@@ -87,7 +93,7 @@ npm start
    ```
 2. Отредактируйте `.env` и укажите:
    - Ваш токен Twitch (`token`)
-   - Список приоритетных стримеров (`channelsWithPriority`)
+3. После запуска добавьте стримеров через веб-интерфейс (http://localhost:3001) или вручную в `config.json`
 3. Запустите: `docker-compose up -d`
 4. Просмотр логов: `docker-compose logs -f`
 
