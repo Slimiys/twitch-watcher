@@ -80,6 +80,24 @@ export interface StatisticsProvider {
   dismissCriticalNotification?(id: string): void;
 
   /**
+   * Получает информацию о токене
+   */
+  getTokenInfo?(): {
+    isValid: boolean;
+    expiresAt?: number;
+    minutesRemaining?: number;
+    hoursRemaining?: number;
+    daysRemaining?: number;
+    status: 'valid' | 'expired' | 'invalid' | 'unknown';
+    tokenInfo?: {
+      client_id: string;
+      login?: string;
+      user_id: string;
+      scopes?: string[];
+    };
+  } | null;
+
+  /**
    * Добавляет тестовое критическое уведомление
    */
   addTestCriticalNotification?(type: 'error' | 'warning'): void;
@@ -358,6 +376,29 @@ export class WebServer {
       }
     });
 
+    // API для информации о токене
+    this.app.get('/api/token-info', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const tokenInfo = streamWatcher.getTokenInfo?.();
+        
+        if (!tokenInfo) {
+          res.status(503).json({ error: 'Token info not available' });
+          return;
+        }
+
+        res.json(tokenInfo);
+      } catch (error: any) {
+        logger.error('Error getting token info:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     // API для закрытия критических уведомлений
     this.app.post('/api/critical-notifications/:id/dismiss', (req: Request, res: Response) => {
       try {
@@ -471,6 +512,9 @@ export class WebServer {
       }
     });
 
+    // Статические файлы (CSS, JS) из директории dashboard
+    this.app.use(express.static(__dirname));
+
     // Dashboard страница
     this.app.get('/', (req: Request, res: Response) => {
       const dashboardPath = path.join(__dirname, 'dashboard.html');
@@ -482,7 +526,7 @@ export class WebServer {
       });
     });
 
-    // Статические файлы (CSS, JS)
+    // Статические файлы из папки static (если есть)
     this.app.use('/static', express.static(path.join(__dirname, 'static')));
   }
 
