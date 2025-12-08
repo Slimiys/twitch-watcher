@@ -1067,6 +1067,81 @@ export class StreamWatcher {
   }
 
   /**
+   * Получает информацию о токене (реализация StatisticsProvider)
+   */
+  getTokenInfo(): {
+    isValid: boolean;
+    expiresAt?: number;
+    minutesRemaining?: number;
+    hoursRemaining?: number;
+    daysRemaining?: number;
+    status: 'valid' | 'expired' | 'invalid' | 'unknown';
+    tokenInfo?: {
+      client_id: string;
+      login?: string;
+      user_id: string;
+      scopes?: string[];
+    };
+  } | null {
+    if (!this.tokenManager) {
+      return null;
+    }
+
+    const validationResult = this.tokenManager.getLastValidationResult();
+    if (!validationResult) {
+      return {
+        isValid: false,
+        status: 'unknown'
+      };
+    }
+
+    if (!validationResult.isValid) {
+      return {
+        isValid: false,
+        status: 'invalid'
+      };
+    }
+
+    if (!validationResult.expiresAt) {
+      return {
+        isValid: true,
+        status: 'valid'
+      };
+    }
+
+    const now = Date.now();
+    const expiresAt = validationResult.expiresAt;
+    const msRemaining = expiresAt - now;
+
+    if (msRemaining <= 0) {
+      return {
+        isValid: false,
+        expiresAt,
+        status: 'expired'
+      };
+    }
+
+    const minutesRemaining = Math.floor(msRemaining / 1000 / 60);
+    const hoursRemaining = Math.floor(minutesRemaining / 60);
+    const daysRemaining = Math.floor(hoursRemaining / 24);
+
+    return {
+      isValid: true,
+      expiresAt,
+      minutesRemaining,
+      hoursRemaining,
+      daysRemaining,
+      status: 'valid',
+      tokenInfo: validationResult.tokenInfo ? {
+        client_id: validationResult.tokenInfo.client_id,
+        login: validationResult.tokenInfo.login,
+        user_id: validationResult.tokenInfo.user_id,
+        scopes: validationResult.tokenInfo.scopes
+      } : undefined
+    };
+  }
+
+  /**
    * Добавляет стримера для отслеживания
    * @param username Имя стримера
    * @returns Результат операции
