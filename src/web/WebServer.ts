@@ -80,6 +80,24 @@ export interface StatisticsProvider {
   dismissCriticalNotification?(id: string): void;
 
   /**
+   * Получает информацию о токене
+   */
+  getTokenInfo?(): {
+    isValid: boolean;
+    expiresAt?: number;
+    minutesRemaining?: number;
+    hoursRemaining?: number;
+    daysRemaining?: number;
+    status: 'valid' | 'expired' | 'invalid' | 'unknown';
+    tokenInfo?: {
+      client_id: string;
+      login?: string;
+      user_id: string;
+      scopes?: string[];
+    };
+  } | null;
+
+  /**
    * Добавляет тестовое критическое уведомление
    */
   addTestCriticalNotification?(type: 'error' | 'warning'): void;
@@ -354,6 +372,29 @@ export class WebServer {
         res.json(stats);
       } catch (error: any) {
         logger.error('Error getting aggregated stats:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для информации о токене
+    this.app.get('/api/token-info', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const tokenInfo = streamWatcher.getTokenInfo?.();
+        
+        if (!tokenInfo) {
+          res.status(503).json({ error: 'Token info not available' });
+          return;
+        }
+
+        res.json(tokenInfo);
+      } catch (error: any) {
+        logger.error('Error getting token info:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });
