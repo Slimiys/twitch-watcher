@@ -512,6 +512,9 @@ export class WebServer {
       }
     });
 
+    // Статические файлы (CSS, JS) из директории dashboard
+    this.app.use(express.static(__dirname));
+
     // Dashboard страница
     this.app.get('/', (req: Request, res: Response) => {
       const dashboardPath = path.join(__dirname, 'dashboard.html');
@@ -523,7 +526,7 @@ export class WebServer {
       });
     });
 
-    // Статические файлы (CSS, JS)
+    // Статические файлы из папки static (если есть)
     this.app.use('/static', express.static(path.join(__dirname, 'static')));
   }
 
