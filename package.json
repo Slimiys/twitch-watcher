@@ -1,6 +1,6 @@
 {
   "name": "twitch-watcher",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Automatic watching Twitch streams",
   "main": "dist/app.js",
   "scripts": {
