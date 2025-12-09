@@ -277,10 +277,19 @@ export class WebServer {
         }
 
         const limit = parseInt(req.query.limit as string) || 50;
+        const offset = parseInt(req.query.offset as string) || 0;
         const events = this.statisticsProvider.getEventsHistory();
-        const limitedEvents = events.slice(0, limit);
         
-        res.json(limitedEvents);
+        // Применяем offset и limit для пагинации
+        const paginatedEvents = events.slice(offset, offset + limit);
+        
+        res.json({
+          events: paginatedEvents,
+          total: events.length,
+          limit,
+          offset,
+          hasMore: offset + limit < events.length
+        });
       } catch (error: any) {
         logger.error('Error getting events:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });

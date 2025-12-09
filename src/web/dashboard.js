@@ -8,6 +8,16 @@ let updateIntervalMs = parseInt(localStorage.getItem('updateIntervalMs')) || 500
 let selectedEventTags = new Set(JSON.parse(localStorage.getItem('selectedEventTags') || '[]')); // Выбранные теги событий
 let availableEventTags = new Set(); // Доступные теги из событий
 
+// Настройки видимых колонок таблицы стримеров
+let visibleColumns = JSON.parse(localStorage.getItem('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "actions": true}');
+
+// Пагинация событий
+let eventsPageSize = 20; // Количество событий на странице
+let eventsOffset = 0; // Текущий offset для событий
+let allLoadedEvents = []; // Все загруженные события
+let isLoadingEvents = false; // Флаг загрузки событий
+let hasMoreEvents = true; // Есть ли еще события для загрузки
+
 function formatTime(ms) {
     if (ms < 0) return '-';
     const seconds = Math.floor(ms / 1000);
@@ -151,37 +161,48 @@ async function updateStatistics() {
     // Анимация обновления
     table.classList.add('updating');
     
+    // Определяем колонки с их видимостью
+    const columns = [
+        { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
+        { key: 'status', label: 'Status', visible: visibleColumns.status !== false },
+        { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
+        { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
+        { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
+        { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
+    ];
+    
+    const visibleColumnsList = columns.filter(c => c.visible);
+    
     table.innerHTML = `
         <table>
             <thead>
                 <tr>
-                    <th>Streamer</th>
-                    <th>Status</th>
-                    <th>Watch Time</th>
-                    <th>Points Earned</th>
-                    <th>Current Points</th>
-                    <th>Actions</th>
+                    ${visibleColumnsList.map(col => `<th>${col.label}</th>`).join('')}
                 </tr>
             </thead>
             <tbody>
                 ${sortedStats.map(s => `
                     <tr>
-                        <td class="streamer-name">${s.streamerName}</td>
-                        <td>
-                            <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
-                            ${s.status}
-                        </td>
-                        <td>${formatTime(s.elapsedTime)}</td>
-                        <td>${s.pointsEarned}</td>
-                        <td>${s.currentPoints}</td>
-                        <td>
-                            <button onclick="removeStreamer('${s.streamerName}')" 
-                                    class="remove-btn" 
-                                    style="padding: 4px 12px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
-                                    title="Remove streamer">
-                                Remove
-                            </button>
-                        </td>
+                        ${visibleColumns.streamer !== false ? `<td class="streamer-name">${s.streamerName}</td>` : ''}
+                        ${visibleColumns.status !== false ? `
+                            <td>
+                                <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
+                                ${s.status}
+                            </td>
+                        ` : ''}
+                        ${visibleColumns.watchTime !== false ? `<td>${formatTime(s.elapsedTime)}</td>` : ''}
+                        ${visibleColumns.pointsEarned !== false ? `<td>${s.pointsEarned}</td>` : ''}
+                        ${visibleColumns.currentPoints !== false ? `<td>${s.currentPoints}</td>` : ''}
+                        ${visibleColumns.actions !== false ? `
+                            <td>
+                                <button onclick="removeStreamer('${s.streamerName}')" 
+                                        class="remove-btn" 
+                                        style="padding: 4px 12px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
+                                        title="Remove streamer">
+                                    Remove
+                                </button>
+                            </td>
+                        ` : ''}
                     </tr>
                 `).join('')}
             </tbody>
@@ -441,9 +462,87 @@ async function updatePointsChart() {
             plugins: zoomPlugin ? [zoomPlugin] : []
         });
     } else {
+        // Сохраняем старые данные для проверки появления нового дня
+        const oldDatasets = pointsChart.data.datasets.map(ds => ({
+            label: ds.label,
+            data: ds.data ? ds.data.map(p => ({ x: new Date(p.x), y: p.y })) : []
+        }));
+        
+        // Обновляем данные
         pointsChart.data.datasets = datasets;
-        pointsChart.update(); // Обновляем график с анимацией
+        
+        // Проверяем, появился ли новый день
+        const hasNewDay = checkForNewDay(oldDatasets, datasets);
+        
+        if (hasNewDay) {
+            // Если появился новый день, сбрасываем зум и границы масштаба
+            if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
+                try {
+                    pointsChart.resetZoom();
+                } catch (e) {
+                    // Игнорируем ошибки сброса зума
+                }
+            }
+            
+            // Сбрасываем границы масштаба, чтобы Chart.js пересчитал их на основе новых данных
+            if (pointsChart.options.scales && pointsChart.options.scales.x) {
+                delete pointsChart.options.scales.x.min;
+                delete pointsChart.options.scales.x.max;
+            }
+        }
+        
+        // Обновляем график без анимации для мгновенного отображения изменений
+        pointsChart.update('none');
     }
+}
+
+/**
+ * Проверяет, появился ли новый день в данных графика
+ * @param {Array} oldDatasets Старые наборы данных
+ * @param {Array} newDatasets Новые наборы данных
+ * @returns {boolean} true если появился новый день
+ */
+function checkForNewDay(oldDatasets, newDatasets) {
+    if (!oldDatasets || oldDatasets.length === 0) return false;
+    
+    // Находим максимальную дату в старых данных
+    let maxOldDate = null;
+    oldDatasets.forEach(dataset => {
+        if (dataset.data && dataset.data.length > 0) {
+            dataset.data.forEach(point => {
+                const date = point.x instanceof Date ? point.x : new Date(point.x);
+                if (!maxOldDate || date > maxOldDate) {
+                    maxOldDate = date;
+                }
+            });
+        }
+    });
+    
+    if (!maxOldDate) return false;
+    
+    // Нормализуем до начала дня
+    const maxOldDay = new Date(maxOldDate.getFullYear(), maxOldDate.getMonth(), maxOldDate.getDate());
+    
+    // Находим максимальную дату в новых данных
+    let maxNewDate = null;
+    newDatasets.forEach(dataset => {
+        if (dataset.data && dataset.data.length > 0) {
+            dataset.data.forEach(point => {
+                const date = point.x instanceof Date ? point.x : new Date(point.x);
+                if (!maxNewDate || date > maxNewDate) {
+                    maxNewDate = date;
+                }
+            });
+        }
+    });
+    
+    if (!maxNewDate) return false;
+    
+    // Нормализуем до начала дня
+    const maxNewDay = new Date(maxNewDate.getFullYear(), maxNewDate.getMonth(), maxNewDate.getDate());
+    
+    // Если новый день больше старого, значит появился новый день
+    return maxNewDay.getTime() > maxOldDay.getTime();
 }
 
 let lastEventTimestamp = 0;
@@ -546,17 +645,18 @@ function isImportantEvent(event) {
 }
 
 /**
- * Группирует события по времени (группы по 5 минут)
+ * Группирует события по дням
  * @param events Массив событий
- * @returns Map с ключами-группами времени и массивами событий
+ * @returns Map с ключами-днями (timestamp начала дня) и массивами событий
  */
 function groupEventsByTime(events) {
     const groups = new Map();
-    const groupIntervalMs = 5 * 60 * 1000; // 5 минут
     
     events.forEach(event => {
-        // Округляем timestamp до интервала группы
-        const groupKey = Math.floor(event.timestamp / groupIntervalMs) * groupIntervalMs;
+        const eventDate = new Date(event.timestamp);
+        // Нормализуем дату до начала дня (00:00:00)
+        const dayStart = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+        const groupKey = dayStart.getTime();
         
         if (!groups.has(groupKey)) {
             groups.set(groupKey, []);
@@ -568,24 +668,27 @@ function groupEventsByTime(events) {
 }
 
 /**
- * Форматирует время группы
- * @param timestamp Timestamp группы
- * @returns Отформатированная строка времени
+ * Форматирует дату группы событий
+ * @param timestamp Timestamp начала дня группы
+ * @returns Отформатированная строка даты
  */
 function formatGroupTime(timestamp) {
     const date = new Date(timestamp);
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
     const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     
     if (eventDate.getTime() === today.getTime()) {
-        return `Today, ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+        return 'Today';
+    } else if (eventDate.getTime() === yesterday.getTime()) {
+        return 'Yesterday';
     } else {
-        return date.toLocaleString('ru-RU', { 
+        return date.toLocaleDateString('ru-RU', { 
             day: '2-digit', 
-            month: '2-digit', 
-            hour: '2-digit', 
-            minute: '2-digit' 
+            month: '2-digit',
+            year: 'numeric'
         });
     }
 }
@@ -619,12 +722,15 @@ function renderFilteredEvents(events) {
     // Определяем новые события (из отфильтрованных)
     const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
 
-    // Группируем события по времени
+    // Группируем события по дням
     const eventGroups = groupEventsByTime(filteredEvents);
-    const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]); // Сортируем по времени (новые сверху)
+    // Сортируем группы по дате (новые дни сверху)
+    const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]);
 
     let html = '';
     sortedGroups.forEach(([groupTimestamp, groupEvents]) => {
+        // Сортируем события внутри группы по времени (новые сверху)
+        const sortedGroupEvents = [...groupEvents].sort((a, b) => b.timestamp - a.timestamp);
         const groupId = `event-group-${groupTimestamp}`;
         const hasImportantEvents = groupEvents.some(e => isImportantEvent(e));
         const groupClass = hasImportantEvents ? 'event-group-important' : '';
@@ -637,7 +743,7 @@ function renderFilteredEvents(events) {
                     <span class="event-group-toggle" id="toggle-${groupId}">▼</span>
                 </div>
                 <div class="event-group-content" id="content-${groupId}">
-                    ${groupEvents.map((event, index) => {
+                    ${sortedGroupEvents.map((event, index) => {
                         const typeClass = event.type.includes('point') ? 'event-type-points' :
                                          event.type.includes('stream') ? 'event-type-stream' :
                                          event.type.includes('claim') ? 'event-type-claim' : '';
@@ -668,6 +774,26 @@ function renderFilteredEvents(events) {
     });
 
     list.innerHTML = html;
+    
+    // Добавляем триггер для бесконечной прокрутки в конец списка
+    if (hasMoreEvents && !isLoadingEvents) {
+        const loadMoreTrigger = document.createElement('div');
+        loadMoreTrigger.id = 'loadMoreTrigger';
+        loadMoreTrigger.style.height = '20px';
+        loadMoreTrigger.style.width = '100%';
+        list.appendChild(loadMoreTrigger);
+        
+        // Устанавливаем observer для нового триггера
+        if (window.eventsScrollObserver) {
+            window.eventsScrollObserver.observe(loadMoreTrigger);
+        }
+    } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
+        // Показываем сообщение, что все события загружены
+        const endMarker = document.createElement('div');
+        endMarker.style.cssText = 'text-align: center; padding: 20px; color: #adadb8; font-size: 14px;';
+        endMarker.textContent = 'All events loaded';
+        list.appendChild(endMarker);
+    }
 
     // Убираем класс new после анимации
     setTimeout(() => {
@@ -696,23 +822,88 @@ function toggleEventGroup(groupId) {
     }
 }
 
-async function updateEvents() {
-    const events = await fetchData('/events?limit=20');
-    if (!events) return;
-
-    // Сохраняем события в кэш
-    cachedEvents = events;
-
-    // Обновляем доступные теги
-    updateAvailableTags(events);
-
-    // Обновляем timestamp для определения новых событий
-    if (events.length > 0) {
-        lastEventTimestamp = events[0].timestamp;
+async function updateEvents(reset = false) {
+    if (reset) {
+        eventsOffset = 0;
+        allLoadedEvents = [];
+        hasMoreEvents = true;
     }
+    
+    if (isLoadingEvents || !hasMoreEvents) return;
+    
+    isLoadingEvents = true;
+    
+    try {
+        const response = await fetchData(`/events?limit=${eventsPageSize}&offset=${eventsOffset}`);
+        if (!response || !response.events) {
+            isLoadingEvents = false;
+            return;
+        }
 
-    // Отображаем отфильтрованные события
-    renderFilteredEvents(events);
+        const newEvents = response.events;
+        hasMoreEvents = response.hasMore;
+        
+        // Добавляем новые события к уже загруженным
+        allLoadedEvents = [...allLoadedEvents, ...newEvents];
+        eventsOffset += newEvents.length;
+
+        // Сохраняем события в кэш
+        cachedEvents = allLoadedEvents;
+
+        // Обновляем доступные теги
+        updateAvailableTags(allLoadedEvents);
+
+        // Обновляем timestamp для определения новых событий
+        if (allLoadedEvents.length > 0) {
+            lastEventTimestamp = allLoadedEvents[0].timestamp;
+        }
+
+        // Отображаем отфильтрованные события
+        renderFilteredEvents(allLoadedEvents);
+        
+        // Устанавливаем observer для бесконечной прокрутки
+        setupInfiniteScroll();
+    } finally {
+        isLoadingEvents = false;
+    }
+}
+
+/**
+ * Настраивает бесконечную прокрутку для событий
+ */
+function setupInfiniteScroll() {
+    const eventsList = document.getElementById('eventsList');
+    if (!eventsList) return;
+    
+    // Удаляем старый observer, если есть
+    if (window.eventsScrollObserver) {
+        window.eventsScrollObserver.disconnect();
+    }
+    
+    // Создаем элемент-триггер для загрузки
+    let loadMoreTrigger = document.getElementById('loadMoreTrigger');
+    if (!loadMoreTrigger) {
+        loadMoreTrigger = document.createElement('div');
+        loadMoreTrigger.id = 'loadMoreTrigger';
+        loadMoreTrigger.style.height = '20px';
+        loadMoreTrigger.style.width = '100%';
+        eventsList.appendChild(loadMoreTrigger);
+    }
+    
+    // Создаем Intersection Observer
+    window.eventsScrollObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
+                updateEvents(false);
+            }
+        });
+    }, {
+        root: null,
+        rootMargin: '100px',
+        threshold: 0.1
+    });
+    
+    window.eventsScrollObserver.observe(loadMoreTrigger);
 }
 
 async function updateTokenInfo() {
@@ -798,7 +989,7 @@ async function updateAll() {
     await Promise.all([
         updateOverallStats(),
         updateStatistics(),
-        updateEvents(),
+        updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
         updatePointsChart(),
         updateCriticalNotifications(),
         updateTokenInfo()
@@ -936,6 +1127,33 @@ function closeExportDropdown() {
     dropdown.classList.remove('show');
 }
 
+/**
+ * Переключает видимость колонки таблицы
+ * @param {string} columnKey Ключ колонки
+ * @param {boolean} visible Видимость колонки
+ */
+function toggleColumnVisibility(columnKey, visible) {
+    visibleColumns[columnKey] = visible;
+    localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns));
+    updateStatistics();
+}
+
+/**
+ * Открывает/закрывает меню настроек колонок
+ */
+function toggleColumnSettings() {
+    const dropdown = document.getElementById('columnSettingsDropdown');
+    dropdown.classList.toggle('show');
+}
+
+/**
+ * Закрывает меню настроек колонок
+ */
+function closeColumnSettings() {
+    const dropdown = document.getElementById('columnSettingsDropdown');
+    dropdown.classList.remove('show');
+}
+
 window.addEventListener('load', () => {
     // Восстанавливаем состояние кнопки показа/скрытия офлайн стримеров
     const toggleText = document.getElementById('toggleOfflineText');
@@ -1005,7 +1223,36 @@ window.addEventListener('load', () => {
         if (exportDropdown && !exportDropdown.contains(e.target) && !exportBtn.contains(e.target)) {
             closeExportDropdown();
         }
+        
+        const columnSettingsBtn = document.getElementById('columnSettingsBtn');
+        const columnSettingsDropdown = document.getElementById('columnSettingsDropdown');
+        if (columnSettingsDropdown && !columnSettingsDropdown.contains(e.target) && columnSettingsBtn && !columnSettingsBtn.contains(e.target)) {
+            closeColumnSettings();
+        }
     });
+    
+    // Инициализируем чекбоксы для колонок
+    const columnCheckboxes = document.querySelectorAll('#columnSettingsDropdown input[type="checkbox"]');
+    columnCheckboxes.forEach(checkbox => {
+        const columnKey = checkbox.dataset.column;
+        checkbox.checked = visibleColumns[columnKey] !== false;
+        
+        checkbox.addEventListener('change', (e) => {
+            toggleColumnVisibility(columnKey, e.target.checked);
+        });
+    });
+    
+    // Обработчик для кнопки настроек колонок
+    const columnSettingsBtn = document.getElementById('columnSettingsBtn');
+    if (columnSettingsBtn) {
+        columnSettingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleColumnSettings();
+        });
+    }
+    
+    // Инициализируем загрузку событий с пагинацией
+    updateEvents(true);
 });
 
 /**

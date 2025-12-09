@@ -503,6 +503,17 @@ export class WebSocketManager {
           });
         }
         
+        // Если не удалось найти по балансу, но это первое событие (earned = 0 или очень маленькое)
+        // и есть только один онлайн стример без установленных баллов, приписываем ему
+        if (!streamerInfo && earned <= 10) {
+          const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline && s.initialChannelPoints === null);
+          if (onlineStreamers.length === 1) {
+            // Если только один онлайн стример без начальных баллов, это скорее всего для него
+            streamerInfo = onlineStreamers[0];
+            logger.verbose(`💰  Assuming first points-earned event for ${streamerInfo.username} (only online streamer without initial points)`);
+          }
+        }
+        
         // Если не удалось точно определить стримера - игнорируем событие
         // Это безопаснее, чем приписывать баллы неправильному стримеру
         if (!streamerInfo) {
@@ -510,7 +521,7 @@ export class WebSocketManager {
           logger.verbose(`⚠️  No channel_id in points-earned message, and cannot determine streamer by exact balance match`);
           logger.verbose(`   Event balance: ${balance}, earned: ${earned}`);
           if (onlineStreamers.length > 0) {
-            logger.verbose(`   Online streamers: ${onlineStreamers.map(s => `${s.username} (balance: ${s.channelPoints}, last: ${s.lastChannelPoints})`).join(', ')}`);
+            logger.verbose(`   Online streamers: ${onlineStreamers.map(s => `${s.username} (balance: ${s.channelPoints}, last: ${s.lastChannelPoints}, initial: ${s.initialChannelPoints})`).join(', ')}`);
           }
           logger.verbose(`   Ignoring event to prevent incorrect attribution.`);
           return; // Игнорируем событие, если не можем точно определить стримера
@@ -520,15 +531,19 @@ export class WebSocketManager {
       // Если мы дошли сюда, значит streamerInfo точно найден (иначе был бы return выше)
       // Обрабатываем событие для найденного стримера
       const oldBalance = streamerInfo.channelPoints;
+      const wasInitialNull = streamerInfo.initialChannelPoints === null;
+      
       streamerInfo.channelPoints = balance;
       streamerInfo.lastChannelPoints = balance;
 
       // Если initialChannelPoints еще не установлен, устанавливаем его
       if (streamerInfo.initialChannelPoints === null) {
         streamerInfo.initialChannelPoints = balance;
+        logger.info(`💰  [${streamerInfo.username}] Initial balance set from WebSocket: ${balance}`);
       }
 
-      if (oldBalance !== balance) {
+      // Логируем обновление баланса (включая первое установление)
+      if (oldBalance !== balance || wasInitialNull) {
         logger.info(`📊  [${streamerInfo.username}] Balance updated: ${oldBalance} → ${balance} (earned: ${earned}, reason: ${reason})`);
       }
 

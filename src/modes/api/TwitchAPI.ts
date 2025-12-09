@@ -544,7 +544,8 @@ export class TwitchAPI {
           streamerInfo.channelPoints = pointsInfo.balance;
           logger.info(`💰  [${username}] Initial points: ${pointsInfo.balance}`);
         } else {
-          logger.warn(`⚠️  [${username}] Не удалось получить начальные баллы при инициализации`);
+          // Это не критично - баллы обновятся через WebSocket при первом событии points-earned
+          logger.verbose(`ℹ️  [${username}] Initial points not available via GraphQL, will be set from WebSocket`);
         }
       }
 
