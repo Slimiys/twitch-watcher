@@ -250,6 +250,7 @@ export class GraphQLClient {
     balance: number;
     availableClaim: { id: string } | null;
   } | null> {
+    // Сначала пробуем с persisted query
     const operation = {
       operationName: 'ChannelPointsContext',
       variables: { channelLogin: username },
@@ -261,18 +262,37 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
+    let response = await this.postRequest(operation);
     
-    // Проверяем на ошибку PersistedQueryNotFound - это не критично, так как баллы обновляются через WebSocket
+    // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
     if (response.errors && response.errors.length > 0) {
       const hasPersistedQueryError = response.errors.some((e: any) => 
         e.message && e.message.includes('PersistedQueryNotFound')
       );
       
       if (hasPersistedQueryError) {
-        // PersistedQueryNotFound - это не критичная ошибка, так как баллы обновляются через WebSocket в реальном времени
-        // Просто возвращаем null без логирования ошибки
-        return null;
+        // Пробуем отправить полный GraphQL запрос без persisted query
+        logger.verbose(`⚠️  PersistedQueryNotFound for ChannelPointsContext, trying full query`);
+        const fullOperation = {
+          operationName: 'ChannelPointsContext',
+          variables: { channelLogin: username },
+          query: `query ChannelPointsContext($channelLogin: String!) {
+            community {
+              channel(login: $channelLogin) {
+                self {
+                  communityPoints {
+                    balance
+                    availableClaim {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        };
+        
+        response = await this.postRequest(fullOperation);
       }
     }
     
