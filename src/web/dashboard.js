@@ -441,9 +441,87 @@ async function updatePointsChart() {
             plugins: zoomPlugin ? [zoomPlugin] : []
         });
     } else {
+        // Сохраняем старые данные для проверки появления нового дня
+        const oldDatasets = pointsChart.data.datasets.map(ds => ({
+            label: ds.label,
+            data: ds.data ? ds.data.map(p => ({ x: new Date(p.x), y: p.y })) : []
+        }));
+        
+        // Обновляем данные
         pointsChart.data.datasets = datasets;
-        pointsChart.update(); // Обновляем график с анимацией
+        
+        // Проверяем, появился ли новый день
+        const hasNewDay = checkForNewDay(oldDatasets, datasets);
+        
+        if (hasNewDay) {
+            // Если появился новый день, сбрасываем зум и границы масштаба
+            if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
+                try {
+                    pointsChart.resetZoom();
+                } catch (e) {
+                    // Игнорируем ошибки сброса зума
+                }
+            }
+            
+            // Сбрасываем границы масштаба, чтобы Chart.js пересчитал их на основе новых данных
+            if (pointsChart.options.scales && pointsChart.options.scales.x) {
+                delete pointsChart.options.scales.x.min;
+                delete pointsChart.options.scales.x.max;
+            }
+        }
+        
+        // Обновляем график без анимации для мгновенного отображения изменений
+        pointsChart.update('none');
     }
+}
+
+/**
+ * Проверяет, появился ли новый день в данных графика
+ * @param {Array} oldDatasets Старые наборы данных
+ * @param {Array} newDatasets Новые наборы данных
+ * @returns {boolean} true если появился новый день
+ */
+function checkForNewDay(oldDatasets, newDatasets) {
+    if (!oldDatasets || oldDatasets.length === 0) return false;
+    
+    // Находим максимальную дату в старых данных
+    let maxOldDate = null;
+    oldDatasets.forEach(dataset => {
+        if (dataset.data && dataset.data.length > 0) {
+            dataset.data.forEach(point => {
+                const date = point.x instanceof Date ? point.x : new Date(point.x);
+                if (!maxOldDate || date > maxOldDate) {
+                    maxOldDate = date;
+                }
+            });
+        }
+    });
+    
+    if (!maxOldDate) return false;
+    
+    // Нормализуем до начала дня
+    const maxOldDay = new Date(maxOldDate.getFullYear(), maxOldDate.getMonth(), maxOldDate.getDate());
+    
+    // Находим максимальную дату в новых данных
+    let maxNewDate = null;
+    newDatasets.forEach(dataset => {
+        if (dataset.data && dataset.data.length > 0) {
+            dataset.data.forEach(point => {
+                const date = point.x instanceof Date ? point.x : new Date(point.x);
+                if (!maxNewDate || date > maxNewDate) {
+                    maxNewDate = date;
+                }
+            });
+        }
+    });
+    
+    if (!maxNewDate) return false;
+    
+    // Нормализуем до начала дня
+    const maxNewDay = new Date(maxNewDate.getFullYear(), maxNewDate.getMonth(), maxNewDate.getDate());
+    
+    // Если новый день больше старого, значит появился новый день
+    return maxNewDay.getTime() > maxOldDay.getTime();
 }
 
 let lastEventTimestamp = 0;
@@ -546,17 +624,18 @@ function isImportantEvent(event) {
 }
 
 /**
- * Группирует события по времени (группы по 5 минут)
+ * Группирует события по дням
  * @param events Массив событий
- * @returns Map с ключами-группами времени и массивами событий
+ * @returns Map с ключами-днями (timestamp начала дня) и массивами событий
  */
 function groupEventsByTime(events) {
     const groups = new Map();
-    const groupIntervalMs = 5 * 60 * 1000; // 5 минут
     
     events.forEach(event => {
-        // Округляем timestamp до интервала группы
-        const groupKey = Math.floor(event.timestamp / groupIntervalMs) * groupIntervalMs;
+        const eventDate = new Date(event.timestamp);
+        // Нормализуем дату до начала дня (00:00:00)
+        const dayStart = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+        const groupKey = dayStart.getTime();
         
         if (!groups.has(groupKey)) {
             groups.set(groupKey, []);
@@ -568,24 +647,27 @@ function groupEventsByTime(events) {
 }
 
 /**
- * Форматирует время группы
- * @param timestamp Timestamp группы
- * @returns Отформатированная строка времени
+ * Форматирует дату группы событий
+ * @param timestamp Timestamp начала дня группы
+ * @returns Отформатированная строка даты
  */
 function formatGroupTime(timestamp) {
     const date = new Date(timestamp);
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
     const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     
     if (eventDate.getTime() === today.getTime()) {
-        return `Today, ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+        return 'Today';
+    } else if (eventDate.getTime() === yesterday.getTime()) {
+        return 'Yesterday';
     } else {
-        return date.toLocaleString('ru-RU', { 
+        return date.toLocaleDateString('ru-RU', { 
             day: '2-digit', 
-            month: '2-digit', 
-            hour: '2-digit', 
-            minute: '2-digit' 
+            month: '2-digit',
+            year: 'numeric'
         });
     }
 }
@@ -619,12 +701,15 @@ function renderFilteredEvents(events) {
     // Определяем новые события (из отфильтрованных)
     const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
 
-    // Группируем события по времени
+    // Группируем события по дням
     const eventGroups = groupEventsByTime(filteredEvents);
-    const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]); // Сортируем по времени (новые сверху)
+    // Сортируем группы по дате (новые дни сверху)
+    const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]);
 
     let html = '';
     sortedGroups.forEach(([groupTimestamp, groupEvents]) => {
+        // Сортируем события внутри группы по времени (новые сверху)
+        const sortedGroupEvents = [...groupEvents].sort((a, b) => b.timestamp - a.timestamp);
         const groupId = `event-group-${groupTimestamp}`;
         const hasImportantEvents = groupEvents.some(e => isImportantEvent(e));
         const groupClass = hasImportantEvents ? 'event-group-important' : '';
@@ -637,7 +722,7 @@ function renderFilteredEvents(events) {
                     <span class="event-group-toggle" id="toggle-${groupId}">▼</span>
                 </div>
                 <div class="event-group-content" id="content-${groupId}">
-                    ${groupEvents.map((event, index) => {
+                    ${sortedGroupEvents.map((event, index) => {
                         const typeClass = event.type.includes('point') ? 'event-type-points' :
                                          event.type.includes('stream') ? 'event-type-stream' :
                                          event.type.includes('claim') ? 'event-type-claim' : '';
