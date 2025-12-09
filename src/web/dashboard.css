@@ -427,6 +427,67 @@ td {
     background: #3a3a3d;
 }
 
+.column-settings-menu {
+    position: relative;
+}
+
+.column-settings-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 6px;
+    min-width: 200px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    display: none;
+    z-index: 1000;
+}
+
+.column-settings-dropdown.show {
+    display: block;
+}
+
+.column-settings-header {
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #efeff1;
+    border-bottom: 1px solid #26262c;
+}
+
+.column-settings-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid #26262c;
+}
+
+.column-settings-item:last-child {
+    border-bottom: none;
+}
+
+.column-settings-item:hover {
+    background: #26262c;
+}
+
+.column-settings-item input[type="checkbox"] {
+    margin-right: 10px;
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    accent-color: #9147ff;
+}
+
+.column-settings-item span {
+    font-size: 14px;
+    color: #efeff1;
+    user-select: none;
+}
+
 .toggle-btn:hover {
     background: #772ce8;
 }
