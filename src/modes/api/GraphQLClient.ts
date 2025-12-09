@@ -90,6 +90,15 @@ export class GraphQLClient {
                 // Можно логировать только в debug режиме, если нужно
               } else if (error.message && error.message.includes('service timeout')) {
                 // Service timeout - это нормально при переходе стримера в офлайн, не логируем как ошибку
+              } else if (error.message && error.message.includes('PersistedQueryNotFound')) {
+                // PersistedQueryNotFound - это не критичная ошибка для ChannelPointsContext,
+                // так как баллы обновляются через WebSocket в реальном времени
+                // Логируем только в verbose режиме, чтобы не засорять логи
+                if (operation.operationName === 'ChannelPointsContext') {
+                  logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - баллы обновляются через WebSocket`);
+                } else {
+                  logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
+                }
               } else {
                 // Для других ошибок выводим полную информацию
                 logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
@@ -241,6 +250,7 @@ export class GraphQLClient {
     balance: number;
     availableClaim: { id: string } | null;
   } | null> {
+    // Сначала пробуем с persisted query
     const operation = {
       operationName: 'ChannelPointsContext',
       variables: { channelLogin: username },
@@ -252,7 +262,39 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
+    let response = await this.postRequest(operation);
+    
+    // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
+    if (response.errors && response.errors.length > 0) {
+      const hasPersistedQueryError = response.errors.some((e: any) => 
+        e.message && e.message.includes('PersistedQueryNotFound')
+      );
+      
+      if (hasPersistedQueryError) {
+        // Пробуем отправить полный GraphQL запрос без persisted query
+        logger.verbose(`⚠️  PersistedQueryNotFound for ChannelPointsContext, trying full query`);
+        const fullOperation = {
+          operationName: 'ChannelPointsContext',
+          variables: { channelLogin: username },
+          query: `query ChannelPointsContext($channelLogin: String!) {
+            community {
+              channel(login: $channelLogin) {
+                self {
+                  communityPoints {
+                    balance
+                    availableClaim {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        };
+        
+        response = await this.postRequest(fullOperation);
+      }
+    }
     
     // Пробуем стандартный путь: community.channel.self.communityPoints
     if (response.data?.community?.channel?.self?.communityPoints) {
@@ -275,8 +317,14 @@ export class GraphQLClient {
     // Логируем, если структура ответа неожиданная (только в verbose, так как баллы обновляются через WebSocket)
     if (response.data) {
       logger.verbose(`⚠️  Unexpected response structure for getChannelPoints(${username}):`, JSON.stringify(response.data).substring(0, 200));
-    } else if (response.errors) {
-      logger.warn(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+    } else if (response.errors && response.errors.length > 0) {
+      // Логируем другие ошибки только если это не PersistedQueryNotFound
+      const hasPersistedQueryError = response.errors.some((e: any) => 
+        e.message && e.message.includes('PersistedQueryNotFound')
+      );
+      if (!hasPersistedQueryError) {
+        logger.warn(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+      }
     }
     
     return null;

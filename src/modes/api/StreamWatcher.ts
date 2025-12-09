@@ -192,6 +192,23 @@ export class StreamWatcher {
           const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
           this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
+          // Если сессия еще не создана, но initialChannelPoints установлен через WebSocket, создаем сессию
+          // Это важно для случаев, когда GraphQL запрос не удался при инициализации
+          if (!this.activeSessions.has(streamerInfo.username) && 
+              streamerInfo.initialChannelPoints !== null && 
+              streamerInfo.isOnline &&
+              this.statisticsStorage) {
+            // Создаем сессию с начальными баллами, которые были установлены через WebSocket
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+            logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
+          }
+          
           // Обновляем активную сессию
           const sessionId = this.activeSessions.get(streamerInfo.username);
           if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
