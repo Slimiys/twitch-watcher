@@ -276,81 +276,52 @@ export class TwitchAPI {
    * @returns Обновленная информация о стримере
    */
   async updateStreamerInfo(streamerInfo: StreamerInfo): Promise<StreamerInfo> {
+    // GraphQL опционален - используем только если стример был офлайн для проверки статуса
+    // Если стример уже онлайн, полагаемся на WebSocket события
+    if (streamerInfo.isOnline) {
+      // Стример уже онлайн - не делаем GraphQL запросы для обновления метаданных
+      // WebSocket события более надежны для определения статуса
+      // Метаданные (title, game, tags) не критичны для работы системы
+      logger.verbose(`ℹ️  [${streamerInfo.username}] Already online, skipping GraphQL update (using WebSocket as primary source)`);
+      return streamerInfo;
+    }
+
+    // Если стример офлайн, пробуем проверить статус через GraphQL (опционально)
+    // Но не критично - WebSocket события stream-up/stream-down более надежны
     try {
-      // Получаем информацию о стриме
       const streamInfo = await this.graphqlClient.getStreamInfo(streamerInfo.username);
 
       if (streamInfo) {
         // Стример онлайн
-        const wasOffline = !streamerInfo.isOnline;
         streamerInfo.isOnline = true;
         streamerInfo.broadcastId = streamInfo.broadcastId;
         streamerInfo.title = streamInfo.title;
         streamerInfo.game = streamInfo.game?.name || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
-
-        // Если стример только что перешел из офлайн в онлайн, сбрасываем startTime
-        if (wasOffline) {
-          streamerInfo.startTime = Date.now();
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer came online, resetting watch time`);
-        }
+        streamerInfo.startTime = Date.now();
 
         // Получаем spade_url, если еще не получен
         if (!streamerInfo.spadeUrl) {
           streamerInfo.spadeUrl = await this.getSpadeUrl(streamerInfo.username);
         }
 
-        // Получаем информацию о баллах
-        const pointsInfo = await this.graphqlClient.getChannelPoints(streamerInfo.username);
-        if (pointsInfo) {
-          streamerInfo.channelPoints = pointsInfo.balance;
-          // Обновляем lastChannelPoints для корректного расчета заработанных баллов
-          streamerInfo.lastChannelPoints = pointsInfo.balance;
-          
-          // Если initialChannelPoints еще не установлен или стример только что вернулся онлайн, устанавливаем его
-          if (streamerInfo.initialChannelPoints === null || wasOffline) {
+        // Пробуем получить начальные баллы (опционально)
+        try {
+          const pointsInfo = await this.graphqlClient.getChannelPoints(streamerInfo.username);
+          if (pointsInfo && streamerInfo.initialChannelPoints === null) {
             streamerInfo.initialChannelPoints = pointsInfo.balance;
+            streamerInfo.lastChannelPoints = pointsInfo.balance;
+            streamerInfo.channelPoints = pointsInfo.balance;
           }
-          
-          // НЕ собираем бонус здесь - это делается через WebSocket событие claim-available
-          // Это предотвращает дублирование попыток сбора бонуса
-          // WebSocket более надежен и отправляет события в реальном времени
-        } else {
-          // Логируем, если не удалось получить баллы (только в verbose, так как баллы обновляются через WebSocket)
-          logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить информацию о баллах канала (баллы обновляются через WebSocket)`);
-        }
-      } else {
-        // Стример офлайн
-        const wasOnline = streamerInfo.isOnline;
-        streamerInfo.isOnline = false;
-        streamerInfo.broadcastId = null;
-        // Очищаем spade_url для офлайн стримера
-        streamerInfo.spadeUrl = null;
-        
-        // Если стример только что ушел офлайн, сбрасываем startTime
-        if (wasOnline) {
-          streamerInfo.startTime = 0;
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer went offline, resetting watch time`);
+        } catch (e: any) {
+          // Не критично - баллы обновятся через WebSocket
+          logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить начальные баллы через GraphQL (будут обновлены через WebSocket)`);
         }
       }
+      // Если streamInfo null - стример остается офлайн (WebSocket события обновят статус)
     } catch (error: any) {
-      // Обрабатываем ошибки GraphQL (например, service timeout)
-      if (error.message && error.message.includes('timeout')) {
-        logger.info(`⏱️  [${streamerInfo.username}] Timeout при обновлении информации (возможно, стример офлайн)`);
-        // Помечаем стримера как офлайн при timeout
-        const wasOnline = streamerInfo.isOnline;
-        streamerInfo.isOnline = false;
-        streamerInfo.broadcastId = null;
-        streamerInfo.spadeUrl = null;
-        
-        // Если стример был онлайн, сбрасываем startTime
-        if (wasOnline) {
-          streamerInfo.startTime = 0;
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer went offline (timeout), resetting watch time`);
-        }
-      } else {
-        logger.error(`❌  Error updating streamer info for ${streamerInfo.username}:`, error.message || error);
-      }
+      // Ошибки GraphQL не критичны - WebSocket события обновят статус
+      logger.verbose(`⚠️  [${streamerInfo.username}] GraphQL update failed (non-critical): ${error.message || error}`);
     }
 
     return streamerInfo;
@@ -531,21 +502,27 @@ export class TwitchAPI {
         lastChannelPoints: null,
       };
 
-      // Если онлайн, получаем полную информацию
+      // Если онлайн, пробуем получить метаданные (опционально)
+      // WebSocket события stream-up/stream-down более надежны для определения статуса
       if (streamerInfo.isOnline) {
         await this.updateStreamerInfo(streamerInfo);
         streamerInfo.startTime = Date.now();
         
-        // Получаем начальные баллы
-        const pointsInfo = await this.graphqlClient.getChannelPoints(username);
-        if (pointsInfo) {
-          streamerInfo.initialChannelPoints = pointsInfo.balance;
-          streamerInfo.lastChannelPoints = pointsInfo.balance;
-          streamerInfo.channelPoints = pointsInfo.balance;
-          logger.info(`💰  [${username}] Initial points: ${pointsInfo.balance}`);
-        } else {
-          // Это не критично - баллы обновятся через WebSocket при первом событии points-earned
-          logger.verbose(`ℹ️  [${username}] Initial points not available via GraphQL, will be set from WebSocket`);
+        // Пробуем получить начальные баллы (опционально)
+        try {
+          const pointsInfo = await this.graphqlClient.getChannelPoints(username);
+          if (pointsInfo) {
+            streamerInfo.initialChannelPoints = pointsInfo.balance;
+            streamerInfo.lastChannelPoints = pointsInfo.balance;
+            streamerInfo.channelPoints = pointsInfo.balance;
+            logger.info(`💰  [${username}] Initial points: ${pointsInfo.balance}`);
+          } else {
+            // Это не критично - баллы обновятся через WebSocket при первом событии points-earned
+            logger.verbose(`ℹ️  [${username}] Initial points not available via GraphQL, will be set from WebSocket`);
+          }
+        } catch (error: any) {
+          // Не критично - баллы будут установлены через WebSocket
+          logger.verbose(`ℹ️  [${username}] Failed to get initial points via GraphQL (will be set from WebSocket): ${error.message || error}`);
         }
       }
 

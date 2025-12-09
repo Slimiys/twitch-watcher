@@ -91,11 +91,21 @@ export class GraphQLClient {
               } else if (error.message && error.message.includes('service timeout')) {
                 // Service timeout - это нормально при переходе стримера в офлайн, не логируем как ошибку
               } else if (error.message && error.message.includes('PersistedQueryNotFound')) {
-                // PersistedQueryNotFound - это не критичная ошибка для ChannelPointsContext,
-                // так как баллы обновляются через WebSocket в реальном времени
-                // Логируем только в verbose режиме, чтобы не засорять логи
-                if (operation.operationName === 'ChannelPointsContext') {
-                  logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - баллы обновляются через WebSocket`);
+                // PersistedQueryNotFound - это не критичная ошибка
+                // Для ChannelPointsContext и VideoPlayerStreamInfoOverlayChannel логируем только в verbose,
+                // так как эти данные обновляются через WebSocket в реальном времени
+                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+                if (nonCriticalOperations.includes(operation.operationName)) {
+                  logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - данные обновляются через WebSocket`);
+                } else {
+                  logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
+                }
+              } else if (error.message && error.message.includes('Cannot query field')) {
+                // Ошибка "Cannot query field" означает, что структура API изменилась
+                // Это не критично для операций, которые имеют альтернативные источники данных
+                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+                if (nonCriticalOperations.includes(operation.operationName)) {
+                  logger.verbose(`⚠️  GraphQL API changed for ${operation.operationName}: ${error.message} - используем альтернативные источники`);
                 } else {
                   logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
                 }
@@ -131,12 +141,28 @@ export class GraphQLClient {
       // Если Circuit Breaker открыт, логируем это
       if (error.circuitBreakerOpen) {
         logger.warn(`⚠️  [GraphQL:${operation.operationName}] Circuit Breaker OPEN, запрос заблокирован`);
-        return {};
+        return { errors: [] };
       }
       
-      // Для других ошибок логируем и возвращаем пустой ответ
-      logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
-      return {};
+      // Для некритичных операций не логируем как ошибку
+      const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+      const isNonCritical = nonCriticalOperations.includes(operation.operationName);
+      
+      // Проверяем, является ли ошибка некритичной
+      const isNonCriticalError = error.message && (
+        error.message.includes('PersistedQueryNotFound') ||
+        error.message.includes('Cannot query field')
+      );
+      
+      if (isNonCritical && isNonCriticalError) {
+        // Для некритичных операций с некритичными ошибками не логируем
+        logger.verbose(`⚠️  [GraphQL:${operation.operationName}] ${error.message} - данные обновляются через альтернативные источники`);
+      } else {
+        // Для других ошибок логируем
+        logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
+      }
+      
+      return { errors: [{ message: error.message || 'Unknown error' }] };
     });
   }
 
@@ -204,6 +230,7 @@ export class GraphQLClient {
     tags: any[];
     viewersCount: number;
   } | null> {
+    // Сначала пробуем с persisted query
     const operation = {
       operationName: 'VideoPlayerStreamInfoOverlayChannel',
       variables: { channel: username },
@@ -216,7 +243,52 @@ export class GraphQLClient {
     };
 
     try {
-      const response = await this.postRequest(operation);
+      let response = await this.postRequest(operation);
+      
+      // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
+      if (response.errors && response.errors.length > 0) {
+        const hasPersistedQueryError = response.errors.some((e: any) => 
+          e.message && e.message.includes('PersistedQueryNotFound')
+        );
+        
+        if (hasPersistedQueryError) {
+          // Пробуем отправить полный GraphQL запрос без persisted query
+          logger.verbose(`⚠️  PersistedQueryNotFound for VideoPlayerStreamInfoOverlayChannel, trying full query`);
+          const fullOperation = {
+            operationName: 'VideoPlayerStreamInfoOverlayChannel',
+            variables: { channel: username },
+            query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
+              user(login: $channel) {
+                stream {
+                  id
+                  viewersCount
+                  tags {
+                    id
+                    name
+                    localizedName
+                  }
+                }
+                broadcastSettings {
+                  title
+                  game {
+                    id
+                    name
+                    displayName
+                  }
+                }
+              }
+            }`,
+          };
+          
+          try {
+            response = await this.postRequest(fullOperation);
+          } catch (e: any) {
+            // Если и полный запрос не работает, возвращаем null
+            logger.verbose(`⚠️  Full query also failed for getStreamInfo(${username}): ${e.message || e}`);
+            return null;
+          }
+        }
+      }
       
       if (response.data?.user?.stream) {
         const stream = response.data.user.stream;
@@ -231,11 +303,24 @@ export class GraphQLClient {
       
       return null;
     } catch (error: any) {
-      // Обрабатываем ошибки GraphQL (например, service timeout)
-      // При ошибках считаем, что стример офлайн или информация недоступна
+      // Обрабатываем ошибки GraphQL
+      // При ошибках не можем определить статус стримера, возвращаем null
+      // НО не помечаем стримера как офлайн - это сделает вызывающий код на основе других источников
       if (error.message && (error.message.includes('timeout') || error.message.includes('service timeout'))) {
         return null;
       }
+      
+      // Для ошибок типа "Cannot query field" или "PersistedQueryNotFound" 
+      // не пробрасываем исключение, а возвращаем null
+      // Это позволяет системе использовать другие источники информации (WebSocket)
+      if (error.message && (
+        error.message.includes('Cannot query field') ||
+        error.message.includes('PersistedQueryNotFound')
+      )) {
+        logger.verbose(`⚠️  GraphQL error for getStreamInfo(${username}): ${error.message} - используем альтернативные источники`);
+        return null;
+      }
+      
       // Для других ошибок пробрасываем дальше
       throw error;
     }
@@ -318,12 +403,17 @@ export class GraphQLClient {
     if (response.data) {
       logger.verbose(`⚠️  Unexpected response structure for getChannelPoints(${username}):`, JSON.stringify(response.data).substring(0, 200));
     } else if (response.errors && response.errors.length > 0) {
-      // Логируем другие ошибки только если это не PersistedQueryNotFound
+      // Не логируем ошибки для getChannelPoints - это опциональная операция
+      // Баллы обновляются через WebSocket в реальном времени
       const hasPersistedQueryError = response.errors.some((e: any) => 
         e.message && e.message.includes('PersistedQueryNotFound')
       );
-      if (!hasPersistedQueryError) {
-        logger.warn(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+      const hasCannotQueryFieldError = response.errors.some((e: any) => 
+        e.message && e.message.includes('Cannot query field')
+      );
+      // Логируем только в verbose режиме для некритичных ошибок
+      if (!hasPersistedQueryError && !hasCannotQueryFieldError) {
+        logger.verbose(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
       }
     }
     
