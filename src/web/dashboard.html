@@ -91,6 +91,38 @@
                             Add
                         </button>
                     </div>
+                    <div class="column-settings-menu">
+                        <button id="columnSettingsBtn" class="toggle-btn" title="Column settings">
+                            <span>⚙️</span>
+                        </button>
+                        <div class="column-settings-dropdown" id="columnSettingsDropdown">
+                            <div class="column-settings-header">Visible Columns</div>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="streamer" checked>
+                                <span>Streamer</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="status" checked>
+                                <span>Status</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="watchTime" checked>
+                                <span>Watch Time</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="pointsEarned" checked>
+                                <span>Points Earned</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="currentPoints" checked>
+                                <span>Current Points</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="actions" checked>
+                                <span>Actions</span>
+                            </label>
+                        </div>
+                    </div>
                     <button id="toggleOfflineBtn" class="toggle-btn">
                         <span id="toggleOfflineText">Hide Offline</span>
                     </button>
