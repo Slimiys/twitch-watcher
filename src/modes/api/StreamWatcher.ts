@@ -657,7 +657,13 @@ export class StreamWatcher {
         : 0;
       
       let pointsEarned = 0;
-      if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.lastChannelPoints !== null) {
+      // Используем channelPoints (текущий баланс) вместо lastChannelPoints
+      // чтобы учитывать все начисленные баллы, включая те, что получены через просмотр
+      // даже если не пришло событие points-earned через WebSocket
+      if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.channelPoints !== null) {
+        pointsEarned = streamerInfo.channelPoints - streamerInfo.initialChannelPoints;
+      } else if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.lastChannelPoints !== null) {
+        // Fallback на lastChannelPoints, если channelPoints не установлен
         pointsEarned = streamerInfo.lastChannelPoints - streamerInfo.initialChannelPoints;
       }
 
@@ -678,23 +684,35 @@ export class StreamWatcher {
    * @param streamerInfo Информация о стримере
    */
   private async updateInitialPoints(streamerInfo: StreamerInfo): Promise<void> {
-    const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
-    const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
-    
-    if (pointsInfo && streamerInfo.initialChannelPoints === null) {
-      streamerInfo.initialChannelPoints = pointsInfo.balance;
-      streamerInfo.lastChannelPoints = pointsInfo.balance;
-      streamerInfo.channelPoints = pointsInfo.balance;
+    // Пробуем получить начальные баллы через GraphQL (опционально)
+    // Если не получится - WebSocket событие points-earned установит их
+    try {
+      const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
+      const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+      
+      if (pointsInfo && streamerInfo.initialChannelPoints === null) {
+        streamerInfo.initialChannelPoints = pointsInfo.balance;
+        streamerInfo.lastChannelPoints = pointsInfo.balance;
+        streamerInfo.channelPoints = pointsInfo.balance;
+        logger.verbose(`💰  [${streamerInfo.username}] Initial points set via GraphQL: ${pointsInfo.balance}`);
+      }
+    } catch (error: any) {
+      // Не критично - баллы будут установлены при первом WebSocket событии points-earned
+      logger.verbose(`⚠️  [${streamerInfo.username}] Failed to get initial points via GraphQL (will be set from WebSocket): ${error.message || error}`);
     }
   }
 
   /**
    * Периодически проверяет статус стримеров
+   * ВАЖНО: WebSocket события stream-up/stream-down являются основным источником статуса
+   * GraphQL проверка используется только как fallback для стримеров, которые были офлайн
    */
   startStatusCheck(): void {
+    // Увеличиваем интервал до 5 минут, так как WebSocket события более надежны
+    // GraphQL проверка используется только как fallback
     setInterval(async () => {
       await this.checkStreamersStatus();
-    }, 60000); // Каждую минуту
+    }, 300000); // Каждые 5 минут (вместо 1 минуты)
   }
 
   /**

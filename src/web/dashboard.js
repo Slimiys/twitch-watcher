@@ -2,6 +2,10 @@ const API_BASE = '/api';
 let pointsChart = null;
 let updateInterval = null;
 
+// Настройки графика
+let chartMode = localStorage.getItem('chartMode') || 'accumulated'; // 'accumulated' или 'daily'
+let chartPeriod = localStorage.getItem('chartPeriod') || '30'; // 'all', '90', '30', '7', '1'
+
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = localStorage.getItem('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(localStorage.getItem('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
@@ -33,9 +37,190 @@ function formatTime(ms) {
     }
 }
 
+/**
+ * Генерирует прогресс-бар для времени просмотра
+ * @param {number} elapsedTime Время просмотра в миллисекундах
+ * @param {number} maxTime Максимальное время для расчета процента (по умолчанию 8 часов)
+ * @returns {string} HTML код прогресс-бара
+ */
+function generateWatchTimeProgress(elapsedTime, maxTime = 8 * 60 * 60 * 1000) {
+    const percentage = Math.min((elapsedTime / maxTime) * 100, 100);
+    const timeText = formatTime(elapsedTime);
+    
+    return `
+        <div class="watch-time-progress">
+            <div class="progress-bar-container">
+                <div class="progress-bar" style="width: ${percentage}%"></div>
+            </div>
+            <span class="progress-bar-text">${timeText}</span>
+        </div>
+    `;
+}
+
+/**
+ * Определяет категорию баллов и возвращает соответствующий класс
+ * @param {number} points Количество баллов
+ * @returns {string} Класс для стилизации
+ */
+function getPointsCategory(points) {
+    if (points >= 10000) return 'very-high';
+    if (points >= 5000) return 'high';
+    if (points >= 1000) return 'medium';
+    return 'low';
+}
+
+/**
+ * Генерирует бейдж с цветовым кодированием для баллов
+ * @param {number} points Количество баллов
+ * @returns {string} HTML код бейджа
+ */
+function generatePointsBadge(points) {
+    const category = getPointsCategory(points);
+    return `<span class="points-badge ${category}">${points.toLocaleString()}</span>`;
+}
+
+/**
+ * Получает иконку для типа события
+ * @param {string} eventType Тип события
+ * @returns {string} Эмодзи иконка
+ */
+function getEventIcon(eventType) {
+    const iconMap = {
+        'points-earned': '💰',
+        'claim-earned': '🎁',
+        'claim-success': '✅',
+        'stream-up': '📺',
+        'stream-down': '📴',
+        'token-expired': '⏰',
+        'token-invalid': '❌',
+        'raid-joined': '⚔️',
+        'bonus-claimed': '🎯',
+        'error': '⚠️',
+        'warning': '🔔',
+        'info': 'ℹ️',
+        'success': '✓'
+    };
+    
+    // Ищем точное совпадение или частичное
+    for (const [key, icon] of Object.entries(iconMap)) {
+        if (eventType.toLowerCase().includes(key.toLowerCase())) {
+            return icon;
+        }
+    }
+    
+    return '📌'; // Иконка по умолчанию
+}
+
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
+}
+
+/**
+ * Генерирует skeleton loader для карточек статистики
+ * @returns {string} HTML код skeleton loader
+ */
+function generateStatsSkeleton() {
+    return `
+        <div class="stats-grid">
+            ${Array.from({ length: 4 }).map(() => `
+                <div class="skeleton-stat-card">
+                    <div class="skeleton skeleton-stat-title"></div>
+                    <div class="skeleton skeleton-stat-value"></div>
+                    <div class="skeleton skeleton-stat-label"></div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+/**
+ * Генерирует skeleton loader для таблицы стримеров
+ * @param {number} rows Количество строк
+ * @returns {string} HTML код skeleton loader
+ */
+function generateTableSkeleton(rows = 5) {
+    return `
+        <div class="skeleton-table">
+            <div class="skeleton-table-header">
+                ${Array.from({ length: 6 }).map(() => `
+                    <div class="skeleton skeleton-table-header-cell"></div>
+                `).join('')}
+            </div>
+            ${Array.from({ length: rows }).map(() => `
+                <div class="skeleton-table-row">
+                    ${Array.from({ length: 6 }).map(() => `
+                        <div class="skeleton skeleton-table-cell"></div>
+                    `).join('')}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+/**
+ * Генерирует skeleton loader для графика
+ * @returns {string} HTML код skeleton loader
+ */
+function generateChartSkeleton() {
+    // Создаем несколько линий для имитации графика
+    const lines = Array.from({ length: 5 }).map((_, i) => {
+        const width = 60 + Math.random() * 40;
+        const left = 10 + i * 20;
+        const height = 20 + Math.random() * 200;
+        return `<div class="skeleton-chart-line" style="left: ${left}%; width: ${width}%; height: ${height}px;"></div>`;
+    }).join('');
+    
+    return `
+        <div class="skeleton-chart">
+            ${lines}
+        </div>
+    `;
+}
+
+/**
+ * Генерирует skeleton loader для списка событий
+ * @param {number} items Количество элементов
+ * @returns {string} HTML код skeleton loader
+ */
+function generateEventsSkeleton(items = 5) {
+    return `
+        <div class="events-list">
+            ${Array.from({ length: items }).map(() => `
+                <div class="skeleton-event-item">
+                    <div class="skeleton skeleton-event-time"></div>
+                    <div class="skeleton skeleton-event-icon"></div>
+                    <div class="skeleton skeleton-event-type"></div>
+                    <div class="skeleton skeleton-event-content"></div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+/**
+ * Плавно заменяет skeleton loader на реальный контент
+ * @param {HTMLElement} container Контейнер с skeleton
+ * @param {string} newContent Новый контент
+ */
+function replaceSkeletonWithContent(container, newContent) {
+    if (!container) return;
+    
+    // Добавляем класс для анимации исчезновения
+    container.classList.add('skeleton-fade-out');
+    
+    setTimeout(() => {
+        // Заменяем содержимое
+        container.innerHTML = newContent;
+        // Добавляем класс для анимации появления
+        container.classList.remove('skeleton-fade-out');
+        container.classList.add('content-fade-in');
+        
+        // Убираем класс после завершения анимации
+        setTimeout(() => {
+            container.classList.remove('content-fade-in');
+        }, 400);
+    }, 300);
 }
 
 /**
@@ -105,7 +290,24 @@ function updateConnectionStatus(connected) {
     }
 }
 
+// Сохраняем предыдущие значения для анимации изменений
+let previousStats = {
+    activeWatches: 0,
+    totalPointsEarned: 0,
+    streamersCount: 0,
+    lastActivity: 0
+};
+
 async function updateOverallStats() {
+    const statsContainer = document.querySelector('.stats-grid');
+    const hasContent = statsContainer && statsContainer.querySelector('.stat-card');
+    const hasSkeleton = statsContainer && statsContainer.querySelector('.skeleton-stat-card');
+    
+    // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
+    if (!hasContent && !hasSkeleton && statsContainer) {
+        statsContainer.innerHTML = generateStatsSkeleton();
+    }
+    
     const stats = await fetchData('/overall');
     if (!stats) {
         updateConnectionStatus(false);
@@ -114,33 +316,126 @@ async function updateOverallStats() {
         if (statusText) {
             statusText.textContent = 'Service unavailable';
         }
+        // Если был skeleton, заменяем на сообщение об ошибке
+        if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
+            statsContainer.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">Failed to load statistics</p>';
+        }
         return;
     }
 
     updateConnectionStatus(true);
 
-    // Анимация обновления
-    const cards = document.querySelectorAll('.stat-card');
-    cards.forEach(card => {
-        card.classList.add('updating');
-        setTimeout(() => card.classList.remove('updating'), 300);
-    });
+    // Если был skeleton, заменяем плавно
+    if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
+        const newContent = `
+            <div class="stat-card">
+                <h3>Active Watches</h3>
+                <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
+                <div class="label">Currently watching</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Points</h3>
+                <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
+                <div class="label">Points earned</div>
+            </div>
+            <div class="stat-card">
+                <h3>Streamers</h3>
+                <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
+                <div class="label">Total streamers</div>
+            </div>
+            <div class="stat-card">
+                <h3>Last Activity</h3>
+                <div class="value" id="lastActivity">${formatTime(stats.lastActivity || 0)}</div>
+                <div class="label">Time ago</div>
+            </div>
+        `;
+        replaceSkeletonWithContent(statsContainer, newContent);
+    } else {
+        // Обычное обновление с анимацией
+        const cards = document.querySelectorAll('.stat-card');
+        cards.forEach(card => {
+            card.classList.add('updating');
+            setTimeout(() => card.classList.remove('updating'), 300);
+        });
 
-    document.getElementById('activeWatches').textContent = stats.activeWatches || 0;
-    document.getElementById('totalPoints').textContent = stats.totalPointsEarned || 0;
-    document.getElementById('streamersCount').textContent = stats.streamersCount || 0;
-    document.getElementById('lastActivity').textContent = formatTime(stats.lastActivity || 0);
+        // Обновляем значения с анимацией изменений
+        updateValueWithAnimation('activeWatches', stats.activeWatches || 0, previousStats.activeWatches);
+        updateValueWithAnimation('totalPoints', stats.totalPointsEarned || 0, previousStats.totalPointsEarned);
+        updateValueWithAnimation('streamersCount', stats.streamersCount || 0, previousStats.streamersCount);
+        
+        const lastActivityEl = document.getElementById('lastActivity');
+        if (lastActivityEl) {
+            const newValue = formatTime(stats.lastActivity || 0);
+            if (lastActivityEl.textContent !== newValue) {
+                lastActivityEl.classList.add('value-change');
+                lastActivityEl.textContent = newValue;
+                setTimeout(() => lastActivityEl.classList.remove('value-change'), 500);
+            } else {
+                lastActivityEl.textContent = newValue;
+            }
+        }
+    }
+
+    // Сохраняем текущие значения
+    previousStats = {
+        activeWatches: stats.activeWatches || 0,
+        totalPointsEarned: stats.totalPointsEarned || 0,
+        streamersCount: stats.streamersCount || 0,
+        lastActivity: stats.lastActivity || 0
+    };
+}
+
+/**
+ * Обновляет значение с анимацией изменения
+ * @param {string} elementId ID элемента
+ * @param {number} newValue Новое значение
+ * @param {number} oldValue Старое значение
+ */
+function updateValueWithAnimation(elementId, newValue, oldValue) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+
+    if (newValue !== oldValue) {
+        // Определяем направление изменения
+        const changeClass = newValue > oldValue ? 'positive' : 'negative';
+        element.classList.add('value-change', changeClass);
+        element.textContent = newValue.toLocaleString();
+        
+        setTimeout(() => {
+            element.classList.remove('value-change', 'positive', 'negative');
+        }, 500);
+    } else {
+        element.textContent = newValue.toLocaleString();
+    }
 }
 
 async function updateStatistics() {
+    const table = document.getElementById('watchesTable');
+    const hasContent = table && table.querySelector('table');
+    const hasSkeleton = table && table.querySelector('.skeleton-table');
+    
+    // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
+    if (!hasContent && !hasSkeleton && table) {
+        table.innerHTML = generateTableSkeleton(5);
+    }
+    
     // Запрашиваем всех стримеров, включая офлайн
     const stats = await fetchData('/statistics?includeOffline=true');
-    if (!stats) return;
+    if (!stats) {
+        // Если был skeleton, заменяем на сообщение об ошибке
+        if (table && table.querySelector('.skeleton-table')) {
+            table.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">Failed to load statistics</p>';
+        }
+        return;
+    }
 
-    const table = document.getElementById('watchesTable');
-    
     if (stats.length === 0) {
-        table.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
+        const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
+        if (table && table.querySelector('.skeleton-table')) {
+            replaceSkeletonWithContent(table, emptyMessage);
+        } else {
+            table.innerHTML = emptyMessage;
+        }
         return;
     }
 
@@ -158,9 +453,6 @@ async function updateStatistics() {
         return a.streamerName.localeCompare(b.streamerName);
     });
 
-    // Анимация обновления
-    table.classList.add('updating');
-    
     // Определяем колонки с их видимостью
     const columns = [
         { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
@@ -173,7 +465,7 @@ async function updateStatistics() {
     
     const visibleColumnsList = columns.filter(c => c.visible);
     
-    table.innerHTML = `
+    const tableContent = `
         <table>
             <thead>
                 <tr>
@@ -186,13 +478,15 @@ async function updateStatistics() {
                         ${visibleColumns.streamer !== false ? `<td class="streamer-name">${s.streamerName}</td>` : ''}
                         ${visibleColumns.status !== false ? `
                             <td>
-                                <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
-                                ${s.status}
+                                <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
+                                    <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
+                                    ${s.status}
+                                </span>
                             </td>
                         ` : ''}
-                        ${visibleColumns.watchTime !== false ? `<td>${formatTime(s.elapsedTime)}</td>` : ''}
-                        ${visibleColumns.pointsEarned !== false ? `<td>${s.pointsEarned}</td>` : ''}
-                        ${visibleColumns.currentPoints !== false ? `<td>${s.currentPoints}</td>` : ''}
+                        ${visibleColumns.watchTime !== false ? `<td>${generateWatchTimeProgress(s.elapsedTime)}</td>` : ''}
+                        ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
+                        ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
@@ -209,23 +503,202 @@ async function updateStatistics() {
         </table>
     `;
 
-    setTimeout(() => table.classList.remove('updating'), 300);
+    // Если был skeleton, заменяем плавно, иначе обычное обновление
+    if (table && table.querySelector('.skeleton-table')) {
+        replaceSkeletonWithContent(table, tableContent);
+    } else {
+        table.classList.add('updating');
+        table.innerHTML = tableContent;
+        setTimeout(() => table.classList.remove('updating'), 300);
+    }
 }
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
 
+/**
+ * Фильтрует историю по выбранному периоду
+ * @param {Array} history История баллов
+ * @param {string} period Период ('all', '90', '30', '7', '1')
+ * @returns {Array} Отфильтрованная история
+ */
+function filterHistoryByPeriod(history, period) {
+    if (period === 'all') return history;
+    
+    const now = Date.now();
+    const days = parseInt(period);
+    const cutoffDate = new Date(now - days * 24 * 60 * 60 * 1000);
+    
+    return history.filter(entry => new Date(entry.timestamp) >= cutoffDate);
+}
+
+/**
+ * Вычисляет статистику для графика
+ * @param {Array} history История баллов
+ * @param {string} mode Режим ('accumulated' или 'daily')
+ * @returns {Object} Статистика
+ */
+function calculateChartStats(history, mode) {
+    if (!history || history.length === 0) {
+        return {
+            total: 0,
+            average: 0,
+            max: 0,
+            trend: 'neutral'
+        };
+    }
+    
+    // Группируем по дням
+    const dailyPoints = new Map();
+    history.forEach(entry => {
+        const date = new Date(entry.timestamp);
+        const dayKey = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0];
+        
+        if (!dailyPoints.has(dayKey)) {
+            dailyPoints.set(dayKey, 0);
+        }
+        dailyPoints.set(dayKey, dailyPoints.get(dayKey) + entry.points);
+    });
+    
+    const dailyValues = Array.from(dailyPoints.values());
+    const total = dailyValues.reduce((sum, val) => sum + val, 0);
+    const average = dailyValues.length > 0 ? total / dailyValues.length : 0;
+    const max = dailyValues.length > 0 ? Math.max(...dailyValues) : 0;
+    
+    // Определяем тренд (сравниваем первую и вторую половину периода)
+    let trend = 'neutral';
+    if (dailyValues.length >= 4) {
+        const firstHalf = dailyValues.slice(0, Math.floor(dailyValues.length / 2));
+        const secondHalf = dailyValues.slice(Math.floor(dailyValues.length / 2));
+        const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+        const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+        
+        if (secondAvg > firstAvg * 1.1) trend = 'positive';
+        else if (secondAvg < firstAvg * 0.9) trend = 'negative';
+    }
+    
+    return { total, average, max, trend };
+}
+
+/**
+ * Обновляет карточки статистики графика
+ * @param {Object} stats Статистика
+ */
+function updateChartStats(stats) {
+    const statsGrid = document.getElementById('chartStatsGrid');
+    if (!statsGrid) return;
+    
+    if (stats.total === 0) {
+        statsGrid.style.display = 'none';
+        return;
+    }
+    
+    statsGrid.style.display = 'grid';
+    
+    const trendIcon = stats.trend === 'positive' ? '↑' : stats.trend === 'negative' ? '↓' : '→';
+    const trendClass = stats.trend === 'positive' ? 'positive' : stats.trend === 'negative' ? 'negative' : 'neutral';
+    
+    statsGrid.innerHTML = `
+        <div class="chart-stat-card">
+            <div class="chart-stat-label">Total Points</div>
+            <div class="chart-stat-value">${Math.round(stats.total).toLocaleString()}</div>
+        </div>
+        <div class="chart-stat-card">
+            <div class="chart-stat-label">Average per Day</div>
+            <div class="chart-stat-value">${Math.round(stats.average).toLocaleString()}</div>
+        </div>
+        <div class="chart-stat-card">
+            <div class="chart-stat-label">Max per Day</div>
+            <div class="chart-stat-value">${Math.round(stats.max).toLocaleString()}</div>
+        </div>
+        <div class="chart-stat-card">
+            <div class="chart-stat-label">Trend</div>
+            <div class="chart-stat-value">${trendIcon}</div>
+            <div class="chart-stat-change ${trendClass}">
+                ${stats.trend === 'positive' ? 'Increasing' : stats.trend === 'negative' ? 'Decreasing' : 'Stable'}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Экспортирует график как изображение
+ */
+function exportChart() {
+    if (!pointsChart) return;
+    
+    const canvas = document.getElementById('pointsChart');
+    if (!canvas) return;
+    
+    // Создаем ссылку для скачивания
+    const link = document.createElement('a');
+    link.download = `points-chart-${new Date().toISOString().split('T')[0]}.png`;
+    link.href = canvas.toDataURL('image/png');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+/**
+ * Сбрасывает зум графика
+ */
+function resetChartZoom() {
+    if (!pointsChart) return;
+    
+    if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
+        try {
+            pointsChart.resetZoom();
+            // Скрываем кнопку после сброса
+            const resetBtn = document.getElementById('resetZoomBtn');
+            if (resetBtn) {
+                resetBtn.style.display = 'none';
+            }
+        } catch (e) {
+            console.warn('Error resetting zoom:', e);
+        }
+    }
+}
+
 async function updatePointsChart() {
+    const chartContainer = document.querySelector('.chart-container');
+    const isFirstLoad = !pointsChart;
+    
+    // Показываем skeleton только при первой загрузке
+    if (isFirstLoad && chartContainer) {
+        const canvas = document.getElementById('pointsChart');
+        if (canvas && canvas.parentElement) {
+            canvas.parentElement.innerHTML = generateChartSkeleton();
+        }
+    }
+    
     const history = await fetchData('/points-history?limit=200');
     pointsHistoryCache = history || []; // Сохраняем в кэш для tooltip
     
     if (!history || history.length === 0) {
-        // Если истории нет, показываем пустой график
-        if (pointsChart) {
+        // Если был skeleton, заменяем на сообщение
+        if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
+            chartContainer.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 40px;">No points history available</p>';
+        } else if (pointsChart) {
+            // Если истории нет, показываем пустой график
             pointsChart.data.labels = [];
             pointsChart.data.datasets = [];
             pointsChart.update();
         }
+        // Скрываем статистику
+        const statsGrid = document.getElementById('chartStatsGrid');
+        if (statsGrid) statsGrid.style.display = 'none';
         return;
+    }
+    
+    // Фильтруем по периоду
+    const filteredHistory = filterHistoryByPeriod(history, chartPeriod);
+    
+    // Вычисляем статистику
+    const stats = calculateChartStats(filteredHistory, chartMode);
+    updateChartStats(stats);
+    
+    // Если был skeleton, восстанавливаем canvas
+    if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
+        chartContainer.innerHTML = '<canvas id="pointsChart"></canvas>';
     }
 
     const ctx = document.getElementById('pointsChart');
@@ -233,7 +706,7 @@ async function updatePointsChart() {
     // Группируем по стримерам и дням, суммируя баллы за каждый день
     const streamersMap = new Map();
     
-    history.forEach(entry => {
+    filteredHistory.forEach(entry => {
         const date = new Date(entry.timestamp);
         // Нормализуем дату до начала дня (00:00:00)
         const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -255,7 +728,7 @@ async function updatePointsChart() {
         daysMap.get(dayKey).points += entry.points;
     });
     
-    // Преобразуем в формат для графика и вычисляем накопленную сумму
+    // Преобразуем в формат для графика
     const datasetsData = new Map();
     streamersMap.forEach((daysMap, streamer) => {
         // Преобразуем Map в массив и сортируем по дате
@@ -267,16 +740,26 @@ async function updatePointsChart() {
             }))
             .sort((a, b) => a.x.getTime() - b.x.getTime());
         
-        // Вычисляем накопленную сумму баллов по дням
-        let accumulatedPoints = 0;
-        const processedData = daysArray.map(point => {
-            accumulatedPoints += point.y;
-            return {
+        // В зависимости от режима вычисляем накопленную сумму или оставляем дневные значения
+        let processedData;
+        if (chartMode === 'accumulated') {
+            let accumulatedPoints = 0;
+            processedData = daysArray.map(point => {
+                accumulatedPoints += point.y;
+                return {
+                    x: point.x,
+                    y: accumulatedPoints,
+                    dayKey: point.dayKey
+                };
+            });
+        } else {
+            // Режим дневных баллов
+            processedData = daysArray.map(point => ({
                 x: point.x,
-                y: accumulatedPoints,
+                y: point.y,
                 dayKey: point.dayKey
-            };
-        });
+            }));
+        }
         
         datasetsData.set(streamer, processedData);
     });
@@ -350,7 +833,22 @@ async function updatePointsChart() {
                             usePointStyle: true,
                             padding: 15
                         },
-                        position: 'top'
+                        position: 'top',
+                        onClick: function(e, legendItem, legend) {
+                            // Переключаем видимость линии при клике на легенду
+                            const index = legendItem.datasetIndex;
+                            const chart = legend.chart;
+                            const meta = chart.getDatasetMeta(index);
+                            
+                            meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
+                            chart.update();
+                            
+                            // Показываем кнопку Reset Zoom если график изменен
+                            const resetBtn = document.getElementById('resetZoomBtn');
+                            if (resetBtn) {
+                                resetBtn.style.display = 'flex';
+                            }
+                        }
                     },
                     tooltip: {
                         backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -385,7 +883,12 @@ async function updatePointsChart() {
                                 );
                                 
                                 const pointsGained = dayEvents.reduce((sum, e) => sum + e.points, 0);
-                                return `${dataset.label}: ${context.parsed.y} total (+${pointsGained} this day)`;
+                                
+                                if (chartMode === 'accumulated') {
+                                    return `${dataset.label}: ${context.parsed.y.toLocaleString()} total (+${pointsGained.toLocaleString()} this day)`;
+                                } else {
+                                    return `${dataset.label}: ${context.parsed.y.toLocaleString()} points`;
+                                }
                             }
                         }
                     }
@@ -427,7 +930,7 @@ async function updatePointsChart() {
                         },
                         title: {
                             display: true,
-                            text: 'Total Points Earned',
+                            text: chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day',
                             color: '#adadb8'
                         },
                         beginAtZero: true
@@ -454,6 +957,13 @@ async function updatePointsChart() {
                                     min: 'original',
                                     max: 'original'
                                 }
+                            },
+                            onZoomComplete: function({ chart }) {
+                                // Показываем кнопку Reset Zoom после зума
+                                const resetBtn = document.getElementById('resetZoomBtn');
+                                if (resetBtn) {
+                                    resetBtn.style.display = 'flex';
+                                }
                             }
                         }
                     }
@@ -471,6 +981,11 @@ async function updatePointsChart() {
         // Обновляем данные
         pointsChart.data.datasets = datasets;
         
+        // Обновляем заголовок оси Y в зависимости от режима
+        if (pointsChart.options.scales && pointsChart.options.scales.y && pointsChart.options.scales.y.title) {
+            pointsChart.options.scales.y.title.text = chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day';
+        }
+        
         // Проверяем, появился ли новый день
         const hasNewDay = checkForNewDay(oldDatasets, datasets);
         
@@ -479,6 +994,10 @@ async function updatePointsChart() {
             if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
                 try {
                     pointsChart.resetZoom();
+                    const resetBtn = document.getElementById('resetZoomBtn');
+                    if (resetBtn) {
+                        resetBtn.style.display = 'none';
+                    }
                 } catch (e) {
                     // Игнорируем ошибки сброса зума
                 }
@@ -699,9 +1218,21 @@ function formatGroupTime(timestamp) {
  */
 function renderFilteredEvents(events) {
     const list = document.getElementById('eventsList');
+    const hasContent = list && (list.querySelector('.event-group') || list.querySelector('table'));
+    const hasSkeleton = list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'));
+    
+    // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
+    if (!hasContent && !hasSkeleton && list) {
+        list.innerHTML = generateEventsSkeleton(5);
+    }
     
     if (events.length === 0) {
-        list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
+            replaceSkeletonWithContent(list, emptyMessage);
+        } else {
+            list.innerHTML = emptyMessage;
+        }
         return;
     }
 
@@ -760,9 +1291,11 @@ function renderFilteredEvents(events) {
                         const isImportant = isImportantEvent(event);
                         const importantClass = isImportant ? 'event-item-important' : '';
                         
+                        const eventIcon = getEventIcon(event.type);
                         return `
                             <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}">
                                 <span class="event-time">${formatTimestamp(event.timestamp)}</span>
+                                <span class="event-icon">${eventIcon}</span>
                                 <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
                                 <strong>${event.streamer}</strong>: ${event.message}
                             </div>
@@ -773,26 +1306,45 @@ function renderFilteredEvents(events) {
         `;
     });
 
-    list.innerHTML = html;
-    
-    // Добавляем триггер для бесконечной прокрутки в конец списка
-    if (hasMoreEvents && !isLoadingEvents) {
-        const loadMoreTrigger = document.createElement('div');
-        loadMoreTrigger.id = 'loadMoreTrigger';
-        loadMoreTrigger.style.height = '20px';
-        loadMoreTrigger.style.width = '100%';
-        list.appendChild(loadMoreTrigger);
-        
-        // Устанавливаем observer для нового триггера
-        if (window.eventsScrollObserver) {
-            window.eventsScrollObserver.observe(loadMoreTrigger);
+    // Если был skeleton, заменяем плавно
+    if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
+        // Добавляем триггер для бесконечной прокрутки перед заменой
+        if (hasMoreEvents && !isLoadingEvents) {
+            html += '<div id="loadMoreTrigger" style="height: 20px; width: 100%;"></div>';
+        } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
+            html += '<div style="text-align: center; padding: 20px; color: #adadb8; font-size: 14px;">All events loaded</div>';
         }
-    } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
-        // Показываем сообщение, что все события загружены
-        const endMarker = document.createElement('div');
-        endMarker.style.cssText = 'text-align: center; padding: 20px; color: #adadb8; font-size: 14px;';
-        endMarker.textContent = 'All events loaded';
-        list.appendChild(endMarker);
+        replaceSkeletonWithContent(list, html);
+        
+        // Устанавливаем observer после замены
+        setTimeout(() => {
+            const loadMoreTrigger = document.getElementById('loadMoreTrigger');
+            if (loadMoreTrigger && window.eventsScrollObserver) {
+                window.eventsScrollObserver.observe(loadMoreTrigger);
+            }
+        }, 500);
+    } else {
+        list.innerHTML = html;
+        
+        // Добавляем триггер для бесконечной прокрутки в конец списка
+        if (hasMoreEvents && !isLoadingEvents) {
+            const loadMoreTrigger = document.createElement('div');
+            loadMoreTrigger.id = 'loadMoreTrigger';
+            loadMoreTrigger.style.height = '20px';
+            loadMoreTrigger.style.width = '100%';
+            list.appendChild(loadMoreTrigger);
+            
+            // Устанавливаем observer для нового триггера
+            if (window.eventsScrollObserver) {
+                window.eventsScrollObserver.observe(loadMoreTrigger);
+            }
+        } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
+            // Показываем сообщение, что все события загружены
+            const endMarker = document.createElement('div');
+            endMarker.style.cssText = 'text-align: center; padding: 20px; color: #adadb8; font-size: 14px;';
+            endMarker.textContent = 'All events loaded';
+            list.appendChild(endMarker);
+        }
     }
 
     // Убираем класс new после анимации
@@ -1253,6 +1805,55 @@ window.addEventListener('load', () => {
     
     // Инициализируем загрузку событий с пагинацией
     updateEvents(true);
+    
+    // Обработчики для управления графиком
+    // Переключатель режима отображения
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            chartMode = mode;
+            localStorage.setItem('chartMode', mode);
+            
+            // Обновляем активную кнопку
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Обновляем график
+            updatePointsChart();
+        });
+    });
+    
+    // Восстанавливаем активный режим
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        if (btn.dataset.mode === chartMode) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Фильтр по периодам
+    const periodSelect = document.getElementById('chartPeriod');
+    if (periodSelect) {
+        periodSelect.value = chartPeriod;
+        periodSelect.addEventListener('change', (e) => {
+            chartPeriod = e.target.value;
+            localStorage.setItem('chartPeriod', chartPeriod);
+            updatePointsChart();
+        });
+    }
+    
+    // Кнопка сброса зума
+    const resetZoomBtn = document.getElementById('resetZoomBtn');
+    if (resetZoomBtn) {
+        resetZoomBtn.addEventListener('click', resetChartZoom);
+    }
+    
+    // Кнопка экспорта графика
+    const exportChartBtn = document.getElementById('exportChartBtn');
+    if (exportChartBtn) {
+        exportChartBtn.addEventListener('click', exportChart);
+    }
 });
 
 /**

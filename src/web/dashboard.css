@@ -79,10 +79,35 @@ h1 {
 
 .status-online {
     background: #00d166;
+    box-shadow: 0 0 8px rgba(0, 209, 102, 0.5);
 }
 
 .status-offline {
     background: #adadb8;
+}
+
+/* Улучшенные статусы с более контрастными цветами */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-badge.online {
+    background: rgba(0, 209, 102, 0.15);
+    color: #00d166;
+    border: 1px solid rgba(0, 209, 102, 0.3);
+}
+
+.status-badge.offline {
+    background: rgba(173, 173, 184, 0.15);
+    color: #adadb8;
+    border: 1px solid rgba(173, 173, 184, 0.3);
 }
 
 .stats-grid {
@@ -164,6 +189,176 @@ td {
     position: relative;
     height: 300px;
     margin-top: 20px;
+}
+
+/* Элементы управления графиком */
+/* Заголовок и элементы управления графиком */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.chart-title {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.chart-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.chart-mode-control,
+.chart-period-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.chart-control-label {
+    color: #adadb8;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.mode-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.mode-btn {
+    background: #18181b;
+    color: #adadb8;
+    border: 1px solid #26262c;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.mode-btn:hover {
+    background: #26262c;
+    color: #efeff1;
+}
+
+.mode-btn.active {
+    background: #9147ff;
+    color: white;
+    border-color: #9147ff;
+}
+
+.period-select {
+    background: #18181b;
+    color: #efeff1;
+    border: 1px solid #26262c;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.period-select:hover {
+    background: #26262c;
+    border-color: #9147ff;
+}
+
+.period-select:focus {
+    outline: none;
+    border-color: #9147ff;
+    box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.2);
+}
+
+.chart-control-btn {
+    background: #00d166;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.chart-btn-text {
+    white-space: nowrap;
+}
+
+.chart-control-btn:hover {
+    background: #00b855;
+}
+
+.chart-control-btn:active {
+    transform: scale(0.98);
+}
+
+/* Карточки статистики графика */
+.chart-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.chart-stat-card {
+    background: #1f1f23;
+    border-radius: 6px;
+    padding: 12px 15px;
+    border: 1px solid #26262c;
+}
+
+.chart-stat-label {
+    color: #adadb8;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+
+.chart-stat-value {
+    color: #efeff1;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.chart-stat-change {
+    font-size: 12px;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.chart-stat-change.positive {
+    color: #00d166;
+}
+
+.chart-stat-change.negative {
+    color: #ef4444;
+}
+
+.chart-stat-change.neutral {
+    color: #adadb8;
 }
 
 .events-list {
@@ -324,6 +519,7 @@ td {
     display: none;
 }
 
+/* Старый стиль loading (оставляем для обратной совместимости) */
 .loading {
     text-align: center;
     padding: 40px;
@@ -338,6 +534,165 @@ td {
 .loading::after {
     content: '...';
     animation: pulse 1.5s infinite;
+}
+
+/* Skeleton Loaders */
+.skeleton {
+    background: linear-gradient(90deg, #26262c 25%, #1f1f23 50%, #26262c 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* Skeleton для карточек статистики */
+.skeleton-stat-card {
+    background: #18181b;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #26262c;
+}
+
+.skeleton-stat-title {
+    height: 14px;
+    width: 120px;
+    margin-bottom: 10px;
+}
+
+.skeleton-stat-value {
+    height: 32px;
+    width: 80px;
+    margin-bottom: 5px;
+}
+
+.skeleton-stat-label {
+    height: 12px;
+    width: 100px;
+    margin-top: 5px;
+}
+
+/* Skeleton для таблицы */
+.skeleton-table {
+    width: 100%;
+}
+
+.skeleton-table-row {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr 1.5fr 1fr 1fr 1fr;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid #26262c;
+}
+
+.skeleton-table-cell {
+    height: 20px;
+    border-radius: 4px;
+}
+
+/* Альтернативный вариант для таблицы с фиксированными колонками */
+.skeleton-table-header {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr 1.5fr 1fr 1fr 1fr;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid #26262c;
+}
+
+.skeleton-table-header-cell {
+    height: 12px;
+    border-radius: 4px;
+}
+
+/* Skeleton для графика */
+.skeleton-chart {
+    height: 300px;
+    width: 100%;
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-chart-line {
+    position: absolute;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #26262c 25%, #1f1f23 50%, #26262c 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: 2px;
+}
+
+/* Skeleton для событий */
+.skeleton-event-item {
+    padding: 10px;
+    border-bottom: 1px solid #26262c;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.skeleton-event-time {
+    height: 12px;
+    width: 60px;
+    border-radius: 4px;
+}
+
+.skeleton-event-icon {
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+}
+
+.skeleton-event-type {
+    height: 20px;
+    width: 100px;
+    border-radius: 12px;
+}
+
+.skeleton-event-content {
+    flex: 1;
+    height: 16px;
+    border-radius: 4px;
+}
+
+/* Плавные переходы */
+.skeleton-fade-out {
+    animation: skeleton-fade-out 0.3s ease-out forwards;
+}
+
+@keyframes skeleton-fade-out {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+.content-fade-in {
+    animation: content-fade-in 0.4s ease-out forwards;
+}
+
+@keyframes content-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .toggle-btn {
@@ -692,6 +1047,69 @@ td {
         height: 200px;
     }
 
+    /* Адаптация элементов управления графиком */
+    .chart-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+
+    .chart-title {
+        width: 100%;
+    }
+
+    .chart-controls {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .chart-mode-control,
+    .chart-period-control {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .chart-control-label {
+        font-size: 12px;
+        min-width: 50px;
+    }
+
+    .mode-buttons {
+        flex: 1;
+        display: flex;
+        gap: 4px;
+    }
+
+    .mode-btn {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+
+    .period-select {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+
+    .chart-control-btn {
+        width: 100%;
+        justify-content: center;
+        padding: 10px;
+        font-size: 13px;
+    }
+
+    .chart-stats-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
     .events-list {
         max-height: 300px;
     }
@@ -766,6 +1184,250 @@ td {
         display: block;
         overflow-x: auto;
         white-space: nowrap;
+    }
+
+    /* Дополнительная адаптация элементов управления графиком для очень маленьких экранов */
+    .chart-header {
+        gap: 12px;
+    }
+
+    .chart-controls {
+        gap: 10px;
+    }
+
+    .chart-mode-control,
+    .chart-period-control {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+
+    .chart-control-label {
+        font-size: 11px;
+        min-width: auto;
+    }
+
+    .mode-buttons {
+        width: 100%;
+    }
+
+    .mode-btn {
+        font-size: 10px;
+        padding: 8px 8px;
+    }
+
+    .period-select {
+        width: 100%;
+        font-size: 11px;
+    }
+
+    .chart-control-btn {
+        font-size: 12px;
+        padding: 10px 8px;
+    }
+
+    .chart-btn-text {
+        font-size: 11px;
+    }
+
+    /* На очень маленьких экранах скрываем текст на кнопках, оставляем только иконки */
+    @media (max-width: 360px) {
+        .chart-control-btn .chart-btn-text {
+            display: none;
+        }
+
+        .chart-control-btn {
+            padding: 10px;
+            min-width: 44px; /* Минимальный размер для удобного нажатия */
+            justify-content: center;
+        }
+
+        .mode-btn {
+            font-size: 9px;
+            padding: 6px 6px;
+        }
+
+        .chart-control-label {
+            font-size: 10px;
+        }
+    }
+
+    .chart-container {
+        height: 180px;
+    }
+
+    .chart-stats-grid {
+        gap: 8px;
+    }
+
+    .chart-stat-card {
+        padding: 10px 12px;
+    }
+
+    .chart-stat-value {
+        font-size: 18px;
+    }
+}
+
+/* Прогресс-бары для времени просмотра */
+.watch-time-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 150px;
+}
+
+.progress-bar-container {
+    flex: 1;
+    height: 8px;
+    background: #26262c;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #9147ff 0%, #772ce8 100%);
+    border-radius: 4px;
+    transition: width 0.5s ease-out;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progress-bar-text {
+    font-size: 12px;
+    color: #adadb8;
+    white-space: nowrap;
+    min-width: 60px;
+}
+
+/* Цветовое кодирование по баллам */
+.points-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.points-badge.low {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.points-badge.medium {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.points-badge.high {
+    background: rgba(0, 209, 102, 0.15);
+    color: #00d166;
+    border: 1px solid rgba(0, 209, 102, 0.3);
+}
+
+.points-badge.very-high {
+    background: rgba(145, 71, 255, 0.15);
+    color: #9147ff;
+    border: 1px solid rgba(145, 71, 255, 0.3);
+    box-shadow: 0 0 8px rgba(145, 71, 255, 0.3);
+}
+
+/* Иконки для типов событий */
+.event-icon {
+    display: inline-block;
+    margin-right: 6px;
+    font-size: 14px;
+    vertical-align: middle;
+}
+
+/* Анимации при изменении значений */
+.value-change {
+    position: relative;
+    display: inline-block;
+}
+
+.value-change.positive {
+    animation: valueIncrease 0.5s ease-out;
+}
+
+.value-change.negative {
+    animation: valueDecrease 0.5s ease-out;
+}
+
+@keyframes valueIncrease {
+    0% {
+        transform: scale(1);
+        color: #efeff1;
+    }
+    50% {
+        transform: scale(1.1);
+        color: #00d166;
+    }
+    100% {
+        transform: scale(1);
+        color: #efeff1;
+    }
+}
+
+@keyframes valueDecrease {
+    0% {
+        transform: scale(1);
+        color: #efeff1;
+    }
+    50% {
+        transform: scale(0.95);
+        color: #ef4444;
+    }
+    100% {
+        transform: scale(1);
+        color: #efeff1;
+    }
+}
+
+/* Пульсация для активных элементов */
+.pulse-animation {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.02);
     }
 }
 
