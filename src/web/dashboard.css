@@ -10,6 +10,52 @@ body {
     color: #efeff1;
     padding: 20px;
     line-height: 1.6;
+    font-size: var(--font-size, 14px);
+}
+
+/* Плотность отображения */
+body.density-compact {
+    padding: 10px;
+}
+
+body.density-compact .section {
+    padding: 12px;
+    margin-bottom: 15px;
+}
+
+body.density-compact .stat-card {
+    padding: 12px;
+}
+
+body.density-compact table {
+    font-size: 12px;
+}
+
+body.density-compact th,
+body.density-compact td {
+    padding: 6px;
+}
+
+body.density-spacious {
+    padding: 30px;
+}
+
+body.density-spacious .section {
+    padding: 30px;
+    margin-bottom: 30px;
+}
+
+body.density-spacious .stat-card {
+    padding: 24px;
+}
+
+body.density-spacious table {
+    font-size: 15px;
+}
+
+body.density-spacious th,
+body.density-spacious td {
+    padding: 12px;
 }
 
 .container {
@@ -29,6 +75,33 @@ header {
 h1 {
     color: #9147ff;
     margin-bottom: 10px;
+}
+
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: #18181b;
+    border-radius: 20px;
+    border: 1px solid #26262c;
+    font-size: 14px;
+    color: #adadb8;
+}
+
+.loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #26262c;
+    border-top-color: #9147ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .connection-status {
@@ -124,6 +197,42 @@ h1 {
     border: 1px solid #26262c;
 }
 
+.stat-card.collapsible-card {
+    padding: 0;
+}
+
+.stat-card.collapsible-card h3 {
+    padding: 20px;
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+    color: #adadb8;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
+}
+
+.stat-card.collapsible-card h3:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+
+.stat-card-content {
+    padding: 0 20px 20px 20px;
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+    overflow: hidden;
+}
+
+.stat-card.collapsed .stat-card-content {
+    max-height: 0;
+    padding: 0 20px;
+    opacity: 0;
+}
+
 .stat-card h3 {
     color: #adadb8;
     font-size: 14px;
@@ -158,6 +267,70 @@ h1 {
     font-size: 20px;
 }
 
+.section-header-clickable {
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.section-header-clickable:hover {
+    color: #9147ff;
+}
+
+.section-toggle-icon {
+    font-size: 12px;
+    color: #adadb8;
+    transition: transform 0.3s, color 0.2s;
+}
+
+.section-header-clickable:hover .section-toggle-icon {
+    color: #9147ff;
+}
+
+.collapsible-section[data-collapsed="true"] .section-toggle-icon,
+.section-header-clickable[data-collapsed="true"] .section-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.toggle-section-btn {
+    background: transparent;
+    border: 1px solid #26262c;
+    border-radius: 4px;
+    color: #adadb8;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+}
+
+.toggle-section-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: #9147ff;
+    color: #9147ff;
+}
+
+.toggle-section-btn span {
+    transition: transform 0.3s;
+    display: inline-block;
+}
+
+.collapsible-section > div[id$="Content"] {
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+    overflow: hidden;
+}
+
+/* Переопределяем overflow для advancedStatsContent, чтобы не обрезать карточки */
+#advancedStatsContent {
+    overflow: visible !important;
+    width: 100%; /* Ограничиваем ширину */
+    box-sizing: border-box;
+    max-width: 100%; /* Не выходим за пределы родителя */
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -185,6 +358,22 @@ td {
     color: #9147ff;
 }
 
+.streamer-link {
+    color: #9147ff;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.streamer-link:hover {
+    color: #772ce8;
+    text-decoration: underline;
+}
+
+.streamer-link:active {
+    color: #5c16c5;
+}
+
 .chart-container {
     position: relative;
     height: 300px;
@@ -196,7 +385,7 @@ td {
 .chart-header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     margin-bottom: 20px;
     gap: 15px;
     flex-wrap: wrap;
@@ -214,6 +403,7 @@ td {
     flex-wrap: wrap;
     flex: 1;
     min-width: 0;
+    justify-content: flex-end; /* Привязываем к правому краю */
 }
 
 .chart-mode-control,
@@ -705,10 +895,58 @@ td {
     font-weight: 600;
     cursor: pointer;
     transition: background 0.2s;
+    height: 32px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .toggle-btn:hover {
     background: #772ce8;
+}
+
+.add-btn {
+    background: #9147ff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    height: 32px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.add-btn:hover {
+    background: #772ce8;
+}
+
+.add-btn:active {
+    transform: scale(0.98);
+}
+
+.add-streamer-input {
+    padding: 6px 12px;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 4px;
+    color: #efeff1;
+    font-size: 14px;
+    width: 200px;
+    height: 32px;
+    box-sizing: border-box;
+}
+
+.add-streamer-input:focus {
+    outline: none;
+    border-color: #9147ff;
+    box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.2);
 }
 
 .export-btn {
@@ -1007,6 +1245,743 @@ td {
     background: rgba(145, 71, 255, 0.1);
 }
 
+/* Toast уведомления */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast-notification {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    min-width: 300px;
+    max-width: 400px;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    font-size: 14px;
+    font-weight: 500;
+    color: white;
+    pointer-events: auto;
+    animation: toastSlideIn 0.3s ease-out;
+    position: relative;
+}
+
+.toast-notification.success {
+    background: #00d166;
+}
+
+.toast-notification.error {
+    background: #ef4444;
+}
+
+.toast-notification.info {
+    background: #9147ff;
+}
+
+.toast-notification.warning {
+    background: #f59e0b;
+}
+
+.toast-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.toast-message {
+    flex: 1;
+    line-height: 1.4;
+}
+
+.toast-close {
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    opacity: 0.8;
+    transition: opacity 0.2s, background 0.2s;
+    flex-shrink: 0;
+}
+
+.toast-close:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+@keyframes toastSlideIn {
+    from {
+        transform: translateX(calc(100% + 20px));
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes toastSlideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(calc(100% + 20px));
+        opacity: 0;
+    }
+}
+
+.toast-notification.slide-out {
+    animation: toastSlideOut 0.3s ease-out forwards;
+}
+
+/* Модальное окно */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.modal-content {
+    background: #18181b;
+    border-radius: 12px;
+    border: 1px solid #26262c;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: scale(0.9);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid #26262c;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #efeff1;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: transparent;
+    border: none;
+    color: #adadb8;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.modal-close:hover {
+    background: #26262c;
+    color: #efeff1;
+}
+
+.modal-body {
+    padding: 24px;
+    color: #efeff1;
+    line-height: 1.6;
+}
+
+.modal-body p {
+    margin: 0;
+    font-size: 14px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 20px 24px;
+    border-top: 1px solid #26262c;
+}
+
+.modal-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.modal-btn-primary {
+    background: #9147ff;
+    color: white;
+}
+
+.modal-btn-primary:hover {
+    background: #772ce8;
+}
+
+.modal-btn-secondary {
+    background: #26262c;
+    color: #efeff1;
+}
+
+.modal-btn-secondary:hover {
+    background: #3a3a3f;
+}
+
+.settings-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: #18181b;
+    color: #efeff1;
+    border: 1px solid #26262c;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.settings-btn:hover {
+    background: #26262c;
+    border-color: #9147ff;
+}
+
+.settings-modal-content {
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.settings-modal-body {
+    padding: 24px;
+}
+
+.settings-section {
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #26262c;
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.settings-section-title {
+    color: #efeff1;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.settings-item {
+    margin-bottom: 16px;
+}
+
+.settings-item:last-child {
+    margin-bottom: 0;
+}
+
+.settings-label {
+    display: block;
+    color: #adadb8;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.settings-select {
+    width: 100%;
+    padding: 8px 12px;
+    background: #26262c;
+    border: 1px solid #3a3a3f;
+    border-radius: 6px;
+    color: #efeff1;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.settings-select:hover {
+    border-color: #9147ff;
+}
+
+.settings-select:focus {
+    outline: none;
+    border-color: #9147ff;
+    box-shadow: 0 0 0 3px rgba(145, 71, 255, 0.1);
+}
+
+.settings-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #efeff1;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.settings-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #9147ff;
+}
+
+/* Прогресс-бар */
+.progress-bar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 15000;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.progress-bar-container {
+    background: #18181b;
+    border-radius: 12px;
+    border: 1px solid #26262c;
+    padding: 24px;
+    min-width: 400px;
+    max-width: 600px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+.progress-bar-title {
+    color: #efeff1;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.progress-bar-wrapper {
+    width: 100%;
+    height: 8px;
+    background: #26262c;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #9147ff, #772ce8);
+    border-radius: 4px;
+    transition: width 0.3s ease-out;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    animation: progressShine 1.5s infinite;
+}
+
+@keyframes progressShine {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progress-bar-text {
+    color: #adadb8;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* Расширенная статистика */
+.advanced-stats-layout {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    overflow: visible; /* Позволяет свечению не обрезаться */
+    width: 100%; /* Ограничиваем ширину */
+    box-sizing: border-box;
+    padding: 4px; /* Отступ для свечения при hover */
+    margin: -4px; /* Компенсируем padding, чтобы не выходить за границы */
+}
+
+.calendar-section {
+    flex: 1 1 0; /* Равномерное распределение пространства */
+    min-width: 0; /* Позволяет календарю сжиматься */
+    max-width: calc(50% - 10px); /* Учитываем gap */
+    overflow: visible;
+    box-sizing: border-box;
+}
+
+.advanced-stats-grid {
+    flex: 1 1 0; /* Равномерное распределение пространства */
+    min-width: 0; /* Позволяет статистике сжиматься */
+    max-width: calc(50% - 10px); /* Учитываем gap */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+    overflow: visible; /* Позволяет карточкам не обрезаться */
+    box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+    .advanced-stats-layout {
+        flex-direction: column;
+    }
+    
+    .calendar-section,
+    .advanced-stats-grid {
+        flex: 1 1 100%;
+        max-width: 100%;
+    }
+}
+
+.advanced-stat-card {
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 8px;
+    padding: 20px;
+    transition: all 0.2s;
+    position: relative;
+    z-index: 1;
+    width: 100%; /* Карточка занимает всю ширину контейнера */
+    max-width: 100%; /* Не выходит за пределы */
+    box-sizing: border-box; /* Padding учитывается в ширине */
+    overflow: hidden; /* Предотвращаем выход содержимого за границы */
+}
+
+.advanced-stat-card:hover {
+    border-color: #9147ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.2);
+    z-index: 2; /* Поднимаем карточку выше при hover */
+}
+
+.advanced-stat-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.advanced-stat-icon {
+    font-size: 24px;
+}
+
+.advanced-stat-title {
+    color: #adadb8;
+    font-size: 14px;
+    font-weight: 500;
+    flex: 1;
+}
+
+.advanced-stat-value {
+    color: #efeff1;
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.advanced-stat-label {
+    color: #adadb8;
+    font-size: 12px;
+}
+
+.advanced-stat-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0 0;
+}
+
+.advanced-stat-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #26262c;
+    color: #efeff1;
+    font-size: 14px;
+}
+
+.advanced-stat-list-item:last-child {
+    border-bottom: none;
+}
+
+.advanced-stat-list-item-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.advanced-stat-list-item-value {
+    font-weight: 600;
+    color: #9147ff;
+}
+
+/* Календарь активности */
+.activity-calendar {
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 8px;
+    padding: 15px;
+    width: 100%;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-top: 12px;
+    width: 100%;
+}
+
+.calendar-day-header {
+    text-align: center;
+    color: #adadb8;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px;
+    text-transform: uppercase;
+    line-height: 1.2;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.calendar-day {
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #26262c;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    padding: 3px;
+    width: 100%;
+}
+
+.calendar-day:hover {
+    transform: scale(1.1);
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.3);
+}
+
+.calendar-day.empty {
+    background: transparent;
+    cursor: default;
+}
+
+.calendar-day.empty:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.calendar-day-number {
+    font-size: 9px;
+    color: #efeff1;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.calendar-day-points {
+    font-size: 7px;
+    color: #adadb8;
+    margin-top: 1px;
+    line-height: 1;
+}
+
+.calendar-day.activity-none {
+    background: #26262c;
+}
+
+.calendar-day.activity-low {
+    background: rgba(145, 71, 255, 0.2);
+}
+
+.calendar-day.activity-medium {
+    background: rgba(145, 71, 255, 0.4);
+}
+
+.calendar-day.activity-high {
+    background: rgba(145, 71, 255, 0.6);
+}
+
+.calendar-day.activity-very-high {
+    background: rgba(145, 71, 255, 0.8);
+}
+
+/* Тепловая карта активности */
+.activity-heatmap {
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 4px;
+    margin-top: 16px;
+}
+
+.heatmap-hour {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #26262c;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    font-size: 10px;
+    color: #adadb8;
+}
+
+.heatmap-hour:hover {
+    transform: scale(1.2);
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.3);
+}
+
+.heatmap-hour.activity-none {
+    background: #26262c;
+}
+
+.heatmap-hour.activity-low {
+    background: rgba(145, 71, 255, 0.2);
+}
+
+.heatmap-hour.activity-medium {
+    background: rgba(145, 71, 255, 0.4);
+}
+
+.heatmap-hour.activity-high {
+    background: rgba(145, 71, 255, 0.6);
+}
+
+.heatmap-hour.activity-very-high {
+    background: rgba(145, 71, 255, 0.8);
+}
+
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 12px;
+    background: rgba(38, 38, 44, 0.5);
+    border-radius: 6px;
+}
+
+.heatmap-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #efeff1;
+    font-weight: 500;
+}
+
+.heatmap-legend-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.heatmap-legend-color.activity-none {
+    background: #26262c;
+}
+
+.heatmap-legend-color.activity-low {
+    background: rgba(145, 71, 255, 0.2);
+}
+
+.heatmap-legend-color.activity-medium {
+    background: rgba(145, 71, 255, 0.4);
+}
+
+.heatmap-legend-color.activity-high {
+    background: rgba(145, 71, 255, 0.6);
+}
+
+.heatmap-legend-color.activity-very-high {
+    background: rgba(145, 71, 255, 0.8);
+}
+
 /* Адаптивный дизайн */
 @media (max-width: 768px) {
     body {
@@ -1293,6 +2268,7 @@ td {
     transition: width 0.5s ease-out;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 0 6px rgba(145, 71, 255, 0.35);
 }
 
 .progress-bar::after {
@@ -1318,6 +2294,11 @@ td {
     100% {
         transform: translateX(100%);
     }
+}
+
+.progress-bar.gold {
+    background: linear-gradient(90deg, #f5d76e 0%, #f0c419 100%);
+    box-shadow: 0 0 8px rgba(240, 196, 25, 0.55);
 }
 
 .progress-bar-text {
