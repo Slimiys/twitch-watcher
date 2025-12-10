@@ -47,5 +47,3 @@ echo.
 echo [INFO] Логи можно просмотреть в приложении Docker Desktop
 echo.
 
-pause
-
