@@ -167,11 +167,144 @@ export class GraphQLClient {
   }
 
   /**
+   * Получает ID канала по имени пользователя через Helix API (REST)
+   * @param username Имя пользователя
+   * @returns ID канала или null
+   */
+  private async getChannelIdViaHelix(username: string): Promise<string | null> {
+    // Helix API требует параметр login в query string
+    // Формат: GET https://api.twitch.tv/helix/users?login={username}
+    const url = `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`;
+    logger.info(`🔍  [Helix API] Attempting to get channel ID for ${username}`);
+    logger.info(`🔍  [Helix API] Full URL: ${url}`);
+    logger.info(`🔍  [Helix API] Client-ID: ${CLIENT_ID}`);
+    logger.info(`🔍  [Helix API] Token present: ${this.authToken ? 'Yes (length: ' + this.authToken.length + ', starts with: ' + this.authToken.substring(0, 10) + '...)' : 'No'}`);
+    
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${this.authToken}`,
+        'Client-Id': CLIENT_ID,
+      };
+      
+      logger.verbose(`🔍  [Helix API] Request headers: ${JSON.stringify(headers).replace(this.authToken, '***TOKEN***')}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+
+      logger.info(`🔍  [Helix API] Response status: ${response.status} ${response.statusText}`);
+      
+      // Логируем заголовки ответа для отладки
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+      logger.verbose(`🔍  [Helix API] Response headers: ${JSON.stringify(responseHeaders)}`);
+      
+      const responseText = await response.text();
+      logger.info(`🔍  [Helix API] Response body: ${responseText.substring(0, 1000)}`);
+      
+      if (response.status === 200) {
+        const data = JSON.parse(responseText);
+        logger.verbose(`🔍  [Helix API] Parsed data: ${JSON.stringify(data).substring(0, 500)}`);
+        
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          const userId = data.data[0].id;
+          logger.info(`✅  [Helix API] Successfully got channel ID for ${username}: ${userId}`);
+          return userId;
+        } else {
+          logger.warn(`⚠️  [Helix API] No data in response for ${username}. Response structure: ${JSON.stringify(data).substring(0, 200)}`);
+        }
+      } else if (response.status === 401) {
+        logger.error(`❌  [Helix API] Unauthorized (401) - token may be invalid or expired`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 403) {
+        logger.error(`❌  [Helix API] Forbidden (403) - Client-ID may be invalid or token doesn't have required scopes`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 404) {
+        logger.error(`❌  [Helix API] Not Found (404) - user ${username} may not exist, or endpoint/format is incorrect`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+        logger.error(`❌  [Helix API] This might indicate: 1) User doesn't exist, 2) Token doesn't have required scopes, 3) Client-ID is invalid`);
+      } else {
+        logger.error(`❌  [Helix API] Unexpected status ${response.status} for user ${username}`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      }
+    } catch (error: any) {
+      logger.error(`❌  [Helix API] Error getting channel ID: ${error.message || error}`);
+      logger.error(`❌  [Helix API] Error stack: ${error.stack || 'No stack trace'}`);
+    }
+    
+    return null;
+  }
+
+  /**
+   * Получает ID канала по имени пользователя через VideoPlayerStreamInfoOverlayChannel
+   * @param username Имя пользователя
+   * @returns ID канала или null
+   */
+  private async getChannelIdViaVideoPlayer(username: string): Promise<string | null> {
+    try {
+      const operation = {
+        operationName: 'VideoPlayerStreamInfoOverlayChannel',
+        variables: { channel: username },
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: 'a5f2e34d626a9f4f5c0204f910bab2194948a9502089be558bb6e779a9e1b3d2',
+          },
+        },
+      };
+
+      const response = await this.postRequest(operation);
+      
+      // Пробуем получить channel ID из ответа
+      if (response.data?.user?.id) {
+        logger.info(`✅  Got channel ID via VideoPlayerStreamInfoOverlayChannel for ${username}: ${response.data.user.id}`);
+        return response.data.user.id;
+      }
+      
+      // Если persisted query не работает, пробуем полный запрос
+      if (response.errors && response.errors.some((e: any) => e.message && e.message.includes('PersistedQueryNotFound'))) {
+        logger.verbose(`⚠️  PersistedQueryNotFound for VideoPlayerStreamInfoOverlayChannel, trying full query for ${username}`);
+        const fullOperation = {
+          operationName: 'VideoPlayerStreamInfoOverlayChannel',
+          variables: { channel: username },
+          query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
+            user(login: $channel) {
+              id
+            }
+          }`,
+        };
+        
+        const fullResponse = await this.postRequest(fullOperation);
+        if (fullResponse.data?.user?.id) {
+          logger.info(`✅  Got channel ID via VideoPlayerStreamInfoOverlayChannel (full query) for ${username}: ${fullResponse.data.user.id}`);
+          return fullResponse.data.user.id;
+        }
+      }
+    } catch (error: any) {
+      logger.verbose(`⚠️  Error getting channel ID via VideoPlayerStreamInfoOverlayChannel: ${error.message || error}`);
+    }
+    
+    return null;
+  }
+
+  /**
    * Получает ID канала по имени пользователя
+   * Пробует несколько способов: VideoPlayerStreamInfoOverlayChannel (основной), ReportMenuItem (fallback), Helix API (последний fallback)
    * @param username Имя пользователя
    * @returns ID канала или null
    */
   async getChannelId(username: string): Promise<string | null> {
+    // Способ 1: VideoPlayerStreamInfoOverlayChannel (основной метод, так как ReportMenuItem устарел)
+    const videoPlayerResult = await this.getChannelIdViaVideoPlayer(username);
+    if (videoPlayerResult) {
+      return videoPlayerResult;
+    }
+    
+    // Способ 2: ReportMenuItem GraphQL запрос (fallback, но обычно не работает)
+    logger.verbose(`⚠️  VideoPlayerStreamInfoOverlayChannel failed for ${username}, trying ReportMenuItem...`);
     const operation = {
       operationName: 'ReportMenuItem',
       variables: { channelLogin: username },
@@ -183,13 +316,30 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    if (response.data?.user?.id) {
-      return response.data.user.id;
+    try {
+      const response = await this.postRequest(operation);
+      
+      if (response.data?.user?.id) {
+        logger.info(`✅  Got channel ID via ReportMenuItem for ${username}: ${response.data.user.id}`);
+        return response.data.user.id;
+      }
+      
+      // Если GraphQL вернул ошибку PersistedQueryNotFound, это ожидаемо (запрос устарел)
+      if (response.errors && response.errors.some((e: any) => e.message === 'PersistedQueryNotFound')) {
+        logger.verbose(`⚠️  ReportMenuItem query not found for ${username} (expected, query is deprecated)`);
+      }
+    } catch (error: any) {
+      // Ошибка ожидаема, так как ReportMenuItem устарел
+      logger.verbose(`⚠️  ReportMenuItem error for ${username} (expected): ${error.message || error}`);
     }
     
-    return null;
+    // Способ 3: Helix API (последний fallback, обычно не работает без правильных scopes)
+    logger.verbose(`⚠️  Trying Helix API as last resort for ${username}...`);
+    const helixResult = await this.getChannelIdViaHelix(username);
+    if (!helixResult) {
+      logger.error(`❌  Failed to get channel ID for ${username} via all methods (VideoPlayerStreamInfoOverlayChannel, ReportMenuItem, Helix API)`);
+    }
+    return helixResult;
   }
 
   /**

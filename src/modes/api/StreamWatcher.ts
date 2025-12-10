@@ -162,24 +162,19 @@ export class StreamWatcher {
     try {
       logger.verbose('🔌  Initializing WebSocket connection...');
       
-      // Получаем user ID из токена или используя первый стример из списка
-      let userId: string;
-      if (this.priorityChannels.length === 0) {
-        // Если список стримеров пустой, получаем user ID из валидации токена
-        logger.verbose('No streamers configured, getting user ID from token validation...');
-        const tokenValidation = await this.twitchAPI.validateTokenWithInfo();
-        if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
-          throw new Error('Token is invalid or user_id not found in token validation');
-        }
-        userId = tokenValidation.tokenInfo.user_id;
-        this.twitchAPI.setValidatedUserId(userId);
-        logger.verbose(`✅  User ID obtained from token validation: ${userId}`);
-      } else {
-        // Используем первый стример для получения user ID (для обратной совместимости)
-        const username = this.priorityChannels[0];
-        logger.verbose(`Getting user ID using username: ${username}`);
-        userId = await this.twitchAPI.getUserId(username);
+      // Всегда получаем user ID из валидации токена (это правильный способ)
+      // User ID нужен для WebSocket подписки на события текущего пользователя
+      logger.verbose('Getting user ID from token validation...');
+      const tokenValidation = await this.twitchAPI.validateTokenWithInfo();
+      if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
+        logger.error('❌  Token validation failed or user_id not found');
+        logger.error(`   Token valid: ${tokenValidation.isValid}`);
+        logger.error(`   Token info: ${JSON.stringify(tokenValidation.tokenInfo || {})}`);
+        throw new Error('Token is invalid or user_id not found in token validation');
       }
+      const userId = tokenValidation.tokenInfo.user_id;
+      this.twitchAPI.setValidatedUserId(userId);
+      logger.info(`✅  User ID obtained from token validation: ${userId}`);
       
       const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
       
@@ -221,14 +216,35 @@ export class StreamWatcher {
           this.addPointsHistory(streamerInfo.username, points, totalPoints);
         },
         onClaimAvailable: async (streamerInfo, claimId) => {
-          logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
-          const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
-          if (success) {
-            logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
-            this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
-          } else {
-            logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
-            this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+          // Проверяем, доступен ли бонус для этого стримера перед попыткой собрать
+          // Это предотвращает попытки собрать бонус для всех стримеров, когда он доступен только для одного
+          try {
+            const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+            if (pointsInfo?.availableClaim?.id === claimId) {
+              // Бонус действительно доступен для этого стримера
+              logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
+              const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+              if (success) {
+                logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+                this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+              } else {
+                logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket (возможно, уже собран)`);
+                this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+              }
+            } else {
+              // Бонус не доступен для этого стримера - это нормально, просто пропускаем
+              logger.verbose(`ℹ️  [${streamerInfo.username}] Бонус ${claimId} не доступен для этого стримера (доступен: ${pointsInfo?.availableClaim?.id || 'none'})`);
+            }
+          } catch (error: any) {
+            // При ошибке проверки пробуем собрать бонус (fallback поведение)
+            logger.verbose(`⚠️  [${streamerInfo.username}] Ошибка проверки доступности бонуса, пробуем собрать: ${error.message || error}`);
+            const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+            if (success) {
+              logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+              this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+            } else {
+              logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
+            }
           }
         },
         onStreamUp: async (streamerInfo) => {
@@ -569,6 +585,8 @@ export class StreamWatcher {
         
         if (success) {
           logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+          // Не добавляем событие minute-watched в историю событий веб-интерфейса
+          // Это техническое событие, которое не нужно пользователю
         } else {
           // Если не удалось отправить, возможно стример ушел офлайн
           // Проверяем статус еще раз
@@ -657,21 +675,35 @@ export class StreamWatcher {
         : 0;
       
       let pointsEarned = 0;
+      let currentPoints = streamerInfo.channelPoints ?? 0;
+      
       // Используем channelPoints (текущий баланс) вместо lastChannelPoints
       // чтобы учитывать все начисленные баллы, включая те, что получены через просмотр
       // даже если не пришло событие points-earned через WebSocket
-      if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.channelPoints !== null) {
-        pointsEarned = streamerInfo.channelPoints - streamerInfo.initialChannelPoints;
-      } else if (streamerInfo.isOnline && streamerInfo.initialChannelPoints !== null && streamerInfo.lastChannelPoints !== null) {
-        // Fallback на lastChannelPoints, если channelPoints не установлен
-        pointsEarned = streamerInfo.lastChannelPoints - streamerInfo.initialChannelPoints;
+      if (streamerInfo.isOnline) {
+        // Если channelPoints не установлен, пробуем использовать lastChannelPoints
+        if (currentPoints === 0 && streamerInfo.lastChannelPoints !== null) {
+          currentPoints = streamerInfo.lastChannelPoints;
+        }
+        
+        // Вычисляем заработанные баллы
+        if (streamerInfo.initialChannelPoints !== null) {
+          // Если начальные баллы установлены, вычисляем разницу
+          pointsEarned = currentPoints - streamerInfo.initialChannelPoints;
+        } else if (currentPoints > 0) {
+          // Если начальные баллы не установлены, но есть текущие баллы,
+          // устанавливаем начальные баллы равными текущим (для первого обновления)
+          // и pointsEarned будет 0, пока не установятся начальные баллы
+          // Это предотвратит неправильное отображение заработанных баллов
+          pointsEarned = 0;
+        }
       }
 
       stats.push({
         streamerName: streamerInfo.username,
         elapsedTime: elapsed,
         pointsEarned,
-        currentPoints: streamerInfo.channelPoints,
+        currentPoints,
         status: streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE',
       });
     }
@@ -708,11 +740,12 @@ export class StreamWatcher {
    * GraphQL проверка используется только как fallback для стримеров, которые были офлайн
    */
   startStatusCheck(): void {
-    // Увеличиваем интервал до 5 минут, так как WebSocket события более надежны
-    // GraphQL проверка используется только как fallback
+    // Проверяем статус каждые 2 минуты как fallback для WebSocket событий
+    // WebSocket события stream-up/stream-down являются основным источником статуса
+    // GraphQL проверка нужна для случаев, когда WebSocket события не приходят
     setInterval(async () => {
       await this.checkStreamersStatus();
-    }, 300000); // Каждые 5 минут (вместо 1 минуты)
+    }, 120000); // Каждые 2 минуты
   }
 
   /**
