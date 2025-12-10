@@ -40,17 +40,18 @@ function formatTime(ms) {
 /**
  * Генерирует прогресс-бар для времени просмотра
  * @param {number} elapsedTime Время просмотра в миллисекундах
- * @param {number} maxTime Максимальное время для расчета процента (по умолчанию 8 часов)
+ * @param {number} maxTime Максимальное время для расчета процента (по умолчанию 24 часа)
  * @returns {string} HTML код прогресс-бара
  */
-function generateWatchTimeProgress(elapsedTime, maxTime = 8 * 60 * 60 * 1000) {
+function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
     const percentage = Math.min((elapsedTime / maxTime) * 100, 100);
+    const isBeyondMax = elapsedTime > maxTime;
     const timeText = formatTime(elapsedTime);
     
     return `
         <div class="watch-time-progress">
             <div class="progress-bar-container">
-                <div class="progress-bar" style="width: ${percentage}%"></div>
+                <div class="progress-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
             </div>
             <span class="progress-bar-text">${timeText}</span>
         </div>

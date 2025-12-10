@@ -1293,6 +1293,7 @@ td {
     transition: width 0.5s ease-out;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 0 6px rgba(145, 71, 255, 0.35);
 }
 
 .progress-bar::after {
@@ -1318,6 +1319,11 @@ td {
     100% {
         transform: translateX(100%);
     }
+}
+
+.progress-bar.gold {
+    background: linear-gradient(90deg, #f5d76e 0%, #f0c419 100%);
+    box-shadow: 0 0 8px rgba(240, 196, 25, 0.55);
 }
 
 .progress-bar-text {
