@@ -5,7 +5,7 @@
   "main": "dist/app.js",
   "scripts": {
     "build": "tsc && npm run copy:web",
-    "copy:web": "copyfiles -u 1 src/web/**/*.html src/web/**/*.css src/web/**/*.js dist",
+    "copy:web": "copyfiles -u 1 src/web/**/*.html src/web/**/*.css src/web/**/*.js src/web/**/*.svg dist",
     "start": "node dist/app.js",
     "start:dev": "ts-node src/app.ts",
     "dev": "ts-node src/app.ts",
