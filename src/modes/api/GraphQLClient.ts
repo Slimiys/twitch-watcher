@@ -91,11 +91,21 @@ export class GraphQLClient {
               } else if (error.message && error.message.includes('service timeout')) {
                 // Service timeout - это нормально при переходе стримера в офлайн, не логируем как ошибку
               } else if (error.message && error.message.includes('PersistedQueryNotFound')) {
-                // PersistedQueryNotFound - это не критичная ошибка для ChannelPointsContext,
-                // так как баллы обновляются через WebSocket в реальном времени
-                // Логируем только в verbose режиме, чтобы не засорять логи
-                if (operation.operationName === 'ChannelPointsContext') {
-                  logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - баллы обновляются через WebSocket`);
+                // PersistedQueryNotFound - это не критичная ошибка
+                // Для ChannelPointsContext и VideoPlayerStreamInfoOverlayChannel логируем только в verbose,
+                // так как эти данные обновляются через WebSocket в реальном времени
+                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+                if (nonCriticalOperations.includes(operation.operationName)) {
+                  logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - данные обновляются через WebSocket`);
+                } else {
+                  logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
+                }
+              } else if (error.message && error.message.includes('Cannot query field')) {
+                // Ошибка "Cannot query field" означает, что структура API изменилась
+                // Это не критично для операций, которые имеют альтернативные источники данных
+                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+                if (nonCriticalOperations.includes(operation.operationName)) {
+                  logger.verbose(`⚠️  GraphQL API changed for ${operation.operationName}: ${error.message} - используем альтернативные источники`);
                 } else {
                   logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
                 }
@@ -131,21 +141,170 @@ export class GraphQLClient {
       // Если Circuit Breaker открыт, логируем это
       if (error.circuitBreakerOpen) {
         logger.warn(`⚠️  [GraphQL:${operation.operationName}] Circuit Breaker OPEN, запрос заблокирован`);
-        return {};
+        return { errors: [] };
       }
       
-      // Для других ошибок логируем и возвращаем пустой ответ
-      logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
-      return {};
+      // Для некритичных операций не логируем как ошибку
+      const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
+      const isNonCritical = nonCriticalOperations.includes(operation.operationName);
+      
+      // Проверяем, является ли ошибка некритичной
+      const isNonCriticalError = error.message && (
+        error.message.includes('PersistedQueryNotFound') ||
+        error.message.includes('Cannot query field')
+      );
+      
+      if (isNonCritical && isNonCriticalError) {
+        // Для некритичных операций с некритичными ошибками не логируем
+        logger.verbose(`⚠️  [GraphQL:${operation.operationName}] ${error.message} - данные обновляются через альтернативные источники`);
+      } else {
+        // Для других ошибок логируем
+        logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
+      }
+      
+      return { errors: [{ message: error.message || 'Unknown error' }] };
     });
   }
 
   /**
+   * Получает ID канала по имени пользователя через Helix API (REST)
+   * @param username Имя пользователя
+   * @returns ID канала или null
+   */
+  private async getChannelIdViaHelix(username: string): Promise<string | null> {
+    // Helix API требует параметр login в query string
+    // Формат: GET https://api.twitch.tv/helix/users?login={username}
+    const url = `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`;
+    logger.info(`🔍  [Helix API] Attempting to get channel ID for ${username}`);
+    logger.info(`🔍  [Helix API] Full URL: ${url}`);
+    logger.info(`🔍  [Helix API] Client-ID: ${CLIENT_ID}`);
+    logger.info(`🔍  [Helix API] Token present: ${this.authToken ? 'Yes (length: ' + this.authToken.length + ', starts with: ' + this.authToken.substring(0, 10) + '...)' : 'No'}`);
+    
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${this.authToken}`,
+        'Client-Id': CLIENT_ID,
+      };
+      
+      logger.verbose(`🔍  [Helix API] Request headers: ${JSON.stringify(headers).replace(this.authToken, '***TOKEN***')}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+
+      logger.info(`🔍  [Helix API] Response status: ${response.status} ${response.statusText}`);
+      
+      // Логируем заголовки ответа для отладки
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+      logger.verbose(`🔍  [Helix API] Response headers: ${JSON.stringify(responseHeaders)}`);
+      
+      const responseText = await response.text();
+      logger.info(`🔍  [Helix API] Response body: ${responseText.substring(0, 1000)}`);
+      
+      if (response.status === 200) {
+        const data = JSON.parse(responseText);
+        logger.verbose(`🔍  [Helix API] Parsed data: ${JSON.stringify(data).substring(0, 500)}`);
+        
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          const userId = data.data[0].id;
+          logger.info(`✅  [Helix API] Successfully got channel ID for ${username}: ${userId}`);
+          return userId;
+        } else {
+          logger.warn(`⚠️  [Helix API] No data in response for ${username}. Response structure: ${JSON.stringify(data).substring(0, 200)}`);
+        }
+      } else if (response.status === 401) {
+        logger.error(`❌  [Helix API] Unauthorized (401) - token may be invalid or expired`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 403) {
+        logger.error(`❌  [Helix API] Forbidden (403) - Client-ID may be invalid or token doesn't have required scopes`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 404) {
+        logger.error(`❌  [Helix API] Not Found (404) - user ${username} may not exist, or endpoint/format is incorrect`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+        logger.error(`❌  [Helix API] This might indicate: 1) User doesn't exist, 2) Token doesn't have required scopes, 3) Client-ID is invalid`);
+      } else {
+        logger.error(`❌  [Helix API] Unexpected status ${response.status} for user ${username}`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      }
+    } catch (error: any) {
+      logger.error(`❌  [Helix API] Error getting channel ID: ${error.message || error}`);
+      logger.error(`❌  [Helix API] Error stack: ${error.stack || 'No stack trace'}`);
+    }
+    
+    return null;
+  }
+
+  /**
+   * Получает ID канала по имени пользователя через VideoPlayerStreamInfoOverlayChannel
+   * @param username Имя пользователя
+   * @returns ID канала или null
+   */
+  private async getChannelIdViaVideoPlayer(username: string): Promise<string | null> {
+    try {
+      const operation = {
+        operationName: 'VideoPlayerStreamInfoOverlayChannel',
+        variables: { channel: username },
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: 'a5f2e34d626a9f4f5c0204f910bab2194948a9502089be558bb6e779a9e1b3d2',
+          },
+        },
+      };
+
+      const response = await this.postRequest(operation);
+      
+      // Пробуем получить channel ID из ответа
+      if (response.data?.user?.id) {
+        logger.info(`✅  Got channel ID via VideoPlayerStreamInfoOverlayChannel for ${username}: ${response.data.user.id}`);
+        return response.data.user.id;
+      }
+      
+      // Если persisted query не работает, пробуем полный запрос
+      if (response.errors && response.errors.some((e: any) => e.message && e.message.includes('PersistedQueryNotFound'))) {
+        logger.verbose(`⚠️  PersistedQueryNotFound for VideoPlayerStreamInfoOverlayChannel, trying full query for ${username}`);
+        const fullOperation = {
+          operationName: 'VideoPlayerStreamInfoOverlayChannel',
+          variables: { channel: username },
+          query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
+            user(login: $channel) {
+              id
+            }
+          }`,
+        };
+        
+        const fullResponse = await this.postRequest(fullOperation);
+        if (fullResponse.data?.user?.id) {
+          logger.info(`✅  Got channel ID via VideoPlayerStreamInfoOverlayChannel (full query) for ${username}: ${fullResponse.data.user.id}`);
+          return fullResponse.data.user.id;
+        }
+      }
+    } catch (error: any) {
+      logger.verbose(`⚠️  Error getting channel ID via VideoPlayerStreamInfoOverlayChannel: ${error.message || error}`);
+    }
+    
+    return null;
+  }
+
+  /**
    * Получает ID канала по имени пользователя
+   * Пробует несколько способов: VideoPlayerStreamInfoOverlayChannel (основной), ReportMenuItem (fallback), Helix API (последний fallback)
    * @param username Имя пользователя
    * @returns ID канала или null
    */
   async getChannelId(username: string): Promise<string | null> {
+    // Способ 1: VideoPlayerStreamInfoOverlayChannel (основной метод, так как ReportMenuItem устарел)
+    const videoPlayerResult = await this.getChannelIdViaVideoPlayer(username);
+    if (videoPlayerResult) {
+      return videoPlayerResult;
+    }
+    
+    // Способ 2: ReportMenuItem GraphQL запрос (fallback, но обычно не работает)
+    logger.verbose(`⚠️  VideoPlayerStreamInfoOverlayChannel failed for ${username}, trying ReportMenuItem...`);
     const operation = {
       operationName: 'ReportMenuItem',
       variables: { channelLogin: username },
@@ -157,13 +316,30 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    if (response.data?.user?.id) {
-      return response.data.user.id;
+    try {
+      const response = await this.postRequest(operation);
+      
+      if (response.data?.user?.id) {
+        logger.info(`✅  Got channel ID via ReportMenuItem for ${username}: ${response.data.user.id}`);
+        return response.data.user.id;
+      }
+      
+      // Если GraphQL вернул ошибку PersistedQueryNotFound, это ожидаемо (запрос устарел)
+      if (response.errors && response.errors.some((e: any) => e.message === 'PersistedQueryNotFound')) {
+        logger.verbose(`⚠️  ReportMenuItem query not found for ${username} (expected, query is deprecated)`);
+      }
+    } catch (error: any) {
+      // Ошибка ожидаема, так как ReportMenuItem устарел
+      logger.verbose(`⚠️  ReportMenuItem error for ${username} (expected): ${error.message || error}`);
     }
     
-    return null;
+    // Способ 3: Helix API (последний fallback, обычно не работает без правильных scopes)
+    logger.verbose(`⚠️  Trying Helix API as last resort for ${username}...`);
+    const helixResult = await this.getChannelIdViaHelix(username);
+    if (!helixResult) {
+      logger.error(`❌  Failed to get channel ID for ${username} via all methods (VideoPlayerStreamInfoOverlayChannel, ReportMenuItem, Helix API)`);
+    }
+    return helixResult;
   }
 
   /**
@@ -204,6 +380,7 @@ export class GraphQLClient {
     tags: any[];
     viewersCount: number;
   } | null> {
+    // Сначала пробуем с persisted query
     const operation = {
       operationName: 'VideoPlayerStreamInfoOverlayChannel',
       variables: { channel: username },
@@ -216,7 +393,52 @@ export class GraphQLClient {
     };
 
     try {
-      const response = await this.postRequest(operation);
+      let response = await this.postRequest(operation);
+      
+      // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
+      if (response.errors && response.errors.length > 0) {
+        const hasPersistedQueryError = response.errors.some((e: any) => 
+          e.message && e.message.includes('PersistedQueryNotFound')
+        );
+        
+        if (hasPersistedQueryError) {
+          // Пробуем отправить полный GraphQL запрос без persisted query
+          logger.verbose(`⚠️  PersistedQueryNotFound for VideoPlayerStreamInfoOverlayChannel, trying full query`);
+          const fullOperation = {
+            operationName: 'VideoPlayerStreamInfoOverlayChannel',
+            variables: { channel: username },
+            query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
+              user(login: $channel) {
+                stream {
+                  id
+                  viewersCount
+                  tags {
+                    id
+                    name
+                    localizedName
+                  }
+                }
+                broadcastSettings {
+                  title
+                  game {
+                    id
+                    name
+                    displayName
+                  }
+                }
+              }
+            }`,
+          };
+          
+          try {
+            response = await this.postRequest(fullOperation);
+          } catch (e: any) {
+            // Если и полный запрос не работает, возвращаем null
+            logger.verbose(`⚠️  Full query also failed for getStreamInfo(${username}): ${e.message || e}`);
+            return null;
+          }
+        }
+      }
       
       if (response.data?.user?.stream) {
         const stream = response.data.user.stream;
@@ -231,11 +453,24 @@ export class GraphQLClient {
       
       return null;
     } catch (error: any) {
-      // Обрабатываем ошибки GraphQL (например, service timeout)
-      // При ошибках считаем, что стример офлайн или информация недоступна
+      // Обрабатываем ошибки GraphQL
+      // При ошибках не можем определить статус стримера, возвращаем null
+      // НО не помечаем стримера как офлайн - это сделает вызывающий код на основе других источников
       if (error.message && (error.message.includes('timeout') || error.message.includes('service timeout'))) {
         return null;
       }
+      
+      // Для ошибок типа "Cannot query field" или "PersistedQueryNotFound" 
+      // не пробрасываем исключение, а возвращаем null
+      // Это позволяет системе использовать другие источники информации (WebSocket)
+      if (error.message && (
+        error.message.includes('Cannot query field') ||
+        error.message.includes('PersistedQueryNotFound')
+      )) {
+        logger.verbose(`⚠️  GraphQL error for getStreamInfo(${username}): ${error.message} - используем альтернативные источники`);
+        return null;
+      }
+      
       // Для других ошибок пробрасываем дальше
       throw error;
     }
@@ -318,12 +553,17 @@ export class GraphQLClient {
     if (response.data) {
       logger.verbose(`⚠️  Unexpected response structure for getChannelPoints(${username}):`, JSON.stringify(response.data).substring(0, 200));
     } else if (response.errors && response.errors.length > 0) {
-      // Логируем другие ошибки только если это не PersistedQueryNotFound
+      // Не логируем ошибки для getChannelPoints - это опциональная операция
+      // Баллы обновляются через WebSocket в реальном времени
       const hasPersistedQueryError = response.errors.some((e: any) => 
         e.message && e.message.includes('PersistedQueryNotFound')
       );
-      if (!hasPersistedQueryError) {
-        logger.warn(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+      const hasCannotQueryFieldError = response.errors.some((e: any) => 
+        e.message && e.message.includes('Cannot query field')
+      );
+      // Логируем только в verbose режиме для некритичных ошибок
+      if (!hasPersistedQueryError && !hasCannotQueryFieldError) {
+        logger.verbose(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
       }
     }
     

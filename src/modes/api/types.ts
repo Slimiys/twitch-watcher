@@ -99,7 +99,10 @@ export interface RaidMessage {
 export interface GraphQLOperation {
   operationName: string;
   variables?: any;
-  extensions: {
+  /** Полный GraphQL запрос, если не используется persisted query */
+  query?: string;
+  /** Доп. параметры для persisted query; может отсутствовать при полнотекстовом запросе */
+  extensions?: {
     persistedQuery: {
       version: number;
       sha256Hash: string;

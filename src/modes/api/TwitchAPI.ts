@@ -8,6 +8,7 @@ import { extractSpadeUrl, extractSettingsUrl, encodePayload } from './utils';
 import { logger } from './logger';
 import { fetchWithRetry, RetryConfig } from './retry';
 import { loadRetryConfig } from './configLoader';
+import { CLIENT_ID } from './constants';
 
 /**
  * API клиент для работы с Twitch
@@ -97,7 +98,80 @@ export class TwitchAPI {
   }
 
   /**
+   * Получает ID пользователя через Helix API (REST)
+   * @param username Имя пользователя
+   * @returns ID пользователя или null
+   */
+  private async getUserIdViaHelix(username: string): Promise<string | null> {
+    // Helix API требует параметр login в query string
+    // Формат: GET https://api.twitch.tv/helix/users?login={username}
+    const url = `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`;
+    logger.info(`🔍  [Helix API] Attempting to get user ID for ${username}`);
+    logger.info(`🔍  [Helix API] Full URL: ${url}`);
+    logger.info(`🔍  [Helix API] Client-ID: ${CLIENT_ID}`);
+    logger.info(`🔍  [Helix API] Token present: ${this.authToken ? 'Yes (length: ' + this.authToken.length + ', starts with: ' + this.authToken.substring(0, 10) + '...)' : 'No'}`);
+    
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${this.authToken}`,
+        'Client-Id': CLIENT_ID,
+      };
+      
+      logger.verbose(`🔍  [Helix API] Request headers: ${JSON.stringify(headers).replace(this.authToken, '***TOKEN***')}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+
+      logger.info(`🔍  [Helix API] Response status: ${response.status} ${response.statusText}`);
+      
+      // Логируем заголовки ответа для отладки
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+      logger.verbose(`🔍  [Helix API] Response headers: ${JSON.stringify(responseHeaders)}`);
+      
+      const responseText = await response.text();
+      logger.info(`🔍  [Helix API] Response body: ${responseText.substring(0, 1000)}`);
+      
+      if (response.status === 200) {
+        const data = JSON.parse(responseText);
+        logger.verbose(`🔍  [Helix API] Parsed data: ${JSON.stringify(data).substring(0, 500)}`);
+        
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          const userId = data.data[0].id;
+          logger.info(`✅  [Helix API] Successfully got user ID for ${username}: ${userId}`);
+          return userId;
+        } else {
+          logger.warn(`⚠️  [Helix API] No data in response for ${username}. Response structure: ${JSON.stringify(data).substring(0, 200)}`);
+        }
+      } else if (response.status === 401) {
+        logger.error(`❌  [Helix API] Unauthorized (401) - token may be invalid or expired`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 403) {
+        logger.error(`❌  [Helix API] Forbidden (403) - Client-ID may be invalid or token doesn't have required scopes`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      } else if (response.status === 404) {
+        logger.error(`❌  [Helix API] Not Found (404) - user ${username} may not exist, or endpoint/format is incorrect`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+        logger.error(`❌  [Helix API] This might indicate: 1) User doesn't exist, 2) Token doesn't have required scopes, 3) Client-ID is invalid`);
+      } else {
+        logger.error(`❌  [Helix API] Unexpected status ${response.status} for user ${username}`);
+        logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
+      }
+    } catch (error: any) {
+      logger.error(`❌  [Helix API] Error getting user ID: ${error.message || error}`);
+      logger.error(`❌  [Helix API] Error stack: ${error.stack || 'No stack trace'}`);
+    }
+    
+    return null;
+  }
+
+  /**
    * Получает ID пользователя
+   * Сначала пробует GraphQL, затем Helix API как fallback
    * @param username Имя пользователя (обязательно для получения через GraphQL)
    * @returns ID пользователя
    */
@@ -110,8 +184,10 @@ export class TwitchAPI {
       throw new Error('Username is required to get user ID');
     }
 
-    // Получаем ID пользователя через GraphQL
-    // Используем ReportMenuItem с указанием channelLogin
+    // Объявляем userId в начале функции для использования во всех блоках
+    let userId: string | null = null;
+
+    // Сначала пробуем GraphQL
     const operation = {
       operationName: 'ReportMenuItem',
       variables: { channelLogin: username },
@@ -123,33 +199,56 @@ export class TwitchAPI {
       },
     };
 
-    const response = await this.graphqlClient.postRequest(operation);
-    
-    // Логируем ответ для отладки
-    if (!response.data) {
-      logger.error('Failed to get user ID: No data in response', JSON.stringify(response, null, 2));
-      throw new Error('Failed to get user ID: No data in response');
+    try {
+      const response = await this.graphqlClient.postRequest(operation);
+      
+      // Пробуем получить user ID из разных мест в ответе
+      if (response.data?.user?.id) {
+        userId = response.data.user.id;
+      } else if (response.data?.currentUser?.id) {
+        userId = response.data.currentUser.id;
+      } else if (response.data?.self?.id) {
+        userId = response.data.self.id;
+      }
+      
+      if (userId) {
+        this.userId = userId;
+        logger.verbose(`✅  User ID obtained via GraphQL: ${userId}`);
+        return userId;
+      }
+      
+      // Если GraphQL вернул ошибку PersistedQueryNotFound, используем Helix API
+      if (response.errors && response.errors.some((e: any) => e.message === 'PersistedQueryNotFound')) {
+        logger.info(`⚠️  GraphQL ReportMenuItem query not found, falling back to Helix API for ${username}`);
+        userId = await this.getUserIdViaHelix(username);
+        if (userId) {
+          this.userId = userId;
+          logger.info(`✅  User ID obtained via Helix API: ${userId}`);
+          return userId;
+        }
+      }
+    } catch (error: any) {
+      // При ошибке GraphQL пробуем Helix API
+      logger.info(`⚠️  GraphQL error for getUserId, falling back to Helix API: ${error.message || error}`);
+      userId = await this.getUserIdViaHelix(username);
+      if (userId) {
+        this.userId = userId;
+        logger.info(`✅  User ID obtained via Helix API: ${userId}`);
+        return userId;
+      }
     }
     
-    // Пробуем получить user ID из разных мест в ответе
-    let userId: string | null = null;
-    
-    if (response.data?.user?.id) {
-      userId = response.data.user.id;
-    } else if (response.data?.currentUser?.id) {
-      userId = response.data.currentUser.id;
-    } else if (response.data?.self?.id) {
-      userId = response.data.self.id;
-    }
-    
+    // Если GraphQL не вернул данные, пробуем Helix API
+    logger.info(`⚠️  GraphQL didn't return user ID, falling back to Helix API for ${username}`);
+    userId = await this.getUserIdViaHelix(username);
     if (userId) {
       this.userId = userId;
-      logger.verbose(`✅  User ID obtained: ${userId}`);
+      logger.info(`✅  User ID obtained via Helix API: ${userId}`);
       return userId;
     }
 
-    logger.error('Failed to get user ID: User ID not found in response', JSON.stringify(response.data, null, 2));
-    throw new Error('Failed to get user ID: User ID not found');
+    logger.error(`❌  Failed to get user ID for ${username} via both GraphQL and Helix API`);
+    throw new Error(`Failed to get user ID for ${username}`);
   }
 
   /**
@@ -276,23 +375,24 @@ export class TwitchAPI {
    * @returns Обновленная информация о стримере
    */
   async updateStreamerInfo(streamerInfo: StreamerInfo): Promise<StreamerInfo> {
+    // Периодически проверяем статус через GraphQL как fallback
+    // WebSocket события stream-up/stream-down являются основным источником статуса
+    // но GraphQL проверка нужна для случаев, когда WebSocket события не приходят
     try {
-      // Получаем информацию о стриме
       const streamInfo = await this.graphqlClient.getStreamInfo(streamerInfo.username);
 
       if (streamInfo) {
         // Стример онлайн
-        const wasOffline = !streamerInfo.isOnline;
+        const wasOnline = streamerInfo.isOnline;
         streamerInfo.isOnline = true;
         streamerInfo.broadcastId = streamInfo.broadcastId;
         streamerInfo.title = streamInfo.title;
         streamerInfo.game = streamInfo.game?.name || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
-
-        // Если стример только что перешел из офлайн в онлайн, сбрасываем startTime
-        if (wasOffline) {
+        
+        // Устанавливаем startTime только если стример только что перешел в онлайн
+        if (!wasOnline) {
           streamerInfo.startTime = Date.now();
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer came online, resetting watch time`);
         }
 
         // Получаем spade_url, если еще не получен
@@ -300,57 +400,44 @@ export class TwitchAPI {
           streamerInfo.spadeUrl = await this.getSpadeUrl(streamerInfo.username);
         }
 
-        // Получаем информацию о баллах
-        const pointsInfo = await this.graphqlClient.getChannelPoints(streamerInfo.username);
-        if (pointsInfo) {
-          streamerInfo.channelPoints = pointsInfo.balance;
-          // Обновляем lastChannelPoints для корректного расчета заработанных баллов
-          streamerInfo.lastChannelPoints = pointsInfo.balance;
-          
-          // Если initialChannelPoints еще не установлен или стример только что вернулся онлайн, устанавливаем его
-          if (streamerInfo.initialChannelPoints === null || wasOffline) {
-            streamerInfo.initialChannelPoints = pointsInfo.balance;
+        // Пробуем получить баллы (опционально)
+        // Обновляем channelPoints периодически для актуальности данных
+        // даже если initialChannelPoints уже установлен
+        try {
+          const pointsInfo = await this.graphqlClient.getChannelPoints(streamerInfo.username);
+          if (pointsInfo) {
+            // Если начальные баллы еще не установлены, устанавливаем их
+            if (streamerInfo.initialChannelPoints === null) {
+              streamerInfo.initialChannelPoints = pointsInfo.balance;
+              streamerInfo.lastChannelPoints = pointsInfo.balance;
+              streamerInfo.channelPoints = pointsInfo.balance;
+              logger.verbose(`💰  [${streamerInfo.username}] Initial points set via GraphQL: ${pointsInfo.balance}`);
+            } else {
+              // Обновляем текущие баллы для актуальности данных
+              // Это важно, если WebSocket события не приходят регулярно
+              streamerInfo.channelPoints = pointsInfo.balance;
+              streamerInfo.lastChannelPoints = pointsInfo.balance;
+            }
           }
-          
-          // НЕ собираем бонус здесь - это делается через WebSocket событие claim-available
-          // Это предотвращает дублирование попыток сбора бонуса
-          // WebSocket более надежен и отправляет события в реальном времени
-        } else {
-          // Логируем, если не удалось получить баллы (только в verbose, так как баллы обновляются через WebSocket)
-          logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить информацию о баллах канала (баллы обновляются через WebSocket)`);
+        } catch (e: any) {
+          // Не критично - баллы обновятся через WebSocket
+          logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить баллы через GraphQL (будут обновлены через WebSocket)`);
         }
       } else {
-        // Стример офлайн
-        const wasOnline = streamerInfo.isOnline;
-        streamerInfo.isOnline = false;
-        streamerInfo.broadcastId = null;
-        // Очищаем spade_url для офлайн стримера
-        streamerInfo.spadeUrl = null;
-        
-        // Если стример только что ушел офлайн, сбрасываем startTime
-        if (wasOnline) {
+        // streamInfo null означает, что стример офлайн
+        // Устанавливаем isOnline = false только если стример был онлайн
+        // Это важно для корректного определения офлайн статуса
+        if (streamerInfo.isOnline) {
+          logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
+          streamerInfo.isOnline = false;
           streamerInfo.startTime = 0;
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer went offline, resetting watch time`);
         }
       }
     } catch (error: any) {
-      // Обрабатываем ошибки GraphQL (например, service timeout)
-      if (error.message && error.message.includes('timeout')) {
-        logger.info(`⏱️  [${streamerInfo.username}] Timeout при обновлении информации (возможно, стример офлайн)`);
-        // Помечаем стримера как офлайн при timeout
-        const wasOnline = streamerInfo.isOnline;
-        streamerInfo.isOnline = false;
-        streamerInfo.broadcastId = null;
-        streamerInfo.spadeUrl = null;
-        
-        // Если стример был онлайн, сбрасываем startTime
-        if (wasOnline) {
-          streamerInfo.startTime = 0;
-          logger.verbose(`🔄  [${streamerInfo.username}] Streamer went offline (timeout), resetting watch time`);
-        }
-      } else {
-        logger.error(`❌  Error updating streamer info for ${streamerInfo.username}:`, error.message || error);
-      }
+      // Ошибки GraphQL не критичны - WebSocket события обновят статус
+      // Но если стример был онлайн и произошла ошибка, не меняем статус
+      // (предполагаем, что WebSocket события более надежны)
+      logger.verbose(`⚠️  [${streamerInfo.username}] GraphQL update failed (non-critical): ${error.message || error}`);
     }
 
     return streamerInfo;
@@ -531,21 +618,27 @@ export class TwitchAPI {
         lastChannelPoints: null,
       };
 
-      // Если онлайн, получаем полную информацию
+      // Если онлайн, пробуем получить метаданные (опционально)
+      // WebSocket события stream-up/stream-down более надежны для определения статуса
       if (streamerInfo.isOnline) {
         await this.updateStreamerInfo(streamerInfo);
         streamerInfo.startTime = Date.now();
         
-        // Получаем начальные баллы
-        const pointsInfo = await this.graphqlClient.getChannelPoints(username);
-        if (pointsInfo) {
-          streamerInfo.initialChannelPoints = pointsInfo.balance;
-          streamerInfo.lastChannelPoints = pointsInfo.balance;
-          streamerInfo.channelPoints = pointsInfo.balance;
-          logger.info(`💰  [${username}] Initial points: ${pointsInfo.balance}`);
-        } else {
-          // Это не критично - баллы обновятся через WebSocket при первом событии points-earned
-          logger.verbose(`ℹ️  [${username}] Initial points not available via GraphQL, will be set from WebSocket`);
+        // Пробуем получить начальные баллы (опционально)
+        try {
+          const pointsInfo = await this.graphqlClient.getChannelPoints(username);
+          if (pointsInfo) {
+            streamerInfo.initialChannelPoints = pointsInfo.balance;
+            streamerInfo.lastChannelPoints = pointsInfo.balance;
+            streamerInfo.channelPoints = pointsInfo.balance;
+            logger.info(`💰  [${username}] Initial points: ${pointsInfo.balance}`);
+          } else {
+            // Это не критично - баллы обновятся через WebSocket при первом событии points-earned
+            logger.verbose(`ℹ️  [${username}] Initial points not available via GraphQL, will be set from WebSocket`);
+          }
+        } catch (error: any) {
+          // Не критично - баллы будут установлены через WebSocket
+          logger.verbose(`ℹ️  [${username}] Failed to get initial points via GraphQL (will be set from WebSocket): ${error.message || error}`);
         }
       }
 

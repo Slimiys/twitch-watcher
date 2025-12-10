@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Twitch Watcher - Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="alternate icon" href="/static/favicon.svg">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
@@ -129,12 +131,53 @@
                 </div>
             </div>
             <div id="watchesTable">
-                <div class="loading">Loading statistics</div>
+                <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
             </div>
         </div>
 
         <div class="section">
-            <h2>Points History</h2>
+            <div class="chart-header">
+                <h2 class="chart-title">Points History</h2>
+                <div class="chart-controls">
+                    <!-- Переключатель режима отображения -->
+                    <div class="chart-mode-control">
+                        <span class="chart-control-label">Mode:</span>
+                        <div class="mode-buttons">
+                            <button class="mode-btn active" data-mode="accumulated" id="modeAccumulated" title="Accumulated points">
+                                Accumulated
+                            </button>
+                            <button class="mode-btn" data-mode="daily" id="modeDaily" title="Daily points">
+                                Daily
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Фильтр по периодам -->
+                    <div class="chart-period-control">
+                        <span class="chart-control-label">Period:</span>
+                        <select id="chartPeriod" class="period-select" title="Select time period">
+                            <option value="all">All Time</option>
+                            <option value="90">Last 90 Days</option>
+                            <option value="30" selected>Last 30 Days</option>
+                            <option value="7">Last 7 Days</option>
+                            <option value="1">Today</option>
+                        </select>
+                    </div>
+                    <!-- Кнопка сброса зума -->
+                    <button id="resetZoomBtn" class="chart-control-btn" title="Reset zoom" style="display: none;">
+                        <span>🔍</span>
+                        <span class="chart-btn-text">Reset Zoom</span>
+                    </button>
+                    <!-- Кнопка экспорта -->
+                    <button id="exportChartBtn" class="chart-control-btn" title="Export chart as image">
+                        <span>📥</span>
+                        <span class="chart-btn-text">Export</span>
+                    </button>
+                </div>
+            </div>
+            <!-- Карточки статистики -->
+            <div class="chart-stats-grid" id="chartStatsGrid" style="display: none;">
+                <!-- Статистика будет добавлена динамически -->
+            </div>
             <div class="chart-container">
                 <canvas id="pointsChart"></canvas>
             </div>
@@ -146,7 +189,7 @@
                 <span class="filter-label">Filter:</span>
             </div>
             <div class="events-list" id="eventsList">
-                <div class="loading">Loading events</div>
+                <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
             </div>
         </div>
     </div>

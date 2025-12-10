@@ -537,9 +537,13 @@ export class WebSocketManager {
       streamerInfo.lastChannelPoints = balance;
 
       // Если initialChannelPoints еще не установлен, устанавливаем его
+      // ВАЖНО: вычитаем earned из баланса, так как баланс уже включает заработанные баллы
       if (streamerInfo.initialChannelPoints === null) {
-        streamerInfo.initialChannelPoints = balance;
-        logger.info(`💰  [${streamerInfo.username}] Initial balance set from WebSocket: ${balance}`);
+        // Если earned > 0, значит это событие начисления баллов, а не просто обновление баланса
+        // Начальный баланс = текущий баланс - заработанные баллы
+        const initialBalance = earned > 0 ? balance - earned : balance;
+        streamerInfo.initialChannelPoints = initialBalance;
+        logger.info(`💰  [${streamerInfo.username}] Initial balance set from WebSocket: ${initialBalance} (current: ${balance}, earned: ${earned})`);
       }
 
       // Логируем обновление баланса (включая первое установление)
