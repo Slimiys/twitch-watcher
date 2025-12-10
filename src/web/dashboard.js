@@ -673,6 +673,9 @@ async function updatePointsChart() {
     const history = await fetchData('/points-history?limit=200');
     pointsHistoryCache = history || []; // Сохраняем в кэш для tooltip
     
+    // Получаем текущую статистику для добавления актуальных значений в график
+    const currentStats = await fetchData('/statistics?includeOffline=true');
+    
     if (!history || history.length === 0) {
         // Если был skeleton, заменяем на сообщение
         if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
@@ -690,7 +693,61 @@ async function updatePointsChart() {
     }
     
     // Фильтруем по периоду
-    const filteredHistory = filterHistoryByPeriod(history, chartPeriod);
+    let filteredHistory = filterHistoryByPeriod(history, chartPeriod);
+    
+    // Добавляем текущие значения из статистики как последнюю точку для каждого стримера
+    if (currentStats && currentStats.length > 0) {
+        const now = new Date();
+        
+        currentStats.forEach(stat => {
+            if (stat.status === 'ONLINE' && stat.pointsEarned > 0) {
+                // Находим последнюю точку в истории для этого стримера
+                const streamerHistory = filteredHistory.filter(h => h.streamer === stat.streamerName);
+                const lastHistoryPoint = streamerHistory.length > 0 
+                    ? streamerHistory[streamerHistory.length - 1]
+                    : null;
+                
+                // Проверяем, нужно ли добавить текущую точку
+                // Добавляем, если последней точки нет или она старше 30 секунд
+                const shouldAdd = !lastHistoryPoint || 
+                    (now.getTime() - new Date(lastHistoryPoint.timestamp).getTime() > 30000);
+                
+                if (shouldAdd) {
+                    // Вычисляем разницу баллов для добавления в историю
+                    let pointsToAdd = 0;
+                    if (chartMode === 'accumulated') {
+                        // В режиме накопленных баллов вычисляем разницу от последней точки
+                        const lastTotal = lastHistoryPoint ? (lastHistoryPoint.totalPoints || 0) : 0;
+                        pointsToAdd = stat.pointsEarned - lastTotal;
+                    } else {
+                        // В режиме дневных баллов вычисляем баллы за сегодня
+                        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const todayPoints = streamerHistory
+                            .filter(h => {
+                                const hDate = new Date(h.timestamp);
+                                return hDate >= todayStart;
+                            })
+                            .reduce((sum, h) => sum + h.points, 0);
+                        // Вычисляем разницу от уже учтенных баллов за сегодня
+                        pointsToAdd = Math.max(0, stat.pointsEarned - todayPoints);
+                    }
+                    
+                    // Добавляем точку только если есть изменение
+                    if (pointsToAdd > 0 || !lastHistoryPoint) {
+                        filteredHistory.push({
+                            timestamp: now.getTime(),
+                            streamer: stat.streamerName,
+                            points: pointsToAdd,
+                            totalPoints: chartMode === 'accumulated' ? stat.pointsEarned : undefined
+                        });
+                    }
+                }
+            }
+        });
+        
+        // Сортируем историю по времени после добавления новых точек
+        filteredHistory.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    }
     
     // Вычисляем статистику
     const stats = calculateChartStats(filteredHistory, chartMode);
@@ -1236,10 +1293,10 @@ function renderFilteredEvents(events) {
         return;
     }
 
-    // Фильтруем события по выбранным тегам
-    let filteredEvents = events;
+    // Фильтруем события по выбранным тегам и исключаем технические события
+    let filteredEvents = events.filter(event => event.type !== 'minute-watched');
     if (selectedEventTags.size > 0) {
-        filteredEvents = events.filter(event => selectedEventTags.has(event.type));
+        filteredEvents = filteredEvents.filter(event => selectedEventTags.has(event.type));
     }
 
     if (filteredEvents.length === 0) {
