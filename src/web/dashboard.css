@@ -185,6 +185,22 @@ td {
     color: #9147ff;
 }
 
+.streamer-link {
+    color: #9147ff;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.streamer-link:hover {
+    color: #772ce8;
+    text-decoration: underline;
+}
+
+.streamer-link:active {
+    color: #5c16c5;
+}
+
 .chart-container {
     position: relative;
     height: 300px;

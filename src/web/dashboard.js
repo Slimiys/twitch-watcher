@@ -476,7 +476,7 @@ async function updateStatistics() {
             <tbody>
                 ${sortedStats.map(s => `
                     <tr>
-                        ${visibleColumns.streamer !== false ? `<td class="streamer-name">${s.streamerName}</td>` : ''}
+                        ${visibleColumns.streamer !== false ? `<td class="streamer-name"><a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a></td>` : ''}
                         ${visibleColumns.status !== false ? `
                             <td>
                                 <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
@@ -1355,7 +1355,7 @@ function renderFilteredEvents(events) {
                                 <span class="event-time">${formatTimestamp(event.timestamp)}</span>
                                 <span class="event-icon">${eventIcon}</span>
                                 <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
-                                <strong>${event.streamer}</strong>: ${event.message}
+                                <strong><a href="https://www.twitch.tv/${event.streamer}" target="_blank" rel="noopener noreferrer" class="streamer-link">${event.streamer}</a></strong>: ${event.message}
                             </div>
                         `;
                     }).join('')}
