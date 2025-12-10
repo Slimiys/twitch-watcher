@@ -2,22 +2,64 @@ const API_BASE = '/api';
 let pointsChart = null;
 let updateInterval = null;
 
+/**
+ * Безопасное получение значения из localStorage
+ * @param {string} key Ключ
+ * @param {any} defaultValue Значение по умолчанию
+ * @returns {any} Значение из localStorage или значение по умолчанию
+ */
+function safeGetLocalStorage(key, defaultValue = null) {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        // Tracking Prevention или другие ограничения браузера
+        return defaultValue;
+    }
+}
+
+/**
+ * Безопасная установка значения в localStorage
+ * @param {string} key Ключ
+ * @param {string} value Значение
+ */
+function safeSetLocalStorage(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        // Tracking Prevention или другие ограничения браузера - игнорируем
+    }
+}
+
 // Настройки графика
-let chartMode = localStorage.getItem('chartMode') || 'accumulated'; // 'accumulated' или 'daily'
-let chartPeriod = localStorage.getItem('chartPeriod') || '30'; // 'all', '90', '30', '7', '1'
+let chartMode = safeGetLocalStorage('chartMode') || 'accumulated'; // 'accumulated' или 'daily'
+let chartPeriod = safeGetLocalStorage('chartPeriod') || '30'; // 'all', '90', '30', '7', '1'
 
 // Загружаем состояние из localStorage или используем значения по умолчанию
-let showOffline = localStorage.getItem('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
-let updateIntervalMs = parseInt(localStorage.getItem('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
-let selectedEventTags = new Set(JSON.parse(localStorage.getItem('selectedEventTags') || '[]')); // Выбранные теги событий
+let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
+let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
+
+let selectedEventTags = new Set();
+try {
+    const tags = safeGetLocalStorage('selectedEventTags') || '[]';
+    selectedEventTags = new Set(JSON.parse(tags));
+} catch (e) {
+    selectedEventTags = new Set();
+}
+
 let availableEventTags = new Set(); // Доступные теги из событий
 
 // Настройки видимых колонок таблицы стримеров
-let visibleColumns = JSON.parse(localStorage.getItem('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "actions": true}');
+let visibleColumns = {};
+try {
+    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "actions": true}';
+    visibleColumns = JSON.parse(columns);
+} catch (e) {
+    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, actions: true};
+}
 
 // Пагинация событий
 let eventsPageSize = 20; // Количество событий на странице
-let eventsOffset = 0; // Текущий offset для событий
+let eventsOffset = 0; // Текущий offset для загрузки старых событий при прокрутке
 let allLoadedEvents = []; // Все загруженные события
 let isLoadingEvents = false; // Флаг загрузки событий
 let hasMoreEvents = true; // Есть ли еще события для загрузки
@@ -325,6 +367,8 @@ async function updateOverallStats() {
     }
 
     updateConnectionStatus(true);
+    lastDataUpdate.overall = Date.now();
+    updateStaleDataIndicator('overall', statsContainer);
 
     // Если был skeleton, заменяем плавно
     if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
@@ -512,6 +556,307 @@ async function updateStatistics() {
         table.innerHTML = tableContent;
         setTimeout(() => table.classList.remove('updating'), 300);
     }
+    
+    lastDataUpdate.stats = Date.now();
+    updateStaleDataIndicator('stats', table);
+    
+    // Обновляем расширенную статистику
+    updateAdvancedStats(stats);
+}
+
+/**
+ * Вычисляет и отображает расширенную статистику
+ * @param {Array} stats Массив статистики стримеров
+ */
+async function updateAdvancedStats(stats) {
+    const section = document.getElementById('advancedStatsSection');
+    const content = document.getElementById('advancedStatsContent');
+    const statsGrid = content?.querySelector('.advanced-stats-grid');
+    
+    if (!section || !content || !statsGrid || !stats || stats.length === 0) {
+        if (section) section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    // Вычисляем метрики
+    const totalPoints = stats.reduce((sum, s) => sum + s.pointsEarned, 0);
+    const totalWatchTime = stats.reduce((sum, s) => sum + s.elapsedTime, 0);
+    const avgPointsPerHour = totalWatchTime > 0 ? (totalPoints / totalWatchTime) * 3600000 : 0;
+    
+    // Самый активный стример (по времени просмотра)
+    const mostActiveStreamer = stats.reduce((max, s) => 
+        s.elapsedTime > max.elapsedTime ? s : max, stats[0]);
+    
+    // Топ-5 стримеров по баллам
+    const topByPoints = [...stats]
+        .sort((a, b) => b.pointsEarned - a.pointsEarned)
+        .slice(0, 5);
+    
+    // Топ-5 стримеров по времени
+    const topByTime = [...stats]
+        .sort((a, b) => b.elapsedTime - a.elapsedTime)
+        .slice(0, 5);
+    
+    // Время просмотра за сегодня
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStats = stats.filter(s => {
+        // Предполагаем, что если стример онлайн, он активен сегодня
+        // Это упрощение, в реальности нужно проверять по сессиям
+        return s.status === 'ONLINE' || s.elapsedTime > 0;
+    });
+    const todayWatchTime = todayStats.reduce((sum, s) => sum + s.elapsedTime, 0);
+    
+    statsGrid.innerHTML = `
+        <div class="advanced-stat-card">
+            <div class="advanced-stat-header">
+                <span class="advanced-stat-icon">⚡</span>
+                <span class="advanced-stat-title">Средние баллы в час</span>
+            </div>
+            <div class="advanced-stat-value">${Math.round(avgPointsPerHour).toLocaleString()}</div>
+            <div class="advanced-stat-label">Баллов за час просмотра</div>
+        </div>
+        
+        <div class="advanced-stat-card">
+            <div class="advanced-stat-header">
+                <span class="advanced-stat-icon">👑</span>
+                <span class="advanced-stat-title">Самый активный стример</span>
+            </div>
+            <div class="advanced-stat-value">${mostActiveStreamer.streamerName}</div>
+            <div class="advanced-stat-label">${formatTime(mostActiveStreamer.elapsedTime)} просмотра</div>
+        </div>
+        
+        <div class="advanced-stat-card">
+            <div class="advanced-stat-header">
+                <span class="advanced-stat-icon">⏱️</span>
+                <span class="advanced-stat-title">Время просмотра сегодня</span>
+            </div>
+            <div class="advanced-stat-value">${formatTime(todayWatchTime)}</div>
+            <div class="advanced-stat-label">Активных стримеров: ${todayStats.length}</div>
+        </div>
+        
+        <div class="advanced-stat-card">
+            <div class="advanced-stat-header">
+                <span class="advanced-stat-icon">🏆</span>
+                <span class="advanced-stat-title">Топ-5 по баллам</span>
+            </div>
+            <ul class="advanced-stat-list">
+                ${topByPoints.map((s, i) => `
+                    <li class="advanced-stat-list-item">
+                        <span class="advanced-stat-list-item-name">
+                            <span>${i + 1}.</span>
+                            <a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a>
+                        </span>
+                        <span class="advanced-stat-list-item-value">${s.pointsEarned.toLocaleString()}</span>
+                    </li>
+                `).join('')}
+            </ul>
+        </div>
+        
+        <div class="advanced-stat-card">
+            <div class="advanced-stat-header">
+                <span class="advanced-stat-icon">⏰</span>
+                <span class="advanced-stat-title">Топ-5 по времени</span>
+            </div>
+            <ul class="advanced-stat-list">
+                ${topByTime.map((s, i) => `
+                    <li class="advanced-stat-list-item">
+                        <span class="advanced-stat-list-item-name">
+                            <span>${i + 1}.</span>
+                            <a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a>
+                        </span>
+                        <span class="advanced-stat-list-item-value">${formatTime(s.elapsedTime)}</span>
+                    </li>
+                `).join('')}
+            </ul>
+        </div>
+    `;
+    
+    // Загружаем календарь и тепловую карту (ленивая загрузка)
+    loadActivityCalendar();
+    loadActivityHeatmap();
+}
+
+/**
+ * Определяет уровень активности по количеству баллов
+ * @param {number} points Количество баллов
+ * @param {number} maxPoints Максимальное количество баллов
+ * @returns {string} Уровень активности
+ */
+function getActivityLevel(points, maxPoints) {
+    if (points === 0) return 'activity-none';
+    if (maxPoints === 0) return 'activity-none';
+    
+    const ratio = points / maxPoints;
+    if (ratio >= 0.75) return 'activity-very-high';
+    if (ratio >= 0.5) return 'activity-high';
+    if (ratio >= 0.25) return 'activity-medium';
+    return 'activity-low';
+}
+
+/**
+ * Загружает и отображает календарь активности
+ */
+async function loadActivityCalendar() {
+    const section = document.getElementById('activityCalendarSection');
+    const container = document.getElementById('activityCalendar');
+    
+    if (!section || !container) return;
+    
+    // Ленивая загрузка - загружаем только при первом открытии
+    if (container.dataset.loaded === 'true') return;
+    
+    const history = await fetchData('/points-history?limit=1000');
+    if (!history || history.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    // Показываем секцию календаря
+    section.style.display = 'block';
+    container.dataset.loaded = 'true';
+    
+    // Группируем по дням
+    const dailyPoints = new Map();
+    history.forEach(entry => {
+        const date = new Date(entry.timestamp);
+        const dayKey = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0];
+        
+        if (!dailyPoints.has(dayKey)) {
+            dailyPoints.set(dayKey, 0);
+        }
+        dailyPoints.set(dayKey, dailyPoints.get(dayKey) + entry.points);
+    });
+    
+    const maxPoints = Math.max(...Array.from(dailyPoints.values()), 1);
+    
+    // Создаем календарь на последние 6 недель (42 дня)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const calendarDays = [];
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 41); // 42 дня назад
+    
+    // Заполняем пустые дни до начала недели
+    const startDayOfWeek = startDate.getDay();
+    for (let i = 0; i < startDayOfWeek; i++) {
+        calendarDays.push({ empty: true });
+    }
+    
+    // Заполняем дни календаря
+    const currentDate = new Date(startDate);
+    while (currentDate <= today) {
+        const dayKey = currentDate.toISOString().split('T')[0];
+        const points = dailyPoints.get(dayKey) || 0;
+        const activityLevel = getActivityLevel(points, maxPoints);
+        
+        calendarDays.push({
+            date: new Date(currentDate),
+            points: points,
+            activityLevel: activityLevel,
+            empty: false
+        });
+        
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    // Заполняем пустые дни до конца недели
+    const endDayOfWeek = today.getDay();
+    for (let i = endDayOfWeek + 1; i < 7; i++) {
+        calendarDays.push({ empty: true });
+    }
+    
+    const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    
+    container.innerHTML = `
+        <div class="calendar-grid">
+            ${weekDays.map(day => `<div class="calendar-day-header">${day}</div>`).join('')}
+            ${calendarDays.map(day => {
+                if (day.empty) {
+                    return '<div class="calendar-day empty"></div>';
+                }
+                return `
+                    <div class="calendar-day ${day.activityLevel}" 
+                         title="${day.date.toLocaleDateString('ru-RU')}: ${day.points.toLocaleString()} баллов">
+                        <div class="calendar-day-number">${day.date.getDate()}</div>
+                        ${day.points > 0 ? `<div class="calendar-day-points">${day.points > 999 ? (day.points / 1000).toFixed(1) + 'k' : day.points}</div>` : ''}
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+/**
+ * Загружает и отображает тепловую карту активности по часам
+ */
+async function loadActivityHeatmap() {
+    const section = document.getElementById('activityHeatmapSection');
+    const container = document.getElementById('activityHeatmap');
+    
+    if (!section || !container) return;
+    
+    // Ленивая загрузка
+    if (container.dataset.loaded === 'true') return;
+    
+    const events = await fetchData('/events?limit=1000');
+    if (!events || !events.events || events.events.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    container.dataset.loaded = 'true';
+    
+    // Группируем события по часам суток
+    const hourlyActivity = new Array(24).fill(0);
+    
+    events.events.forEach(event => {
+        const date = new Date(event.timestamp);
+        const hour = date.getHours();
+        hourlyActivity[hour]++;
+    });
+    
+    const maxActivity = Math.max(...hourlyActivity, 1);
+    
+    container.innerHTML = `
+        <div class="heatmap-grid">
+            ${hourlyActivity.map((count, hour) => {
+                const activityLevel = getActivityLevel(count, maxActivity);
+                return `
+                    <div class="heatmap-hour ${activityLevel}" 
+                         title="${hour}:00 - ${count} событий">
+                        ${hour}
+                    </div>
+                `;
+            }).join('')}
+        </div>
+        <div class="heatmap-legend">
+            <div class="heatmap-legend-item">
+                <div class="heatmap-legend-color activity-none"></div>
+                <span>Нет активности</span>
+            </div>
+            <div class="heatmap-legend-item">
+                <div class="heatmap-legend-color activity-low"></div>
+                <span>Низкая</span>
+            </div>
+            <div class="heatmap-legend-item">
+                <div class="heatmap-legend-color activity-medium"></div>
+                <span>Средняя</span>
+            </div>
+            <div class="heatmap-legend-item">
+                <div class="heatmap-legend-color activity-high"></div>
+                <span>Высокая</span>
+            </div>
+            <div class="heatmap-legend-item">
+                <div class="heatmap-legend-color activity-very-high"></div>
+                <span>Очень высокая</span>
+            </div>
+        </div>
+    `;
 }
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
@@ -677,19 +1022,141 @@ async function updatePointsChart() {
     // Получаем текущую статистику для добавления актуальных значений в график
     const currentStats = await fetchData('/statistics?includeOffline=true');
     
+    // Если был skeleton, восстанавливаем canvas (даже если данных нет)
+    if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
+        chartContainer.innerHTML = '<canvas id="pointsChart"></canvas>';
+    }
+    
+    // Убеждаемся, что canvas существует
+    const canvas = document.getElementById('pointsChart');
+    if (!canvas) {
+        console.error('Canvas element not found');
+        return;
+    }
+    
+    // Если данных нет, создаем или обновляем пустой график
     if (!history || history.length === 0) {
-        // Если был skeleton, заменяем на сообщение
-        if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
-            chartContainer.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 40px;">No points history available</p>';
-        } else if (pointsChart) {
-            // Если истории нет, показываем пустой график
+        // Скрываем статистику
+        const statsGrid = document.getElementById('chartStatsGrid');
+        if (statsGrid) statsGrid.style.display = 'none';
+        
+        // Если график еще не создан, создаем его с пустыми данными
+        if (!pointsChart) {
+            // Создаем пустой график
+            pointsChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    animation: {
+                        duration: 0
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { 
+                                color: '#efeff1',
+                                usePointStyle: true,
+                                padding: 15
+                            },
+                            position: 'top'
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#efeff1',
+                            bodyColor: '#efeff1',
+                            borderColor: '#26262c',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                displayFormats: {
+                                    day: 'MMM dd',
+                                    week: 'MMM dd',
+                                    month: 'MMM yyyy'
+                                },
+                                tooltipFormat: 'MMM dd, yyyy'
+                            },
+                            ticks: { 
+                                color: '#adadb8',
+                                maxTicksLimit: 15,
+                                source: 'data'
+                            },
+                            grid: { 
+                                color: '#26262c' 
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date',
+                                color: '#adadb8'
+                            },
+                            bounds: 'data',
+                            offset: true
+                        },
+                        y: { 
+                            ticks: { 
+                                color: '#adadb8' 
+                            }, 
+                            grid: { 
+                                color: '#26262c' 
+                            },
+                            title: {
+                                display: true,
+                                text: chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day',
+                                color: '#adadb8'
+                            },
+                            beginAtZero: true
+                        }
+                    },
+                    plugins: {
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: null
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                    modifierKey: 'ctrl'
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'x',
+                                limits: {
+                                    x: {
+                                        min: 'original',
+                                        max: 'original'
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: zoomPlugin ? [zoomPlugin] : []
+            });
+        } else {
+            // Если график уже создан, очищаем данные
             pointsChart.data.labels = [];
             pointsChart.data.datasets = [];
             pointsChart.update();
         }
-        // Скрываем статистику
-        const statsGrid = document.getElementById('chartStatsGrid');
-        if (statsGrid) statsGrid.style.display = 'none';
+        
+        lastDataUpdate.chart = Date.now();
+        if (chartContainer) {
+            updateStaleDataIndicator('chart', chartContainer);
+        }
         return;
     }
     
@@ -753,13 +1220,6 @@ async function updatePointsChart() {
     // Вычисляем статистику
     const stats = calculateChartStats(filteredHistory, chartMode);
     updateChartStats(stats);
-    
-    // Если был skeleton, восстанавливаем canvas
-    if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
-        chartContainer.innerHTML = '<canvas id="pointsChart"></canvas>';
-    }
-
-    const ctx = document.getElementById('pointsChart');
     
     // Группируем по стримерам и дням, суммируя баллы за каждый день
     const streamersMap = new Map();
@@ -837,12 +1297,19 @@ async function updatePointsChart() {
     
     if (zoomPlugin && window.Chart) {
         try {
-            if (!window.Chart.registry.plugins.has(zoomPlugin)) {
+            // Проверяем, зарегистрирован ли плагин другим способом
+            const registeredPlugins = window.Chart.registry?.plugins ? 
+                Array.from(window.Chart.registry.plugins.values()) : [];
+            const isRegistered = registeredPlugins.some(p => 
+                p.id === 'zoom' || p === zoomPlugin || 
+                (zoomPlugin.id && p.id === zoomPlugin.id)
+            );
+            
+            if (!isRegistered) {
                 window.Chart.register(zoomPlugin);
             }
         } catch (e) {
-            // Плагин уже зарегистрирован или ошибка регистрации
-            console.warn('Chart zoom plugin registration:', e);
+            // Плагин уже зарегистрирован или ошибка регистрации - игнорируем
         }
     }
 
@@ -869,7 +1336,7 @@ async function updatePointsChart() {
     });
 
     if (!pointsChart) {
-        pointsChart = new Chart(ctx, {
+        pointsChart = new Chart(canvas, {
             type: 'line',
             data: {
                 datasets: datasets
@@ -1071,6 +1538,65 @@ async function updatePointsChart() {
         // Обновляем график без анимации для мгновенного отображения изменений
         pointsChart.update('none');
     }
+    
+    lastDataUpdate.chart = Date.now();
+    // Используем уже объявленную переменную chartContainer из начала функции
+    if (chartContainer) {
+        updateStaleDataIndicator('chart', chartContainer);
+    }
+}
+
+/**
+ * Обновляет индикатор устаревших данных
+ * @param {string} type Тип данных (stats, events, chart, overall)
+ * @param {HTMLElement} container Контейнер для индикатора
+ */
+function updateStaleDataIndicator(type, container) {
+    if (!container) return;
+    
+    const timestamp = lastDataUpdate[type] || 0;
+    const age = Date.now() - timestamp;
+    const isStale = age > STALE_DATA_THRESHOLD;
+    
+    // Удаляем существующий индикатор
+    const existing = container.querySelector('.stale-data-indicator');
+    if (existing) {
+        existing.remove();
+    }
+    
+    if (isStale && timestamp > 0) {
+        const indicator = document.createElement('div');
+        indicator.className = 'stale-data-indicator';
+        indicator.title = `Данные обновлены ${Math.round(age / 1000)} секунд назад. Кликните для обновления.`;
+        indicator.innerHTML = '⚠️ Устаревшие данные';
+        indicator.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 100;
+            animation: pulse 2s infinite;
+        `;
+        
+        indicator.addEventListener('click', () => {
+            if (type === 'stats') updateStatistics();
+            else if (type === 'events') updateEvents(true);
+            else if (type === 'chart') updatePointsChart();
+            else if (type === 'overall') updateOverallStats();
+        });
+        
+        if (container.style.position !== 'relative' && container.style.position !== 'absolute') {
+            container.style.position = 'relative';
+        }
+        
+        container.appendChild(indicator);
+    }
 }
 
 /**
@@ -1124,6 +1650,73 @@ function checkForNewDay(oldDatasets, newDatasets) {
 
 let lastEventTimestamp = 0;
 let cachedEvents = []; // Кэш последних загруженных событий
+
+// Timestamp последнего обновления данных
+let lastDataUpdate = {
+    stats: 0,
+    events: 0,
+    chart: 0,
+    overall: 0
+};
+
+const STALE_DATA_THRESHOLD = 30000; // 30 секунд
+
+// Настройки приложения
+const defaultSettings = {
+    fontSize: 'medium',
+    density: 'normal',
+    autoScrollEvents: false,
+    eventsPageSize: 20,
+    saveChartZoom: false,
+    autoUpdateChart: true,
+    showToastNotifications: true,
+    soundNotifications: false
+};
+
+/**
+ * Загружает настройки из localStorage
+ */
+function loadSettings() {
+    const saved = safeGetLocalStorage('appSettings');
+    if (saved) {
+        try {
+            return { ...defaultSettings, ...JSON.parse(saved) };
+        } catch (e) {
+            console.error('Error loading settings:', e);
+        }
+    }
+    return { ...defaultSettings };
+}
+
+/**
+ * Сохраняет настройки в localStorage
+ */
+function saveSettingsToStorage(settings) {
+    safeSetLocalStorage('appSettings', JSON.stringify(settings));
+}
+
+/**
+ * Применяет настройки к интерфейсу
+ */
+function applySettings(settings) {
+    if (!settings) return;
+    // Размер шрифта
+    document.documentElement.style.setProperty('--font-size', 
+        settings.fontSize === 'small' ? '12px' : 
+        settings.fontSize === 'large' ? '16px' : '14px');
+    
+    // Плотность
+    if (document.body) {
+        document.body.className = document.body.className.replace(/density-\w+/g, '');
+        document.body.classList.add(`density-${settings.density}`);
+    }
+    
+    // Количество событий на странице
+    eventsPageSize = parseInt(settings.eventsPageSize) || 20;
+    
+    // Автопрокрутка к новым событиям
+    // Будет применена в функции renderFilteredEvents
+}
 
 /**
  * Обновляет список доступных тегов из событий
@@ -1199,7 +1792,7 @@ function toggleEventTag(tag) {
     }
     
     // Сохраняем в localStorage
-    localStorage.setItem('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+    safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
     
     // Обновляем UI
     updateFiltersUI();
@@ -1310,9 +1903,16 @@ function renderFilteredEvents(events) {
 
     // Определяем новые события (из отфильтрованных)
     const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
+    
+    // Автопрокрутка к новым событиям, если включена в настройках
+    const settings = loadSettings();
+    const shouldAutoScroll = settings.autoScrollEvents && newEvents.length > 0;
 
     // Группируем события по дням
     const eventGroups = groupEventsByTime(filteredEvents);
+    
+    // Используем DocumentFragment для оптимизации рендеринга
+    const fragment = document.createDocumentFragment();
     // Сортируем группы по дате (новые дни сверху)
     const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]);
 
@@ -1432,30 +2032,73 @@ function toggleEventGroup(groupId) {
     }
 }
 
-async function updateEvents(reset = false) {
+async function updateEvents(reset = false, loadMore = false) {
     if (reset) {
         eventsOffset = 0;
         allLoadedEvents = [];
         hasMoreEvents = true;
     }
     
-    if (isLoadingEvents || !hasMoreEvents) return;
+    if (isLoadingEvents) return;
+    
+    // Определяем, что нужно делать:
+    // - reset=true: полный сброс и загрузка с начала
+    // - loadMore=true: загрузка старых событий при прокрутке
+    // - иначе: проверка новых событий при автообновлении
+    const isCheckingNew = !reset && !loadMore;
+    const isLoadingMore = !reset && loadMore;
+    
+    // При загрузке старых событий проверяем, есть ли еще события
+    if (isLoadingMore && !hasMoreEvents) {
+        return;
+    }
+    
+    // Определяем offset для запроса
+    const currentOffset = isCheckingNew ? 0 : eventsOffset;
     
     isLoadingEvents = true;
     
     try {
-        const response = await fetchData(`/events?limit=${eventsPageSize}&offset=${eventsOffset}`);
+        const response = await fetchData(`/events?limit=${eventsPageSize}&offset=${currentOffset}`);
         if (!response || !response.events) {
             isLoadingEvents = false;
             return;
         }
 
-        const newEvents = response.events;
-        hasMoreEvents = response.hasMore;
+        const fetchedEvents = response.events;
         
-        // Добавляем новые события к уже загруженным
-        allLoadedEvents = [...allLoadedEvents, ...newEvents];
-        eventsOffset += newEvents.length;
+        if (reset) {
+            // При сбросе просто заменяем все события
+            allLoadedEvents = fetchedEvents;
+            eventsOffset = fetchedEvents.length;
+            hasMoreEvents = response.hasMore;
+        } else if (isCheckingNew) {
+            // При проверке новых событий объединяем их с уже загруженными
+            // Создаем Map для быстрого поиска дубликатов
+            const existingEventsMap = new Map();
+            allLoadedEvents.forEach(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                existingEventsMap.set(key, e);
+            });
+            
+            // Добавляем только новые события (которых еще нет)
+            const trulyNewEvents = fetchedEvents.filter(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                return !existingEventsMap.has(key);
+            });
+            
+            // Объединяем: новые события в начале, затем уже загруженные
+            allLoadedEvents = [...trulyNewEvents, ...allLoadedEvents];
+            
+            // Обновляем hasMoreEvents для возможности загрузки старых событий при прокрутке
+            hasMoreEvents = response.hasMore;
+            // eventsOffset не меняется при проверке новых событий
+        } else {
+            // При прокрутке вниз добавляем старые события в конец
+            allLoadedEvents = [...allLoadedEvents, ...fetchedEvents];
+            eventsOffset += fetchedEvents.length;
+            hasMoreEvents = response.hasMore;
+        }
 
         // Сохраняем события в кэш
         cachedEvents = allLoadedEvents;
@@ -1463,9 +2106,11 @@ async function updateEvents(reset = false) {
         // Обновляем доступные теги
         updateAvailableTags(allLoadedEvents);
 
-        // Обновляем timestamp для определения новых событий
+        // Обновляем timestamp для определения новых событий (самое новое событие)
         if (allLoadedEvents.length > 0) {
-            lastEventTimestamp = allLoadedEvents[0].timestamp;
+            // Сортируем по timestamp для определения самого нового
+            const sortedEvents = [...allLoadedEvents].sort((a, b) => b.timestamp - a.timestamp);
+            lastEventTimestamp = sortedEvents[0].timestamp;
         }
 
         // Отображаем отфильтрованные события
@@ -1473,6 +2118,12 @@ async function updateEvents(reset = false) {
         
         // Устанавливаем observer для бесконечной прокрутки
         setupInfiniteScroll();
+        
+        lastDataUpdate.events = Date.now();
+        const eventsList = document.getElementById('eventsList');
+        if (eventsList) {
+            updateStaleDataIndicator('events', eventsList);
+        }
     } finally {
         isLoadingEvents = false;
     }
@@ -1504,7 +2155,7 @@ function setupInfiniteScroll() {
     window.eventsScrollObserver = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
-                updateEvents(false);
+                updateEvents(false, true); // loadMore=true для загрузки старых событий
             }
         });
     }, {
@@ -1595,15 +2246,40 @@ async function updateTokenInfo() {
     `;
 }
 
+/**
+ * Показывает индикатор загрузки
+ */
+function showLoadingIndicator() {
+    const indicator = document.getElementById('loadingIndicator');
+    if (indicator) {
+        indicator.style.display = 'flex';
+    }
+}
+
+/**
+ * Скрывает индикатор загрузки
+ */
+function hideLoadingIndicator() {
+    const indicator = document.getElementById('loadingIndicator');
+    if (indicator) {
+        indicator.style.display = 'none';
+    }
+}
+
 async function updateAll() {
-    await Promise.all([
-        updateOverallStats(),
-        updateStatistics(),
-        updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
-        updatePointsChart(),
-        updateCriticalNotifications(),
-        updateTokenInfo()
-    ]);
+    showLoadingIndicator();
+    try {
+        await Promise.all([
+            updateOverallStats(),
+            updateStatistics(),
+            updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
+            updatePointsChart(),
+            updateCriticalNotifications(),
+            updateTokenInfo()
+        ]);
+    } finally {
+        hideLoadingIndicator();
+    }
 }
 
 async function updateCriticalNotifications() {
@@ -1654,7 +2330,7 @@ function setUpdateInterval(seconds) {
     updateIntervalMs = seconds * 1000;
     
     // Сохраняем интервал в localStorage
-    localStorage.setItem('updateIntervalMs', updateIntervalMs.toString());
+    safeSetLocalStorage('updateIntervalMs', updateIntervalMs.toString());
     
     // Обновляем активную кнопку
     document.querySelectorAll('.interval-btn').forEach(btn => {
@@ -1683,7 +2359,7 @@ function toggleOfflineStreamers() {
     showOffline = !showOffline;
     
     // Сохраняем состояние в localStorage
-    localStorage.setItem('showOffline', showOffline.toString());
+    safeSetLocalStorage('showOffline', showOffline.toString());
     
     const toggleBtn = document.getElementById('toggleOfflineBtn');
     const toggleText = document.getElementById('toggleOfflineText');
@@ -1700,11 +2376,13 @@ function toggleOfflineStreamers() {
 
 function exportLogs(format, streamerName) {
     const exportBtn = document.getElementById('exportBtn');
-    const originalText = exportBtn.innerHTML;
+    const originalText = exportBtn ? exportBtn.innerHTML : '';
     
     // Показываем индикатор загрузки
-    exportBtn.disabled = true;
-    exportBtn.innerHTML = '<span>⏳</span><span>Exporting...</span>';
+    if (exportBtn) {
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = '<span>⏳</span><span>Exporting...</span>';
+    }
     
     // Формируем URL для экспорта
     let url = `${API_BASE}/export/${format}`;
@@ -1722,8 +2400,10 @@ function exportLogs(format, streamerName) {
     
     // Восстанавливаем кнопку через небольшую задержку
     setTimeout(() => {
-        exportBtn.disabled = false;
-        exportBtn.innerHTML = originalText;
+        if (exportBtn) {
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = originalText;
+        }
     }, 1000);
 }
 
@@ -1744,7 +2424,7 @@ function closeExportDropdown() {
  */
 function toggleColumnVisibility(columnKey, visible) {
     visibleColumns[columnKey] = visible;
-    localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns));
+    safeSetLocalStorage('visibleColumns', JSON.stringify(visibleColumns));
     updateStatistics();
 }
 
@@ -1765,6 +2445,40 @@ function closeColumnSettings() {
 }
 
 window.addEventListener('load', () => {
+    // Применяем настройки при загрузке (только если DOM готов)
+    try {
+        const settings = loadSettings();
+        if (document.body) {
+            applySettings(settings);
+        }
+    } catch (error) {
+        console.error('Error applying settings on load:', error);
+    }
+    
+    // Восстанавливаем состояние свернутых карточек и секций
+    restoreCollapsedState();
+    
+    // Добавляем обработчики клика для заголовков карточек
+    document.querySelectorAll('.collapsible-card h3').forEach(h3 => {
+        h3.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCard(this);
+        });
+    });
+    
+    // Добавляем обработчики клика для заголовков секций
+    document.querySelectorAll('.section-header-clickable').forEach(header => {
+        header.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const sectionId = this.dataset.section;
+            if (sectionId) {
+                toggleSection(sectionId);
+            }
+        });
+    });
+    
     // Восстанавливаем состояние кнопки показа/скрытия офлайн стримеров
     const toggleText = document.getElementById('toggleOfflineText');
     if (toggleText) {
@@ -1779,6 +2493,12 @@ window.addEventListener('load', () => {
             btn.classList.add('active');
         }
     });
+    
+    // Обработчик для кнопки настроек
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', showSettingsModal);
+    }
     
     startAutoUpdate();
     
@@ -1870,7 +2590,7 @@ window.addEventListener('load', () => {
         btn.addEventListener('click', () => {
             const mode = btn.dataset.mode;
             chartMode = mode;
-            localStorage.setItem('chartMode', mode);
+            safeSetLocalStorage('chartMode', mode);
             
             // Обновляем активную кнопку
             document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
@@ -1896,7 +2616,7 @@ window.addEventListener('load', () => {
         periodSelect.value = chartPeriod;
         periodSelect.addEventListener('change', (e) => {
             chartPeriod = e.target.value;
-            localStorage.setItem('chartPeriod', chartPeriod);
+            safeSetLocalStorage('chartPeriod', chartPeriod);
             updatePointsChart();
         });
     }
@@ -1923,7 +2643,7 @@ async function addStreamer() {
     
     const username = input.value.trim();
     if (!username) {
-        alert('Please enter a streamer name');
+        showNotification('warning', 'Please enter a streamer name');
         return;
     }
 
@@ -1954,11 +2674,11 @@ async function addStreamer() {
             // Показываем уведомление об успехе
             showNotification('success', `Streamer ${username} added successfully`);
         } else {
-            alert(result.message || 'Failed to add streamer');
+            showNotification('error', result.message || 'Failed to add streamer');
         }
     } catch (error) {
         console.error('Error adding streamer:', error);
-        alert('Failed to add streamer. Please try again.');
+        showNotification('error', 'Failed to add streamer. Please try again.');
     } finally {
         // Включаем кнопку и поле ввода
         input.disabled = false;
@@ -1968,90 +2688,554 @@ async function addStreamer() {
 }
 
 /**
- * Удаляет стримера из отслеживания
- * @param {string} username Имя стримера
+ * Показывает модальное окно подтверждения
+ * @param {string} title Заголовок модального окна
+ * @param {string} message Сообщение
+ * @param {Function} onConfirm Функция, вызываемая при подтверждении
  */
-async function removeStreamer(username) {
-    if (!confirm(`Are you sure you want to remove ${username} from tracking?`)) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`${API_BASE}/streamers/${encodeURIComponent(username)}`, {
-            method: 'DELETE',
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            // Обновляем статистику
-            await updateStatistics();
-            await updateOverallStats();
-            
-            // Показываем уведомление об успехе
-            showNotification('success', `Streamer ${username} removed successfully`);
-        } else {
-            alert(result.message || 'Failed to remove streamer');
+function showConfirmModal(title, message, onConfirm) {
+    const modal = document.getElementById('confirmModal');
+    const titleEl = document.getElementById('confirmModalTitle');
+    const messageEl = document.getElementById('confirmModalMessage');
+    const confirmBtn = document.getElementById('confirmModalConfirmBtn');
+    
+    if (!modal || !titleEl || !messageEl || !confirmBtn) return;
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    
+    // Удаляем старые обработчики
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    
+    // Добавляем новый обработчик
+    newConfirmBtn.addEventListener('click', () => {
+        closeConfirmModal();
+        if (onConfirm) onConfirm();
+    });
+    
+    modal.style.display = 'flex';
+    
+    // Закрытие по клику на overlay
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeConfirmModal();
         }
-    } catch (error) {
-        console.error('Error removing streamer:', error);
-        alert('Failed to remove streamer. Please try again.');
+    });
+    
+    // Закрытие по Escape
+    const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeConfirmModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+}
+
+/**
+ * Закрывает модальное окно подтверждения
+ */
+function closeConfirmModal() {
+    const modal = document.getElementById('confirmModal');
+    if (modal) {
+        modal.style.display = 'none';
     }
 }
 
 /**
- * Показывает уведомление
- * @param {string} type Тип уведомления (success, error, info)
- * @param {string} message Текст уведомления
+ * Показывает панель настроек
  */
-function showNotification(type, message) {
-    // Создаем элемент уведомления
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 12px 20px;
-        background: ${type === 'success' ? '#00d166' : type === 'error' ? '#ef4444' : '#9147ff'};
-        color: white;
-        border-radius: 6px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        z-index: 10000;
-        font-size: 14px;
-        font-weight: 600;
-        animation: slideIn 0.3s ease-out;
-    `;
-    notification.textContent = message;
+function showSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
     
-    // Добавляем анимацию
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
+    const settings = loadSettings();
+    
+    // Заполняем форму
+    document.getElementById('fontSizeSetting').value = settings.fontSize;
+    document.getElementById('densitySetting').value = settings.density;
+    document.getElementById('autoScrollEventsSetting').checked = settings.autoScrollEvents;
+    document.getElementById('eventsPageSizeSetting').value = settings.eventsPageSize.toString();
+    document.getElementById('saveChartZoomSetting').checked = settings.saveChartZoom;
+    document.getElementById('autoUpdateChartSetting').checked = settings.autoUpdateChart;
+    document.getElementById('showToastNotificationsSetting').checked = settings.showToastNotifications;
+    document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
+    
+    modal.style.display = 'flex';
+    
+    // Закрытие по клику на overlay
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeSettingsModal();
+        }
+    });
+    
+    // Закрытие по Escape
+    const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeSettingsModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+}
+
+/**
+ * Закрывает панель настроек
+ */
+function closeSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * Сохраняет настройки
+ */
+function saveSettings() {
+    const settings = {
+        fontSize: document.getElementById('fontSizeSetting').value,
+        density: document.getElementById('densitySetting').value,
+        autoScrollEvents: document.getElementById('autoScrollEventsSetting').checked,
+        eventsPageSize: parseInt(document.getElementById('eventsPageSizeSetting').value),
+        saveChartZoom: document.getElementById('saveChartZoomSetting').checked,
+        autoUpdateChart: document.getElementById('autoUpdateChartSetting').checked,
+        showToastNotifications: document.getElementById('showToastNotificationsSetting').checked,
+        soundNotifications: document.getElementById('soundNotificationsSetting').checked
+    };
+    
+    saveSettingsToStorage(settings);
+    applySettings(settings);
+    closeSettingsModal();
+    showNotification('success', 'Настройки сохранены');
+}
+
+/**
+ * Экспортирует настройки в JSON файл
+ */
+function exportSettings() {
+    const settings = loadSettings();
+    const dataStr = JSON.stringify(settings, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `twitch-watcher-settings-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showNotification('success', 'Настройки экспортированы');
+}
+
+/**
+ * Импортирует настройки из JSON файла
+ */
+function importSettings() {
+    document.getElementById('settingsFileInput').click();
+}
+
+/**
+ * Обрабатывает импорт настроек
+ */
+function handleSettingsImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const imported = JSON.parse(e.target.result);
+            // Валидация настроек
+            const validSettings = {};
+            Object.keys(defaultSettings).forEach(key => {
+                if (imported.hasOwnProperty(key)) {
+                    validSettings[key] = imported[key];
+                } else {
+                    validSettings[key] = defaultSettings[key];
+                }
+            });
+            
+            saveSettingsToStorage(validSettings);
+            applySettings(validSettings);
+            
+            // Обновляем форму
+            document.getElementById('fontSizeSetting').value = validSettings.fontSize;
+            document.getElementById('densitySetting').value = validSettings.density;
+            document.getElementById('autoScrollEventsSetting').checked = validSettings.autoScrollEvents;
+            document.getElementById('eventsPageSizeSetting').value = validSettings.eventsPageSize.toString();
+            document.getElementById('saveChartZoomSetting').checked = validSettings.saveChartZoom;
+            document.getElementById('autoUpdateChartSetting').checked = validSettings.autoUpdateChart;
+            document.getElementById('showToastNotificationsSetting').checked = validSettings.showToastNotifications;
+            document.getElementById('soundNotificationsSetting').checked = validSettings.soundNotifications;
+            
+            showNotification('success', 'Настройки импортированы');
+        } catch (error) {
+            console.error('Error importing settings:', error);
+            showNotification('error', 'Ошибка при импорте настроек');
+        }
+    };
+    reader.readAsText(file);
+    event.target.value = ''; // Сбрасываем input
+}
+
+/**
+ * Удаляет стримера из отслеживания
+ * @param {string} username Имя стримера
+ */
+async function removeStreamer(username) {
+    showConfirmModal(
+        'Подтверждение удаления',
+        `Вы уверены, что хотите удалить ${username} из отслеживания?`,
+        async () => {
+            try {
+                const response = await fetch(`${API_BASE}/streamers/${encodeURIComponent(username)}`, {
+                    method: 'DELETE',
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Обновляем статистику
+                    await updateStatistics();
+                    await updateOverallStats();
+                    
+                    // Показываем уведомление об успехе
+                    showNotification('success', `Streamer ${username} removed successfully`);
+                } else {
+                    showNotification('error', result.message || 'Failed to remove streamer');
+                }
+            } catch (error) {
+                console.error('Error removing streamer:', error);
+                showNotification('error', 'Failed to remove streamer. Please try again.');
             }
         }
-    `;
-    if (!document.head.querySelector('style[data-notification]')) {
-        style.setAttribute('data-notification', 'true');
-        document.head.appendChild(style);
+    );
+}
+
+/**
+ * Иконки для типов уведомлений
+ */
+const notificationIcons = {
+    success: '✅',
+    error: '❌',
+    info: 'ℹ️',
+    warning: '⚠️'
+};
+
+/**
+ * Функция debounce для задержки выполнения
+ * @param {Function} func Функция для выполнения
+ * @param {number} wait Время задержки в миллисекундах
+ * @returns {Function} Обернутая функция
+ */
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+/**
+ * Создает и показывает прогресс-бар
+ * @param {string} title Заголовок прогресс-бара
+ * @returns {Object} Объект с методами для управления прогресс-баром
+ */
+function createProgressBar(title) {
+    // Удаляем существующий прогресс-бар, если есть
+    const existing = document.getElementById('progressBarOverlay');
+    if (existing) {
+        existing.remove();
     }
     
-    document.body.appendChild(notification);
+    const overlay = document.createElement('div');
+    overlay.id = 'progressBarOverlay';
+    overlay.className = 'progress-bar-overlay';
     
-    // Удаляем уведомление через 3 секунды
-    setTimeout(() => {
-        notification.style.animation = 'slideIn 0.3s ease-out reverse';
-        setTimeout(() => {
-            notification.remove();
-        }, 300);
-    }, 3000);
+    overlay.innerHTML = `
+        <div class="progress-bar-container">
+            <div class="progress-bar-title">${title}</div>
+            <div class="progress-bar-wrapper">
+                <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+            </div>
+            <div class="progress-bar-text" id="progressBarText">0%</div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    return {
+        /**
+         * Обновляет прогресс
+         * @param {number} percent Процент выполнения (0-100)
+         * @param {string} text Текст для отображения (опционально)
+         */
+        update(percent, text) {
+            const fill = document.getElementById('progressBarFill');
+            const textEl = document.getElementById('progressBarText');
+            
+            if (fill) {
+                fill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+            }
+            
+            if (textEl) {
+                textEl.textContent = text || `${Math.round(percent)}%`;
+            }
+        },
+        
+        /**
+         * Закрывает прогресс-бар
+         */
+        close() {
+            if (overlay && overlay.parentElement) {
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.remove();
+                }, 200);
+            }
+        }
+    };
 }
+
+/**
+ * Показывает уведомление
+ * @param {string} type Тип уведомления (success, error, info, warning)
+ * @param {string} message Текст уведомления
+ * @param {number} duration Длительность отображения в миллисекундах (по умолчанию 5000)
+ */
+function showNotification(type, message, duration = 5000) {
+    // Создаем контейнер для уведомлений, если его еще нет
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+    
+    // Создаем элемент уведомления
+    const notification = document.createElement('div');
+    notification.className = `toast-notification ${type}`;
+    
+    const icon = notificationIcons[type] || notificationIcons.info;
+    
+    notification.innerHTML = `
+        <span class="toast-icon">${icon}</span>
+        <span class="toast-message">${message}</span>
+        <button class="toast-close" onclick="this.parentElement.remove()" title="Закрыть">×</button>
+    `;
+    
+    // Добавляем уведомление в контейнер
+    container.appendChild(notification);
+    
+    // Автоматически удаляем уведомление через указанное время
+    const timeoutId = setTimeout(() => {
+        removeNotification(notification);
+    }, duration);
+    
+    // Останавливаем таймер при наведении
+    notification.addEventListener('mouseenter', () => {
+        clearTimeout(timeoutId);
+    });
+    
+    // Возобновляем таймер при уходе мыши
+    notification.addEventListener('mouseleave', () => {
+        setTimeout(() => {
+            removeNotification(notification);
+        }, duration);
+    });
+}
+
+/**
+ * Удаляет уведомление с анимацией
+ * @param {HTMLElement} notification Элемент уведомления
+ */
+function removeNotification(notification) {
+    if (notification && notification.parentElement) {
+        notification.classList.add('slide-out');
+        setTimeout(() => {
+            if (notification.parentElement) {
+                notification.remove();
+            }
+            // Удаляем контейнер, если он пустой
+            const container = document.getElementById('toastContainer');
+            if (container && container.children.length === 0) {
+                container.remove();
+            }
+        }, 300);
+    }
+}
+
+// Делаем функции доступными глобально для вызова из HTML
+window.addStreamer = addStreamer;
+window.removeStreamer = removeStreamer;
+window.closeConfirmModal = closeConfirmModal;
+window.closeSettingsModal = closeSettingsModal;
+window.exportSettings = exportSettings;
+window.importSettings = importSettings;
+window.saveSettings = saveSettings;
+window.showSettingsModal = showSettingsModal;
+window.handleSettingsImport = handleSettingsImport;
+
+/**
+ * Переключает видимость секции
+ * @param {string} sectionId ID элемента секции для сворачивания/разворачивания
+ */
+function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    
+    const isCollapsed = section.style.display === 'none' || section.style.maxHeight === '0px' || 
+                        (section.style.maxHeight === '' && section.offsetHeight === 0);
+    
+    if (isCollapsed) {
+        section.style.display = '';
+        const height = section.scrollHeight;
+        section.style.maxHeight = '0px';
+        // Принудительно пересчитываем
+        requestAnimationFrame(() => {
+            section.style.maxHeight = height + 'px';
+            setTimeout(() => {
+                section.style.maxHeight = '';
+            }, 300);
+        });
+    } else {
+        const height = section.scrollHeight;
+        section.style.maxHeight = height + 'px';
+        // Принудительно пересчитываем
+        requestAnimationFrame(() => {
+            section.style.maxHeight = '0px';
+            setTimeout(() => {
+                section.style.display = 'none';
+                section.style.maxHeight = '';
+            }, 300);
+        });
+    }
+    
+    // Если сворачивается Advanced Statistics, также скрываем Activity Heatmap
+    if (sectionId === 'advancedStatsContent') {
+        const heatmapSection = document.getElementById('activityHeatmapSection');
+        if (heatmapSection) {
+            if (isCollapsed) {
+                // Разворачиваем heatmap вместе с Advanced Statistics
+                heatmapSection.style.display = '';
+            } else {
+                // Сворачиваем heatmap вместе с Advanced Statistics
+                heatmapSection.style.display = 'none';
+            }
+        }
+    }
+    
+    // Сохраняем состояние секции
+    try {
+        const collapsedSectionsStr = safeGetLocalStorage('collapsedSections', '[]');
+        const collapsedSections = collapsedSectionsStr ? JSON.parse(collapsedSectionsStr) : [];
+        if (Array.isArray(collapsedSections)) {
+            const index = collapsedSections.indexOf(sectionId);
+            
+            if (!isCollapsed && index === -1) {
+                collapsedSections.push(sectionId);
+            } else if (isCollapsed && index !== -1) {
+                collapsedSections.splice(index, 1);
+            }
+            
+            safeSetLocalStorage('collapsedSections', JSON.stringify(collapsedSections));
+        }
+    } catch (error) {
+        console.error('Error saving section state:', error);
+    }
+    
+    // Иконка больше не используется, заголовок кликабельный без визуального индикатора
+}
+
+/**
+ * Восстанавливает состояние свернутых карточек и секций
+ */
+function restoreCollapsedState() {
+    try {
+        // Восстанавливаем состояние карточек
+        const collapsedCardsStr = safeGetLocalStorage('collapsedCards', '[]');
+        const collapsedCards = collapsedCardsStr ? JSON.parse(collapsedCardsStr) : [];
+        if (Array.isArray(collapsedCards)) {
+            document.querySelectorAll('.collapsible-card').forEach(card => {
+                const h3 = card.querySelector('h3');
+                if (h3) {
+                    // Получаем текст заголовка
+                    const cardTitle = h3.textContent.trim() || '';
+                    if (collapsedCards.includes(cardTitle)) {
+                        card.classList.add('collapsed');
+                    }
+                }
+            });
+        }
+        
+        // Восстанавливаем состояние секций
+        const collapsedSectionsStr = safeGetLocalStorage('collapsedSections', '[]');
+        const collapsedSections = collapsedSectionsStr ? JSON.parse(collapsedSectionsStr) : [];
+        if (Array.isArray(collapsedSections)) {
+            collapsedSections.forEach(sectionId => {
+                const section = document.getElementById(sectionId);
+                if (section) {
+                    section.style.display = 'none';
+                    // Если сворачивается Advanced Statistics, также скрываем Activity Heatmap
+                    if (sectionId === 'advancedStatsContent') {
+                        const heatmapSection = document.getElementById('activityHeatmapSection');
+                        if (heatmapSection) {
+                            heatmapSection.style.display = 'none';
+                        }
+                    }
+                    section.style.maxHeight = '0px';
+                // Иконка больше не используется
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error restoring collapsed state:', error);
+    }
+}
+
+/**
+ * Переключает видимость карточки статистики
+ * @param {HTMLElement} headerElement Элемент заголовка карточки (h3)
+ */
+function toggleCard(headerElement) {
+    const card = headerElement.closest('.collapsible-card');
+    if (!card) return;
+    
+    const isCollapsed = card.classList.toggle('collapsed');
+    // Получаем текст заголовка
+    const cardTitle = headerElement.textContent.trim() || '';
+    
+    // Сохраняем состояние карточки
+    try {
+        const collapsedCardsStr = safeGetLocalStorage('collapsedCards', '[]');
+        const collapsedCards = collapsedCardsStr ? JSON.parse(collapsedCardsStr) : [];
+        if (Array.isArray(collapsedCards)) {
+            const index = collapsedCards.indexOf(cardTitle);
+            
+            if (isCollapsed && index === -1) {
+                collapsedCards.push(cardTitle);
+            } else if (!isCollapsed && index !== -1) {
+                collapsedCards.splice(index, 1);
+            }
+            
+            safeSetLocalStorage('collapsedCards', JSON.stringify(collapsedCards));
+        }
+    } catch (error) {
+        console.error('Error saving card state:', error);
+    }
+}
+
+// Делаем функции доступными глобально для вызова из HTML
+window.toggleSection = toggleSection;
+window.toggleCard = toggleCard;
 
 window.addEventListener('beforeunload', () => {
     if (updateInterval) {
