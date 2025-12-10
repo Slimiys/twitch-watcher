@@ -28,6 +28,10 @@
                         <button class="interval-btn" data-interval="60">1m</button>
                     </div>
                 </div>
+                <button class="settings-btn" id="settingsBtn" title="Settings">
+                    <span>⚙️</span>
+                    <span>Settings</span>
+                </button>
                 <div class="export-menu">
                     <button class="export-btn" id="exportBtn" title="Export logs">
                         <span>📥</span>
@@ -38,6 +42,10 @@
                         <a href="#" class="export-dropdown-item" data-format="json" data-type="all">📄 Export All (JSON)</a>
                     </div>
                 </div>
+                <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+                    <div class="loading-spinner"></div>
+                    <span>Updating...</span>
+                </div>
                 <div class="connection-status" id="connectionStatus">
                     <span class="status-dot offline" id="statusDot"></span>
                     <span id="statusText">Connecting...</span>
@@ -46,25 +54,41 @@
         </header>
 
         <div class="stats-grid">
-            <div class="stat-card">
-                <h3>Active Watches</h3>
-                <div class="value" id="activeWatches">0</div>
-                <div class="label">Currently watching</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)">
+                    <span>Active Watches</span>
+                </h3>
+                <div class="stat-card-content">
+                    <div class="value" id="activeWatches">0</div>
+                    <div class="label">Currently watching</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Total Points</h3>
-                <div class="value" id="totalPoints">0</div>
-                <div class="label">Points earned</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)">
+                    <span>Total Points</span>
+                </h3>
+                <div class="stat-card-content">
+                    <div class="value" id="totalPoints">0</div>
+                    <div class="label">Points earned</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Streamers</h3>
-                <div class="value" id="streamersCount">0</div>
-                <div class="label">Total streamers</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)">
+                    <span>Streamers</span>
+                </h3>
+                <div class="stat-card-content">
+                    <div class="value" id="streamersCount">0</div>
+                    <div class="label">Total streamers</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Last Activity</h3>
-                <div class="value" id="lastActivity">-</div>
-                <div class="label">Time ago</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)">
+                    <span>Last Activity</span>
+                </h3>
+                <div class="stat-card-content">
+                    <div class="value" id="lastActivity">-</div>
+                    <div class="label">Time ago</div>
+                </div>
             </div>
         </div>
 
@@ -81,15 +105,17 @@
             </div>
         </div>
 
-        <div class="section">
+        <div class="section collapsible-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="margin: 0;">All Streamers</h2>
+                <h2 class="section-header-clickable" data-section="streamersSectionContent" style="margin: 0; cursor: pointer;">
+                    All Streamers
+                </h2>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
-                               style="padding: 6px 12px; background: #18181b; border: 1px solid #26262c; border-radius: 4px; color: #efeff1; font-size: 14px; width: 200px;"
+                               class="add-streamer-input"
                                onkeypress="if(event.key === 'Enter') addStreamer()">
-                        <button onclick="addStreamer()" class="add-btn" style="padding: 6px 16px; background: #9147ff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600;">
+                        <button onclick="addStreamer()" class="add-btn">
                             Add
                         </button>
                     </div>
@@ -130,14 +156,18 @@
                     </button>
                 </div>
             </div>
-            <div id="watchesTable">
-                <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+            <div id="streamersSectionContent">
+                <div id="watchesTable">
+                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                </div>
             </div>
         </div>
 
-        <div class="section">
+        <div class="section collapsible-section">
             <div class="chart-header">
-                <h2 class="chart-title">Points History</h2>
+                <h2 class="chart-title section-header-clickable" data-section="chartSectionContent" style="cursor: pointer;">
+                    Points History
+                </h2>
                 <div class="chart-controls">
                     <!-- Переключатель режима отображения -->
                     <div class="chart-mode-control">
@@ -178,18 +208,172 @@
             <div class="chart-stats-grid" id="chartStatsGrid" style="display: none;">
                 <!-- Статистика будет добавлена динамически -->
             </div>
-            <div class="chart-container">
-                <canvas id="pointsChart"></canvas>
+            <div id="chartSectionContent">
+                <div class="chart-container">
+                    <canvas id="pointsChart"></canvas>
+                </div>
             </div>
         </div>
 
-        <div class="section">
-            <h2>Recent Events</h2>
-            <div class="event-filters" id="eventFilters">
-                <span class="filter-label">Filter:</span>
+        <!-- Расширенная статистика -->
+        <div class="section collapsible-section" id="advancedStatsSection" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 class="section-header-clickable" data-section="advancedStatsContent" style="margin: 0; cursor: pointer;">
+                    Advanced Statistics
+                </h2>
             </div>
-            <div class="events-list" id="eventsList">
-                <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+            <div id="advancedStatsContent" class="advanced-stats-layout">
+                <!-- Календарь активности -->
+                <div id="activityCalendarSection" class="calendar-section">
+                    <div id="activityCalendar" class="activity-calendar">
+                        <!-- Календарь будет добавлен динамически -->
+                    </div>
+                </div>
+                
+                <!-- Статистика -->
+                <div class="advanced-stats-grid">
+                    <!-- Статистика будет добавлена динамически -->
+                </div>
+            </div>
+            
+            <!-- Тепловая карта активности -->
+            <div id="activityHeatmapSection" style="display: none; margin-top: 30px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3 style="margin: 0;">
+                        Activity Heatmap (by Hour)
+                    </h3>
+                </div>
+                <div id="activityHeatmap" class="activity-heatmap">
+                    <!-- Тепловая карта будет добавлена динамически -->
+                </div>
+            </div>
+        </div>
+
+        <div class="section collapsible-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 class="section-header-clickable" data-section="eventsSectionContent" style="margin: 0; cursor: pointer;">
+                    Recent Events
+                </h2>
+            </div>
+            <div id="eventsSectionContent">
+                <div class="event-filters" id="eventFilters">
+                    <span class="filter-label">Filter:</span>
+                </div>
+                <div class="events-list" id="eventsList">
+                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно подтверждения -->
+    <div id="confirmModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="confirmModalTitle">Подтверждение</h3>
+                <button class="modal-close" onclick="closeConfirmModal()" title="Закрыть">×</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmModalMessage"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeConfirmModal()">Отмена</button>
+                <button class="modal-btn modal-btn-primary" id="confirmModalConfirmBtn">Подтвердить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель настроек -->
+    <div id="settingsModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content settings-modal-content">
+            <div class="modal-header">
+                <h3>Настройки</h3>
+                <button class="modal-close" onclick="closeSettingsModal()" title="Закрыть">×</button>
+            </div>
+            <div class="modal-body settings-modal-body">
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Отображение</h4>
+                    <div class="settings-item">
+                        <label class="settings-label">Размер шрифта:</label>
+                        <select id="fontSizeSetting" class="settings-select">
+                            <option value="small">Маленький</option>
+                            <option value="medium" selected>Средний</option>
+                            <option value="large">Большой</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-label">Плотность отображения:</label>
+                        <select id="densitySetting" class="settings-select">
+                            <option value="compact">Компактный</option>
+                            <option value="normal" selected>Обычный</option>
+                            <option value="spacious">Просторный</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h4 class="settings-section-title">События</h4>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="autoScrollEventsSetting" class="settings-checkbox">
+                            <span>Автопрокрутка к новым событиям</span>
+                        </label>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-label">Количество событий на странице:</label>
+                        <select id="eventsPageSizeSetting" class="settings-select">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h4 class="settings-section-title">График</h4>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="saveChartZoomSetting" class="settings-checkbox">
+                            <span>Сохранять состояние зума</span>
+                        </label>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="autoUpdateChartSetting" class="settings-checkbox" checked>
+                            <span>Автоматическое обновление графика</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Уведомления</h4>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="showToastNotificationsSetting" class="settings-checkbox" checked>
+                            <span>Показывать toast-уведомления</span>
+                        </label>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="soundNotificationsSetting" class="settings-checkbox">
+                            <span>Звуковые уведомления</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Управление настройками</h4>
+                    <div class="settings-item" style="display: flex; gap: 10px;">
+                        <button class="modal-btn modal-btn-secondary" onclick="exportSettings()">Экспорт настроек</button>
+                        <button class="modal-btn modal-btn-secondary" onclick="importSettings()">Импорт настроек</button>
+                        <input type="file" id="settingsFileInput" accept=".json" style="display: none;" onchange="handleSettingsImport(event)">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeSettingsModal()">Отмена</button>
+                <button class="modal-btn modal-btn-primary" onclick="saveSettings()">Сохранить</button>
             </div>
         </div>
     </div>
