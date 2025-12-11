@@ -64,6 +64,17 @@ export class StreamWatcher {
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
   private configPath: string = './config.json'; // Путь к файлу конфигурации
+  // Персистентное состояние баллов между рестартами
+  private pointsStatePath: string | null = null;
+  private pointsState: Record<string, {
+    channelPoints: number;
+    initialChannelPoints: number | null;
+    lastChannelPoints: number | null;
+    isOnline: boolean;
+    updatedAt: number;
+  }> = {};
+  private lastPointsStateSave = 0;
+  private pointsStateSaveIntervalMs = 10000;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -141,6 +152,8 @@ export class StreamWatcher {
     try {
       const statsConfig = loadStatisticsConfig();
       this.statisticsStorage = new StatisticsStorage(statsConfig);
+      this.pointsStatePath = path.join(statsConfig.storagePath, 'current-points.json');
+      this.pointsState = this.loadPointsState();
       logger.verbose(`📊  Statistics storage initialized`);
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
@@ -214,6 +227,7 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, points, totalPoints);
+        this.savePointsState();
         },
         onClaimAvailable: async (streamerInfo, claimId) => {
           // Проверяем, доступен ли бонус для этого стримера перед попыткой собрать
@@ -270,6 +284,7 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+          this.savePointsState();
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
@@ -282,6 +297,7 @@ export class StreamWatcher {
             this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
             this.activeSessions.delete(streamerInfo.username);
           }
+          this.savePointsState();
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
           const now = Date.now();
@@ -404,6 +420,9 @@ export class StreamWatcher {
       this.tokenManager = null;
     }
 
+    // Сохраняем текущее состояние баллов при остановке
+    this.savePointsState(true);
+
     logger.info('🛑 API mode watcher stopped');
   }
 
@@ -418,6 +437,7 @@ export class StreamWatcher {
         const streamerInfo = await this.twitchAPI.initializeStreamer(username);
         
         if (streamerInfo) {
+          this.applyPersistedPoints(streamerInfo);
           this.streamers.set(username, streamerInfo);
           
           if (this.wsManager) {
@@ -477,9 +497,13 @@ export class StreamWatcher {
           initialChannelPoints: null,
           lastChannelPoints: null,
         };
+        this.applyPersistedPoints(fallbackStreamerInfo);
         this.streamers.set(username, fallbackStreamerInfo);
       }
     }
+
+    // Сохраняем актуальное состояние после инициализации
+    this.savePointsState(true);
   }
 
   /**
@@ -707,6 +731,9 @@ export class StreamWatcher {
         status: streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE',
       });
     }
+
+    // Периодически сохраняем состояние баллов
+    this.savePointsState();
 
     return stats;
   }
@@ -1391,6 +1418,69 @@ export class StreamWatcher {
     } catch (error: any) {
       logger.error(`❌  Error loading streamers from config: ${error.message || error}`);
       return null;
+    }
+  }
+
+  /**
+   * Загружает сохраненное состояние баллов
+   */
+  private loadPointsState(): typeof this.pointsState {
+    if (!this.pointsStatePath) return {};
+    try {
+      if (fs.existsSync(this.pointsStatePath)) {
+        const raw = fs.readFileSync(this.pointsStatePath, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to load points state: ${error.message || error}`);
+    }
+    return {};
+  }
+
+  /**
+   * Применяет сохраненное состояние баллов к стримеру
+   */
+  private applyPersistedPoints(streamerInfo: StreamerInfo): void {
+    const saved = this.pointsState[streamerInfo.username];
+    if (!saved) return;
+
+    if (Number.isFinite(saved.channelPoints)) {
+      streamerInfo.channelPoints = saved.channelPoints;
+      streamerInfo.lastChannelPoints = saved.channelPoints;
+    }
+    if (Number.isFinite(saved.initialChannelPoints)) {
+      streamerInfo.initialChannelPoints = saved.initialChannelPoints;
+    }
+  }
+
+  /**
+   * Сохраняет текущее состояние баллов с троттлингом
+   */
+  private savePointsState(force: boolean = false): void {
+    if (!this.pointsStatePath) return;
+    const now = Date.now();
+    if (!force && now - this.lastPointsStateSave < this.pointsStateSaveIntervalMs) {
+      return;
+    }
+
+    try {
+      const state: typeof this.pointsState = {};
+      for (const [username, info] of this.streamers.entries()) {
+        state[username] = {
+          channelPoints: info.channelPoints ?? 0,
+          initialChannelPoints: info.initialChannelPoints,
+          lastChannelPoints: info.lastChannelPoints,
+          isOnline: info.isOnline,
+          updatedAt: now,
+        };
+      }
+
+      fs.mkdirSync(path.dirname(this.pointsStatePath), { recursive: true });
+      fs.writeFileSync(this.pointsStatePath, JSON.stringify(state, null, 2), 'utf8');
+      this.pointsState = state;
+      this.lastPointsStateSave = now;
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to save points state: ${error.message || error}`);
     }
   }
 }
