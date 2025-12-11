@@ -923,6 +923,37 @@ td {
     transform: scale(0.98);
 }
 
+.test-btn {
+    background: #f59e0b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    height: 32px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.test-btn:hover {
+    background: #d97706;
+}
+
+.test-btn:active {
+    transform: scale(0.98);
+}
+
+.test-btn:disabled {
+    background: #4b5563;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .add-streamer-input {
     padding: 6px 12px;
     background: #18181b;

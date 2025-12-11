@@ -30,6 +30,7 @@ export class StreamWatcher {
   private isRunning = false;
   private watchInterval: NodeJS.Timeout | null = null;
   private statsInterval: NodeJS.Timeout | null = null;
+  private healthCheckMonitorInterval: NodeJS.Timeout | null = null;
   private authToken: string;
   private userAgent: string;
   private validatedUserId: string | null = null;
@@ -140,6 +141,19 @@ export class StreamWatcher {
               'Your Twitch token is invalid. Please update it in config.json or .env file to continue watching streams.'
             );
             this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
+            
+            // Если включено автоматическое завершение при невалидном токене, завершаем процесс
+            const autoExitOnInvalidToken = process.env.AUTO_EXIT_ON_INVALID_TOKEN !== 'false';
+            if (autoExitOnInvalidToken) {
+              logger.warn('⚠️  Auto-exit on invalid token is enabled. Shutting down in 2 seconds...');
+              // Даем время на сохранение данных и логирование (уменьшено до 2 секунд для быстрого перезапуска)
+              setTimeout(() => {
+                logger.error('🛑  Shutting down due to invalid token (will be restarted by Docker)');
+                this.stop();
+                // Завершаем процесс с кодом ошибки, чтобы Docker перезапустил контейнер
+                process.exit(1);
+              }, 2000);
+            }
           },
         }
       );
@@ -408,6 +422,11 @@ export class StreamWatcher {
     if (this.wsManager) {
       this.wsManager.stop();
       this.wsManager = null;
+    }
+
+    if (this.healthCheckMonitorInterval) {
+      clearInterval(this.healthCheckMonitorInterval);
+      this.healthCheckMonitorInterval = null;
     }
 
     if (this.healthCheckServer) {
@@ -900,6 +919,34 @@ export class StreamWatcher {
       },
       checkToken: async () => {
         try {
+          // Сначала проверяем, был ли токен принудительно помечен как невалидный
+          if (this.tokenManager && this.tokenManager.isTokenManuallyMarkedInvalid()) {
+            return {
+              status: ComponentStatus.UNHEALTHY,
+              message: 'Token manually marked as invalid (for testing)',
+              lastCheck: Date.now(),
+              details: {
+                manuallyMarkedInvalid: true
+              }
+            };
+          }
+
+          // Проверяем последний результат валидации из TokenManager
+          if (this.tokenManager) {
+            const lastResult = this.tokenManager.getLastValidationResult();
+            if (lastResult && !lastResult.isValid) {
+              return {
+                status: ComponentStatus.UNHEALTHY,
+                message: 'Token validation failed (from last check)',
+                lastCheck: Date.now(),
+                details: {
+                  lastValidationResult: lastResult
+                }
+              };
+            }
+          }
+
+          // Если последний результат валиден или отсутствует, делаем реальную проверку
           const isValid = await this.twitchAPI.validateToken();
           return {
             status: isValid ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
@@ -946,8 +993,88 @@ export class StreamWatcher {
       getMode: () => 'api'
     };
 
-    this.healthCheckServer = new HealthCheckServer(port, providers);
-    this.healthCheckServer.start();
+    try {
+      this.healthCheckServer = new HealthCheckServer(port, providers);
+      this.healthCheckServer.start();
+      logger.verbose(`🏥  Health check server initialization completed`);
+    } catch (error: any) {
+      logger.error(`❌  Failed to start health check server: ${error.message || error}`);
+      // Не прерываем работу приложения, если healthcheck не запустился
+    }
+  }
+
+  /**
+   * Запускает мониторинг healthcheck статуса и завершает процесс при unhealthy
+   */
+  private startHealthCheckMonitoring(): void {
+    const autoExitOnInvalidToken = process.env.AUTO_EXIT_ON_INVALID_TOKEN !== 'false';
+    if (!autoExitOnInvalidToken) {
+      logger.verbose(`ℹ️  Health check monitoring disabled (AUTO_EXIT_ON_INVALID_TOKEN=false)`);
+      return;
+    }
+
+    const checkInterval = 10000; // Проверяем каждые 10 секунд
+    let consecutiveUnhealthyCount = 0;
+    const maxUnhealthyCount = 3; // Завершаем после 3 неудачных проверок подряд
+
+    this.healthCheckMonitorInterval = setInterval(async () => {
+      try {
+        const port = process.env.HEALTH_CHECK_PORT ? parseInt(process.env.HEALTH_CHECK_PORT, 10) : 3000;
+        // Используем таймаут для fetch (совместимо с Node.js 18+)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`http://localhost:${port}/health`, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          // HTTP статус не 200 (может быть 503 при unhealthy)
+          consecutiveUnhealthyCount++;
+          logger.warn(`⚠️  Health check returned status ${response.status} (unhealthy count: ${consecutiveUnhealthyCount})`);
+          
+          if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
+            this.stop();
+            process.exit(1);
+          }
+          return;
+        }
+
+        const report = await response.json();
+        if (report.status === 'unhealthy') {
+          consecutiveUnhealthyCount++;
+          logger.warn(`⚠️  Health check report shows unhealthy status (unhealthy count: ${consecutiveUnhealthyCount})`);
+          
+          if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
+            this.stop();
+            process.exit(1);
+          }
+        } else {
+          // Статус healthy или degraded - сбрасываем счетчик
+          if (consecutiveUnhealthyCount > 0) {
+            logger.verbose(`✅  Health check recovered (status: ${report.status})`);
+            consecutiveUnhealthyCount = 0;
+          }
+        }
+      } catch (error: any) {
+        // Ошибка при проверке healthcheck (сервер недоступен)
+        consecutiveUnhealthyCount++;
+        logger.warn(`⚠️  Health check monitoring error: ${error.message || error} (unhealthy count: ${consecutiveUnhealthyCount})`);
+        
+        if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+          logger.error('🛑  Health check server is unavailable. Shutting down...');
+          this.stop();
+          process.exit(1);
+        }
+      }
+    }, checkInterval);
+
+    logger.verbose(`🔍  Health check monitoring started (interval: ${checkInterval}ms, max unhealthy: ${maxUnhealthyCount})`);
   }
 
   /**
@@ -1234,6 +1361,16 @@ export class StreamWatcher {
         scopes: validationResult.tokenInfo.scopes
       } : undefined
     };
+  }
+
+  /**
+   * Помечает токен как невалидный (для тестирования перезапуска контейнера)
+   */
+  markTokenAsInvalid(): void {
+    if (this.tokenManager) {
+      this.tokenManager.markTokenAsInvalid();
+      logger.warn('⚠️  Token marked as invalid via API (for testing)');
+    }
   }
 
   /**

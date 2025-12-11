@@ -2240,6 +2240,12 @@ window.addEventListener('load', () => {
     
     startAutoUpdate();
     
+    // Добавляем обработчик для кнопки пометки токена как невалидного
+    const markTokenInvalidBtn = document.getElementById('markTokenInvalidBtn');
+    if (markTokenInvalidBtn) {
+        markTokenInvalidBtn.addEventListener('click', markTokenAsInvalid);
+    }
+    
     // Добавляем обработчик для кнопки переключения офлайн стримеров
     const toggleBtn = document.getElementById('toggleOfflineBtn');
     if (toggleBtn) {
@@ -2371,6 +2377,52 @@ window.addEventListener('load', () => {
         exportChartBtn.addEventListener('click', exportChart);
     }
 });
+
+/**
+ * Помечает токен как невалидный (для тестирования перезапуска контейнера)
+ */
+async function markTokenAsInvalid() {
+    const btn = document.getElementById('markTokenInvalidBtn');
+    if (!btn) return;
+    
+    // Подтверждение действия
+    if (!confirm('Вы уверены, что хотите пометить токен как невалидный?\n\nЭто действие вызовет критическое уведомление и может привести к перезапуску контейнера через healthcheck.\n\nЭто действие предназначено только для тестирования.')) {
+        return;
+    }
+    
+    // Отключаем кнопку на время запроса
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Processing...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/token/mark-invalid`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', 'Token marked as invalid. Container restart will be triggered by healthcheck.');
+            // Обновляем информацию о токене
+            await updateTokenInfo();
+            // Обновляем критические уведомления
+            await updateCriticalNotifications();
+        } else {
+            showNotification('error', result.message || 'Failed to mark token as invalid');
+        }
+    } catch (error) {
+        console.error('Error marking token as invalid:', error);
+        showNotification('error', 'Failed to mark token as invalid');
+    } finally {
+        // Восстанавливаем кнопку
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
 
 /**
  * Добавляет стримера для отслеживания

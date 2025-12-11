@@ -148,6 +148,9 @@ async function startAPIMode(): Promise<void> {
   const authToken = cookie[0].value;
   const watcher = new StreamWatcher(authToken, userAgent, channelsWithPriority);
   
+  // Сохраняем ссылку на watcher для graceful shutdown
+  (global as any).watcher = watcher;
+  
   try {
     await watcher.start();
     watcher.startStatusCheck();

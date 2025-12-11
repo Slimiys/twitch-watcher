@@ -99,7 +99,12 @@
 
         <!-- Информация о токене -->
         <div class="section" id="tokenInfoSection" style="display: none;">
-            <h2>Token Information</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Token Information</h2>
+                <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
+                    🧪 Mark Invalid
+                </button>
+            </div>
             <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
                 <!-- Информация будет добавлена динамически -->
             </div>

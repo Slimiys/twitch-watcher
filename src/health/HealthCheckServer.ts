@@ -87,6 +87,9 @@ export class HealthCheckServer {
     }
 
     this.server = http.createServer(async (req, res) => {
+      // Логируем входящие запросы для отладки
+      logger.verbose(`📥  Health check request: ${req.method} ${req.url}`);
+      
       // CORS headers
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -98,8 +101,9 @@ export class HealthCheckServer {
         return;
       }
 
-      // Health check endpoint
-      if (req.url === '/health' || req.url === '/health/') {
+      // Health check endpoint (обрабатываем URL с query параметрами и без)
+      const urlPath = req.url?.split('?')[0]; // Убираем query параметры
+      if (urlPath === '/health' || urlPath === '/health/') {
         try {
           const report = await this.getHealthReport();
           const statusCode = report.status === 'healthy' ? 200 : report.status === 'degraded' ? 200 : 503;
@@ -122,9 +126,9 @@ export class HealthCheckServer {
       }
     });
 
-    this.server.listen(this.port, () => {
+    this.server.listen(this.port, '0.0.0.0', () => {
       logger.info(`✅  Health check server started on port ${this.port}`);
-      logger.verbose(`   Health endpoint: http://localhost:${this.port}/health`);
+      logger.verbose(`   Health endpoint: http://0.0.0.0:${this.port}/health`);
     });
 
     this.server.on('error', (error: NodeJS.ErrnoException) => {
