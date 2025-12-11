@@ -503,24 +503,6 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
     }
 }
 
-// Тестовые стримеры для визуальной проверки прогресс-баров
-const TEST_STREAMERS = [
-    {
-        streamerName: 'test-8h',
-        elapsedTime: 8 * 60 * 60 * 1000, // 8 часов
-        pointsEarned: 0,
-        currentPoints: 0,
-        status: 'ONLINE'
-    },
-    {
-        streamerName: 'test-30h',
-        elapsedTime: 30 * 60 * 60 * 1000, // 30 часов
-        pointsEarned: 0,
-        currentPoints: 0,
-        status: 'ONLINE'
-    }
-];
-
 async function updateStatistics() {
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
@@ -532,8 +514,7 @@ async function updateStatistics() {
     }
     
     // Запрашиваем всех стримеров, включая офлайн
-    const fetchedStats = await fetchData('/statistics?includeOffline=true');
-    const stats = fetchedStats ? [...fetchedStats, ...TEST_STREAMERS] : null;
+    const stats = await fetchData('/statistics?includeOffline=true');
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
