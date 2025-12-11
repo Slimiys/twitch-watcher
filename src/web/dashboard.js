@@ -1,6 +1,8 @@
 const API_BASE = '/api';
 let pointsChart = null;
 let updateInterval = null;
+// Плагин зума Chart.js (ленивая инициализация, чтобы избежать ошибок TDZ)
+let zoomPlugin = null;
 
 /**
  * Безопасное получение значения из localStorage
@@ -64,6 +66,47 @@ let allLoadedEvents = []; // Все загруженные события
 let isLoadingEvents = false; // Флаг загрузки событий
 let hasMoreEvents = true; // Есть ли еще события для загрузки
 
+// Ленивая инициализация плагина зума Chart.js
+function getZoomPlugin() {
+    if (zoomPlugin !== null) return zoomPlugin;
+
+    let plugin = null;
+    if (typeof ChartZoom !== 'undefined') {
+        plugin = ChartZoom;
+    } else if (typeof window !== 'undefined') {
+        if (window.ChartZoom) {
+            plugin = window.ChartZoom;
+        } else if (window.Chart && window.Chart.registry && window.Chart.registry.plugins) {
+            const registeredPlugins = Array.from(window.Chart.registry.plugins.values());
+            plugin = registeredPlugins.find(p => p.id === 'zoom');
+        }
+    }
+
+    zoomPlugin = plugin;
+
+    // Пытаемся зарегистрировать плагин, если он найден и еще не зарегистрирован
+    if (zoomPlugin && window.Chart) {
+        try {
+            const registeredPlugins = window.Chart.registry?.plugins
+                ? Array.from(window.Chart.registry.plugins.values())
+                : [];
+            const isRegistered = registeredPlugins.some(p =>
+                p.id === 'zoom' ||
+                p === zoomPlugin ||
+                (zoomPlugin.id && p.id === zoomPlugin.id)
+            );
+
+            if (!isRegistered) {
+                window.Chart.register(zoomPlugin);
+            }
+        } catch (e) {
+            // Игнорируем ошибки регистрации (например, если плагин уже зарегистрирован)
+        }
+    }
+
+    return zoomPlugin;
+}
+
 function formatTime(ms) {
     // Безопасно обрабатываем некорректные значения
     if (!Number.isFinite(ms) || ms < 0) return '-';
@@ -100,9 +143,6 @@ function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
         <div class="watch-time-progress">
             <div class="watch-time-bar-container">
                 <div class="watch-time-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
-            <div class="progress-bar-container">
-                <div class="progress-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
->>>>>>> origin/main
             </div>
             <span class="progress-bar-text">${timeText}</span>
         </div>
@@ -1043,6 +1083,9 @@ async function updatePointsChart() {
         return;
     }
     
+    // Инициализируем плагин зума один раз перед созданием графика
+    const zoomPluginInstance = getZoomPlugin();
+
     // Если данных нет, создаем или обновляем пустой график
     if (!history || history.length === 0) {
         // Скрываем статистику
@@ -1153,7 +1196,7 @@ async function updatePointsChart() {
                         }
                     }
                 },
-                plugins: zoomPlugin ? [zoomPlugin] : []
+                plugins: zoomPluginInstance ? [zoomPluginInstance] : []
             });
         } else {
             // Если график уже создан, очищаем данные
@@ -1290,37 +1333,6 @@ async function updatePointsChart() {
         
         datasetsData.set(streamer, processedData);
     });
-
-    // Регистрируем плагин zoom (если доступен)
-    let zoomPlugin = null;
-    // Chart.js plugin zoom может быть доступен через разные пути
-    if (typeof ChartZoom !== 'undefined') {
-        zoomPlugin = ChartZoom;
-    } else if (window.ChartZoom) {
-        zoomPlugin = window.ChartZoom;
-    } else if (window.Chart && window.Chart.registry && window.Chart.registry.plugins) {
-        // Плагин может быть уже зарегистрирован автоматически
-        const registeredPlugins = Array.from(window.Chart.registry.plugins.values());
-        zoomPlugin = registeredPlugins.find(p => p.id === 'zoom');
-    }
-    
-    if (zoomPlugin && window.Chart) {
-        try {
-            // Проверяем, зарегистрирован ли плагин другим способом
-            const registeredPlugins = window.Chart.registry?.plugins ? 
-                Array.from(window.Chart.registry.plugins.values()) : [];
-            const isRegistered = registeredPlugins.some(p => 
-                p.id === 'zoom' || p === zoomPlugin || 
-                (zoomPlugin.id && p.id === zoomPlugin.id)
-            );
-            
-            if (!isRegistered) {
-                window.Chart.register(zoomPlugin);
-            }
-        } catch (e) {
-            // Плагин уже зарегистрирован или ошибка регистрации - игнорируем
-        }
-    }
 
     // Создаем цвета для каждого стримера
     const colors = [
@@ -1503,7 +1515,7 @@ async function updatePointsChart() {
                     }
                 }
             },
-            plugins: zoomPlugin ? [zoomPlugin] : []
+            plugins: zoomPluginInstance ? [zoomPluginInstance] : []
         });
     } else {
         // Сохраняем старые данные для проверки появления нового дня
