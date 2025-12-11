@@ -2252,7 +2252,8 @@ td {
     min-width: 150px;
 }
 
-.progress-bar-container {
+/* Изолируем классы прогресс-бара времени просмотра, чтобы не конфликтовали с модальным прогресс-баром */
+.watch-time-bar-container {
     flex: 1;
     height: 8px;
     background: #26262c;
@@ -2261,7 +2262,7 @@ td {
     position: relative;
 }
 
-.progress-bar {
+.watch-time-bar {
     height: 100%;
     background: linear-gradient(90deg, #9147ff 0%, #772ce8 100%);
     border-radius: 4px;
@@ -2271,7 +2272,7 @@ td {
     box-shadow: 0 0 6px rgba(145, 71, 255, 0.35);
 }
 
-.progress-bar::after {
+.watch-time-bar::after {
     content: '';
     position: absolute;
     top: 0;
@@ -2296,7 +2297,7 @@ td {
     }
 }
 
-.progress-bar.gold {
+.watch-time-bar.gold {
     background: linear-gradient(90deg, #f5d76e 0%, #f0c419 100%);
     box-shadow: 0 0 8px rgba(240, 196, 25, 0.55);
 }

@@ -65,7 +65,8 @@ let isLoadingEvents = false; // Флаг загрузки событий
 let hasMoreEvents = true; // Есть ли еще события для загрузки
 
 function formatTime(ms) {
-    if (ms < 0) return '-';
+    // Безопасно обрабатываем некорректные значения
+    if (!Number.isFinite(ms) || ms < 0) return '-';
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
@@ -86,14 +87,19 @@ function formatTime(ms) {
  * @returns {string} HTML код прогресс-бара
  */
 function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
-    const percentage = Math.min((elapsedTime / maxTime) * 100, 100);
-    const isBeyondMax = elapsedTime > maxTime;
-    const timeText = formatTime(elapsedTime);
+    // Защита от NaN/undefined и некорректного maxTime
+    const safeElapsed = Number.isFinite(elapsedTime) ? Math.max(0, elapsedTime) : 0;
+    const safeMax = Number.isFinite(maxTime) && maxTime > 0 ? maxTime : 24 * 60 * 60 * 1000;
+    
+    const percentage = Math.min((safeElapsed / safeMax) * 100, 100);
+    // Меняем цвет, как только бар добрался до лимита (>=100%), а не только после переполнения
+    const isBeyondMax = percentage >= 100;
+    const timeText = formatTime(safeElapsed);
     
     return `
         <div class="watch-time-progress">
-            <div class="progress-bar-container">
-                <div class="progress-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
+            <div class="watch-time-bar-container">
+                <div class="watch-time-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
             </div>
             <span class="progress-bar-text">${timeText}</span>
         </div>
@@ -454,6 +460,24 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
     }
 }
 
+// Тестовые стримеры для визуальной проверки прогресс-баров
+const TEST_STREAMERS = [
+    {
+        streamerName: 'test-8h',
+        elapsedTime: 8 * 60 * 60 * 1000, // 8 часов
+        pointsEarned: 0,
+        currentPoints: 0,
+        status: 'ONLINE'
+    },
+    {
+        streamerName: 'test-30h',
+        elapsedTime: 30 * 60 * 60 * 1000, // 30 часов
+        pointsEarned: 0,
+        currentPoints: 0,
+        status: 'ONLINE'
+    }
+];
+
 async function updateStatistics() {
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
@@ -465,7 +489,8 @@ async function updateStatistics() {
     }
     
     // Запрашиваем всех стримеров, включая офлайн
-    const stats = await fetchData('/statistics?includeOffline=true');
+    const fetchedStats = await fetchData('/statistics?includeOffline=true');
+    const stats = fetchedStats ? [...fetchedStats, ...TEST_STREAMERS] : null;
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
