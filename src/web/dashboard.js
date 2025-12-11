@@ -100,6 +100,9 @@ function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
         <div class="watch-time-progress">
             <div class="watch-time-bar-container">
                 <div class="watch-time-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
+            <div class="progress-bar-container">
+                <div class="progress-bar${isBeyondMax ? ' gold' : ''}" style="width: ${percentage}%"></div>
+>>>>>>> origin/main
             </div>
             <span class="progress-bar-text">${timeText}</span>
         </div>
