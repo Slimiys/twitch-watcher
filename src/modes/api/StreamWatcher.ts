@@ -280,6 +280,13 @@ export class StreamWatcher {
           streamerInfo.startTime = Date.now();
           this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
+          // Обновляем информацию о стримере
+          try {
+            await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
+          }
+          
           // Получаем начальные баллы
           await this.updateInitialPoints(streamerInfo);
           
@@ -364,12 +371,16 @@ export class StreamWatcher {
 
     // Инициализируем стримеров
     await this.initializeStreamers();
+    
 
     // Запускаем отправку событий просмотра
     this.startWatching();
 
     // Запускаем периодическую статистику
     this.startStatistics();
+    
+    // Запускаем периодическую проверку статуса стримеров
+    this.startStatusCheck();
     
     // Запускаем TokenManager для отслеживания истечения токена
     if (this.tokenManager) {
@@ -748,6 +759,7 @@ export class StreamWatcher {
         pointsEarned,
         currentPoints,
         status: streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE',
+        game: streamerInfo.game,
       });
     }
 

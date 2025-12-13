@@ -130,6 +130,7 @@ export interface WatchStatistics {
   pointsEarned: number; // Количество заработанных баллов с начала просмотра
   currentPoints: number;
   status: 'ONLINE' | 'OFFLINE';
+  game: string | null; // Категория/игра, которую стримит стример
 }
 
 /**

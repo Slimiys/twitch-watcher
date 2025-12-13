@@ -21,6 +21,7 @@ export interface StatisticsProvider {
     pointsEarned: number;
     currentPoints: number;
     status: string;
+    game: string | null;
   }>;
 
   /**

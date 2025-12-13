@@ -53,10 +53,10 @@ let availableEventTags = new Set(); // Доступные теги из собы
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
 } catch (e) {
-    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, actions: true};
+    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, actions: true};
 }
 
 // Пагинация событий
@@ -207,6 +207,12 @@ function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
 }
+
+/**
+ * Форматирует ISO 8601 дату в читаемый формат
+ * @param {string|null} isoDate ISO 8601 дата или null
+ * @returns {string} Отформатированная дата и время или '-'
+ */
 
 /**
  * Генерирует skeleton loader для карточек статистики
@@ -515,6 +521,8 @@ async function updateStatistics() {
     
     // Запрашиваем всех стримеров, включая офлайн
     const stats = await fetchData('/statistics?includeOffline=true');
+    
+    
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
@@ -569,6 +577,7 @@ async function updateStatistics() {
         { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
         { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
         { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
+        { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
         { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
     ];
     
@@ -596,6 +605,7 @@ async function updateStatistics() {
                         ${visibleColumns.watchTime !== false ? `<td>${generateWatchTimeProgress(s.elapsedTime)}</td>` : ''}
                         ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
                         ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
+                        ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 

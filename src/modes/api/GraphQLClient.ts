@@ -159,12 +159,38 @@ export class GraphQLClient {
         logger.verbose(`⚠️  [GraphQL:${operation.operationName}] ${error.message} - данные обновляются через альтернативные источники`);
       } else {
         // Для других ошибок логируем
-        logger.error(`Error with GraphQL operation (${operation.operationName}):`, error.message || error);
+        const errorMessage = error.message || String(error);
+        
+        // Детальная диагностика сетевых ошибок
+        if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
+          logger.error(`❌  [GraphQL:${operation.operationName}] Сетевая ошибка при подключении к gql.twitch.tv`);
+          logger.error(`   Возможные причины:`);
+          logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
+          logger.error(`   - Проблемы с интернет-соединением`);
+          logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
+          logger.error(`   - Таймаут соединения`);
+          if (error.code) {
+            logger.error(`   Код ошибки: ${error.code}`);
+          }
+          if (error.syscall) {
+            logger.error(`   Системный вызов: ${error.syscall}`);
+          }
+          if (error.hostname) {
+            logger.error(`   Хост: ${error.hostname}`);
+          }
+          logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+        } else if (errorMessage.includes('timeout')) {
+          logger.error(`❌  [GraphQL:${operation.operationName}] Таймаут при запросе к gql.twitch.tv`);
+          logger.error(`   Возможные причины: медленное соединение или перегрузка сервера`);
+        } else {
+          logger.error(`Error with GraphQL operation (${operation.operationName}):`, errorMessage);
+        }
       }
       
       return { errors: [{ message: error.message || 'Unknown error' }] };
     });
   }
+
 
   /**
    * Получает ID канала по имени пользователя через Helix API (REST)
@@ -231,8 +257,33 @@ export class GraphQLClient {
         logger.error(`❌  [Helix API] Response: ${responseText.substring(0, 500)}`);
       }
     } catch (error: any) {
-      logger.error(`❌  [Helix API] Error getting channel ID: ${error.message || error}`);
-      logger.error(`❌  [Helix API] Error stack: ${error.stack || 'No stack trace'}`);
+      const errorMessage = error.message || String(error);
+      logger.error(`❌  [Helix API] Error getting channel ID: ${errorMessage}`);
+      
+      // Детальная диагностика сетевых ошибок
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
+        logger.error(`❌  [Helix API] Сетевая ошибка при подключении к api.twitch.tv`);
+        logger.error(`   Возможные причины:`);
+        logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
+        logger.error(`   - Проблемы с интернет-соединением`);
+        logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
+        logger.error(`   - Таймаут соединения`);
+        if (error.code) {
+          logger.error(`   Код ошибки: ${error.code}`);
+        }
+        if (error.syscall) {
+          logger.error(`   Системный вызов: ${error.syscall}`);
+        }
+        if (error.hostname) {
+          logger.error(`   Хост: ${error.hostname}`);
+        }
+        logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+      } else if (errorMessage.includes('timeout')) {
+        logger.error(`❌  [Helix API] Таймаут при запросе к api.twitch.tv`);
+        logger.error(`   Возможные причины: медленное соединение или перегрузка сервера`);
+      } else {
+        logger.error(`❌  [Helix API] Error stack: ${error.stack || 'No stack trace'}`);
+      }
     }
     
     return null;
@@ -394,6 +445,8 @@ export class GraphQLClient {
 
     try {
       let response = await this.postRequest(operation);
+      let needsFullQuery = false;
+      let persistedQueryData = null;
       
       // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
       if (response.errors && response.errors.length > 0) {
@@ -402,39 +455,63 @@ export class GraphQLClient {
         );
         
         if (hasPersistedQueryError) {
-          // Пробуем отправить полный GraphQL запрос без persisted query
-          logger.verbose(`⚠️  PersistedQueryNotFound for VideoPlayerStreamInfoOverlayChannel, trying full query`);
-          const fullOperation = {
-            operationName: 'VideoPlayerStreamInfoOverlayChannel',
-            variables: { channel: username },
-            query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
-              user(login: $channel) {
-                stream {
+          needsFullQuery = true;
+        }
+      }
+      
+      // Сохраняем данные из persisted query на случай, если полный запрос не сработает
+      if (response.data?.user?.stream) {
+        persistedQueryData = response.data;
+      }
+      
+      if (needsFullQuery) {
+        // Пробуем отправить полный GraphQL запрос без persisted query
+        logger.verbose(`⚠️  Using full query for VideoPlayerStreamInfoOverlayChannel`);
+        const fullOperation = {
+          operationName: 'VideoPlayerStreamInfoOverlayChannel',
+          variables: { channel: username },
+          query: `query VideoPlayerStreamInfoOverlayChannel($channel: String!) {
+            user(login: $channel) {
+              id
+              stream {
+                id
+                viewersCount
+                tags {
                   id
-                  viewersCount
-                  tags {
-                    id
-                    name
-                    localizedName
-                  }
-                }
-                broadcastSettings {
-                  title
-                  game {
-                    id
-                    name
-                    displayName
-                  }
+                  name
+                  localizedName
                 }
               }
-            }`,
-          };
-          
-          try {
-            response = await this.postRequest(fullOperation);
-          } catch (e: any) {
-            // Если и полный запрос не работает, возвращаем null
-            logger.verbose(`⚠️  Full query also failed for getStreamInfo(${username}): ${e.message || e}`);
+              broadcastSettings {
+                title
+                game {
+                  id
+                  name
+                  displayName
+                }
+              }
+            }
+          }`,
+        };
+        
+        try {
+          const fullResponse = await this.postRequest(fullOperation);
+          // Если полный запрос успешен, используем его данные
+          if (fullResponse.data?.user?.stream) {
+            response = fullResponse;
+          } else if (persistedQueryData) {
+            // Если полный запрос не вернул данные, но persisted query вернул, используем его
+            logger.verbose(`⚠️  Full query didn't return stream data, using persisted query data for ${username}`);
+            response = { ...response, data: persistedQueryData };
+          }
+        } catch (e: any) {
+          // Если полный запрос не работает, используем данные из persisted query (если есть)
+          if (persistedQueryData) {
+            logger.verbose(`⚠️  Full query failed for getStreamInfo(${username}), using persisted query data: ${e.message || e}`);
+            response = { ...response, data: persistedQueryData };
+          } else {
+            // Если и persisted query не вернул данных, возвращаем null
+            logger.verbose(`⚠️  Both queries failed for getStreamInfo(${username}): ${e.message || e}`);
             return null;
           }
         }
@@ -442,6 +519,7 @@ export class GraphQLClient {
       
       if (response.data?.user?.stream) {
         const stream = response.data.user.stream;
+        
         return {
           broadcastId: stream.id,
           title: response.data.user.broadcastSettings?.title || '',

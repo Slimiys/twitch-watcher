@@ -182,7 +182,22 @@ export class WebSocketManager {
         return null;
       }
     } catch (error: any) {
-      logger.warn(`⚠️  Token validation error: ${error.message || error}`);
+      const errorMessage = error.message || String(error);
+      logger.warn(`⚠️  Token validation error: ${errorMessage}`);
+      
+      // Детальная диагностика сетевых ошибок
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
+        logger.error(`❌  Сетевая ошибка при валидации токена через id.twitch.tv`);
+        logger.error(`   Возможные причины:`);
+        logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
+        logger.error(`   - Проблемы с интернет-соединением`);
+        logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
+        if (error.code) {
+          logger.error(`   Код ошибки: ${error.code}`);
+        }
+        logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+      }
+      
       return null;
     }
   }
