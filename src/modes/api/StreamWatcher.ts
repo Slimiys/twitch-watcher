@@ -867,14 +867,55 @@ export class StreamWatcher {
 
         const isConnected = this.wsManager.isConnected();
         const state = this.wsManager.getConnectionState();
+        const hasCriticalErrors = this.wsManager.hasCriticalErrors();
+        const lastCriticalError = this.wsManager.getLastCriticalError();
+        const criticalErrors = this.wsManager.getCriticalErrors();
 
+        // Если есть критические ошибки (DNS и т.д.), помечаем как unhealthy
+        // даже если соединение установлено, так как это может быть временное соединение
+        // которое скоро упадет из-за DNS проблем
+        if (hasCriticalErrors && lastCriticalError) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `Критическая ошибка: ${lastCriticalError.error} (код: ${lastCriticalError.code})`,
+            lastCheck: Date.now(),
+            details: {
+              state,
+              isConnected,
+              hasCriticalErrors: true,
+              lastCriticalError: {
+                timestamp: lastCriticalError.timestamp,
+                error: lastCriticalError.error,
+                code: lastCriticalError.code
+              },
+              criticalErrorsCount: criticalErrors.length
+            }
+          };
+        }
+
+        // Если не подключен и нет критических ошибок, это может быть временная проблема
+        if (!isConnected) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `WebSocket не подключен (state: ${state})`,
+            lastCheck: Date.now(),
+            details: {
+              state,
+              isConnected,
+              hasCriticalErrors: false
+            }
+          };
+        }
+
+        // Все в порядке
         return {
-          status: isConnected ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
-          message: `WebSocket state: ${state}`,
+          status: ComponentStatus.HEALTHY,
+          message: `WebSocket подключен (state: ${state})`,
           lastCheck: Date.now(),
           details: {
             state,
-            isConnected
+            isConnected,
+            hasCriticalErrors: false
           }
         };
       },
