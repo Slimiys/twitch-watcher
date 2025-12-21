@@ -366,7 +366,15 @@ export class StreamWatcher {
       logger.verbose(`✅  WebSocket initialized successfully (validated user_id: ${this.validatedUserId})`);
     } catch (error: any) {
       logger.error('❌  Failed to initialize WebSocket:', error.message || error);
+      logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
       logger.warn('⚠️  Continuing without WebSocket - events will be sent via API only');
+      logger.warn('⚠️  Channel points events will not be received in real-time');
+      logger.warn('⚠️  Attempting to reinitialize WebSocket in 30 seconds...');
+      
+      // Пытаемся переинициализировать WebSocket через 30 секунд
+      setTimeout(async () => {
+        await this.reinitializeWebSocket();
+      }, 30000);
     }
 
     // Инициализируем стримеров
@@ -381,6 +389,9 @@ export class StreamWatcher {
     
     // Запускаем периодическую проверку статуса стримеров
     this.startStatusCheck();
+    
+    // Запускаем периодическую проверку и переинициализацию WebSocket
+    this.startWebSocketHealthCheck();
     
     // Запускаем TokenManager для отслеживания истечения токена
     if (this.tokenManager) {
@@ -398,6 +409,193 @@ export class StreamWatcher {
     
     // Запускаем веб-сервер
     this.startWebServer();
+  }
+
+  /**
+   * Повторно инициализирует WebSocket соединение
+   * Используется для восстановления соединения после ошибки инициализации
+   */
+  private async reinitializeWebSocket(): Promise<void> {
+    // Если WebSocket уже инициализирован, не делаем ничего
+    if (this.wsManager) {
+      logger.verbose('ℹ️  WebSocket already initialized, skipping reinitialization');
+      return;
+    }
+
+    logger.info('🔄  Attempting to reinitialize WebSocket connection...');
+    
+    try {
+      logger.verbose('Getting user ID from token validation...');
+      const tokenValidation = await this.twitchAPI.validateTokenWithInfo();
+      if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
+        logger.error('❌  Token validation failed during WebSocket reinitialization');
+        logger.error(`   Token valid: ${tokenValidation.isValid}`);
+        logger.error(`   Token info: ${JSON.stringify(tokenValidation.tokenInfo || {})}`);
+        logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
+        setTimeout(async () => {
+          await this.reinitializeWebSocket();
+        }, 5 * 60 * 1000); // 5 минут
+        return;
+      }
+      
+      const userId = tokenValidation.tokenInfo.user_id;
+      this.twitchAPI.setValidatedUserId(userId);
+      logger.info(`✅  User ID obtained from token validation: ${userId}`);
+      
+      const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
+      
+      // Используем те же обработчики событий, что и при первоначальной инициализации
+      const eventHandlers: WebSocketEventHandler = {
+        onPointsEarned: (streamerInfo, points, reason) => {
+          logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+          
+          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
+          
+          if (!this.activeSessions.has(streamerInfo.username) && 
+              streamerInfo.initialChannelPoints !== null && 
+              streamerInfo.isOnline &&
+              this.statisticsStorage) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+            logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
+          }
+          
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
+            this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
+          }
+          
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, points, totalPoints);
+          this.savePointsState();
+        },
+        onClaimAvailable: async (streamerInfo, claimId) => {
+          try {
+            const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+            if (pointsInfo?.availableClaim?.id === claimId) {
+              logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
+              const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+              if (success) {
+                logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+                this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+              } else {
+                logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket (возможно, уже собран)`);
+                this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+              }
+            } else {
+              logger.verbose(`ℹ️  [${streamerInfo.username}] Бонус ${claimId} не доступен для этого стримера (доступен: ${pointsInfo?.availableClaim?.id || 'none'})`);
+            }
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Ошибка проверки доступности бонуса, пробуем собрать: ${error.message || error}`);
+            const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+            if (success) {
+              logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+              this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+            } else {
+              logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
+            }
+          }
+        },
+        onStreamUp: async (streamerInfo) => {
+          logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+          streamerInfo.startTime = Date.now();
+          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
+          
+          try {
+            await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
+          }
+          
+          await this.updateInitialPoints(streamerInfo);
+          
+          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+          }
+          
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+          this.savePointsState();
+        },
+        onStreamDown: (streamerInfo) => {
+          logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
+          
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId) {
+            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            this.activeSessions.delete(streamerInfo.username);
+          }
+          this.savePointsState();
+        },
+        onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
+          const now = Date.now();
+          const lastAttempt = this.processedRaids.get(raidId);
+          
+          if (lastAttempt && (now - lastAttempt) < this.raidCooldownMs) {
+            logger.verbose(`⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`);
+            return;
+          }
+          
+          this.processedRaids.set(raidId, now);
+          
+          const fiveMinutesAgo = now - 5 * 60 * 1000;
+          for (const [id, timestamp] of this.processedRaids.entries()) {
+            if (timestamp < fiveMinutesAgo) {
+              this.processedRaids.delete(id);
+            }
+          }
+          
+          logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
+          const success = await graphqlClient.joinRaid(raidId);
+          if (success) {
+            logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
+            this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
+          } else {
+            logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
+          }
+        },
+      };
+
+      this.wsManager = new WebSocketManager(this.authToken, userId, graphqlClient, eventHandlers);
+      await this.wsManager.start();
+      this.wsManager.startPingInterval();
+      
+      this.validatedUserId = this.wsManager.getValidatedUserId();
+      this.twitchAPI.setValidatedUserId(this.validatedUserId);
+      logger.info(`✅  WebSocket reinitialized successfully (validated user_id: ${this.validatedUserId})`);
+      
+      // Добавляем всех существующих стримеров в WebSocket менеджер
+      for (const streamerInfo of this.streamers.values()) {
+        this.wsManager.addStreamer(streamerInfo);
+      }
+      
+      this.addEvent('websocket-reconnected', 'system', 'WebSocket connection restored');
+    } catch (error: any) {
+      logger.error('❌  Failed to reinitialize WebSocket:', error.message || error);
+      logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
+      logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
+      
+      // Повторная попытка через 5 минут
+      setTimeout(async () => {
+        await this.reinitializeWebSocket();
+      }, 5 * 60 * 1000);
+    }
   }
 
   /**
@@ -804,6 +1002,36 @@ export class StreamWatcher {
     setInterval(async () => {
       await this.checkStreamersStatus();
     }, 120000); // Каждые 2 минуты
+  }
+
+  /**
+   * Периодически проверяет статус WebSocket и пытается переинициализировать, если он не инициализирован
+   */
+  private startWebSocketHealthCheck(): void {
+    // Проверяем статус WebSocket каждые 5 минут
+    setInterval(async () => {
+      if (!this.wsManager) {
+        logger.warn('⚠️  WebSocket manager not initialized, attempting to reinitialize...');
+        await this.reinitializeWebSocket();
+      } else if (!this.wsManager.isConnected()) {
+        const state = this.wsManager.getConnectionState();
+        logger.warn(`⚠️  WebSocket not connected (state: ${state}), checking for reconnection...`);
+        
+        // Если WebSocket не подключен, но менеджер существует, возможно он пытается переподключиться
+        // Проверяем наличие критических ошибок
+        if (this.wsManager.hasCriticalErrors()) {
+          const lastError = this.wsManager.getLastCriticalError();
+          logger.warn(`⚠️  WebSocket has critical errors: ${lastError?.error || 'unknown'}`);
+          logger.warn('⚠️  Attempting to reinitialize WebSocket...');
+          // Останавливаем текущий менеджер и переинициализируем
+          this.wsManager.stop();
+          this.wsManager = null;
+          await this.reinitializeWebSocket();
+        }
+      } else {
+        logger.verbose('✅  WebSocket is connected and healthy');
+      }
+    }, 5 * 60 * 1000); // Каждые 5 минут
   }
 
   /**
