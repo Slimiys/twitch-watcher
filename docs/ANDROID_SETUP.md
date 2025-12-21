@@ -176,6 +176,58 @@ npm install
 ### Проблема: Приложение останавливается при закрытии Termux
 Используйте `screen` или `tmux` для фонового запуска (см. выше)
 
+### Проблема: DNS ошибка (EAI_AGAIN, ENOTFOUND, Could not resolve host)
+
+Если вы видите ошибки типа:
+- `Error: getaddrinfo EAI_AGAIN pubsub-edge.twitch.tv`
+- `Could not resolve host: github.com`
+- `DNS ошибка: не удается разрешить домен`
+
+**Решение для Termux (Android):**
+
+1. **Проверьте интернет-соединение:**
+```bash
+ping -c 3 8.8.8.8
+```
+
+2. **Используйте альтернативный DNS:**
+```bash
+# Установите dnsutils если нужно
+pkg install dnsutils
+
+# Проверьте текущий DNS
+nslookup github.com
+
+# Попробуйте использовать Google DNS
+export DNS_SERVER=8.8.8.8
+```
+
+3. **Проверьте разрешения Termux:**
+   - Настройки Android → Приложения → Termux → Разрешения
+   - Убедитесь, что включен доступ к сети
+
+4. **Если используется VPN/прокси:**
+   - Отключите временно или настройте прокси в Termux:
+   ```bash
+   export http_proxy=http://your-proxy:port
+   export https_proxy=http://your-proxy:port
+   ```
+
+**Решение для Docker:**
+
+DNS настройки уже добавлены в `docker-compose.yml`:
+```yaml
+dns:
+  - 8.8.8.8
+  - 8.8.4.4
+  - 1.1.1.1
+```
+
+Если проблема сохраняется:
+1. Перезапустите контейнер: `docker-compose restart`
+2. Проверьте сетевые настройки Docker
+3. Убедитесь, что Docker имеет доступ к интернету
+
 ## Альтернатива: Веб-интерфейс
 
 Если добавить простой веб-сервер в приложение, можно будет:

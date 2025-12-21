@@ -47,6 +47,7 @@ export class TokenManager {
   private eventHandlers: TokenEventHandler;
   private lastValidationResult: TokenValidationResult | null = null;
   private isRunning = false;
+  private isManuallyMarkedInvalid: boolean = false; // Флаг для принудительной пометки токена как невалидного
 
   /**
    * Создает экземпляр TokenManager
@@ -112,6 +113,12 @@ export class TokenManager {
    * Выполняет проверку токена
    */
   private async checkToken(): Promise<void> {
+    // Если токен был принудительно помечен как невалидный, не делаем реальную проверку
+    if (this.isManuallyMarkedInvalid) {
+      logger.verbose('⚠️  Token is manually marked as invalid, skipping real validation');
+      return;
+    }
+
     try {
       const result = await this.twitchAPI.validateTokenWithInfo();
       this.lastValidationResult = result;
@@ -167,6 +174,39 @@ export class TokenManager {
    */
   async validateNow(): Promise<TokenValidationResult> {
     return await this.twitchAPI.validateTokenWithInfo();
+  }
+
+  /**
+   * Принудительно помечает токен как невалидный (для тестирования)
+   * Вызывает обработчик onTokenInvalid
+   */
+  markTokenAsInvalid(): void {
+    logger.warn('⚠️  Token manually marked as invalid (for testing)');
+    // Устанавливаем флаг принудительной невалидности
+    this.isManuallyMarkedInvalid = true;
+    // Устанавливаем результат валидации как невалидный
+    this.lastValidationResult = {
+      isValid: false,
+    };
+    // Вызываем обработчик события
+    if (this.eventHandlers.onTokenInvalid) {
+      this.eventHandlers.onTokenInvalid();
+    }
+  }
+
+  /**
+   * Проверяет, был ли токен принудительно помечен как невалидный
+   * @returns true если токен был принудительно помечен как невалидный
+   */
+  isTokenManuallyMarkedInvalid(): boolean {
+    return this.isManuallyMarkedInvalid;
+  }
+
+  /**
+   * Сбрасывает флаг принудительной невалидности токена
+   */
+  resetManualInvalidFlag(): void {
+    this.isManuallyMarkedInvalid = false;
   }
 
 }

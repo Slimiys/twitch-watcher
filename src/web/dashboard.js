@@ -53,10 +53,10 @@ let availableEventTags = new Set(); // Доступные теги из собы
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
 } catch (e) {
-    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, actions: true};
+    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, actions: true};
 }
 
 // Пагинация событий
@@ -207,6 +207,12 @@ function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
 }
+
+/**
+ * Форматирует ISO 8601 дату в читаемый формат
+ * @param {string|null} isoDate ISO 8601 дата или null
+ * @returns {string} Отформатированная дата и время или '-'
+ */
 
 /**
  * Генерирует skeleton loader для карточек статистики
@@ -515,6 +521,8 @@ async function updateStatistics() {
     
     // Запрашиваем всех стримеров, включая офлайн
     const stats = await fetchData('/statistics?includeOffline=true');
+    
+    
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
@@ -547,6 +555,21 @@ async function updateStatistics() {
         return a.streamerName.localeCompare(b.streamerName);
     });
 
+    // Если офлайн стримеры скрыты и нет онлайн стримеров, показываем сообщение
+    if (!showOffline && sortedStats.length === 0) {
+        const offlineMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers are currently online</p>';
+        if (table && table.querySelector('.skeleton-table')) {
+            replaceSkeletonWithContent(table, offlineMessage);
+        } else {
+            table.classList.add('updating');
+            table.innerHTML = offlineMessage;
+            setTimeout(() => table.classList.remove('updating'), 300);
+        }
+        lastDataUpdate.stats = Date.now();
+        updateStaleDataIndicator('stats', table);
+        return;
+    }
+
     // Определяем колонки с их видимостью
     const columns = [
         { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
@@ -554,6 +577,7 @@ async function updateStatistics() {
         { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
         { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
         { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
+        { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
         { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
     ];
     
@@ -581,6 +605,7 @@ async function updateStatistics() {
                         ${visibleColumns.watchTime !== false ? `<td>${generateWatchTimeProgress(s.elapsedTime)}</td>` : ''}
                         ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
                         ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
+                        ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
@@ -608,304 +633,6 @@ async function updateStatistics() {
     
     lastDataUpdate.stats = Date.now();
     updateStaleDataIndicator('stats', table);
-    
-    // Обновляем расширенную статистику
-    updateAdvancedStats(stats);
-}
-
-/**
- * Вычисляет и отображает расширенную статистику
- * @param {Array} stats Массив статистики стримеров
- */
-async function updateAdvancedStats(stats) {
-    const section = document.getElementById('advancedStatsSection');
-    const content = document.getElementById('advancedStatsContent');
-    const statsGrid = content?.querySelector('.advanced-stats-grid');
-    
-    if (!section || !content || !statsGrid || !stats || stats.length === 0) {
-        if (section) section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    // Вычисляем метрики
-    const totalPoints = stats.reduce((sum, s) => sum + s.pointsEarned, 0);
-    const totalWatchTime = stats.reduce((sum, s) => sum + s.elapsedTime, 0);
-    const avgPointsPerHour = totalWatchTime > 0 ? (totalPoints / totalWatchTime) * 3600000 : 0;
-    
-    // Самый активный стример (по времени просмотра)
-    const mostActiveStreamer = stats.reduce((max, s) => 
-        s.elapsedTime > max.elapsedTime ? s : max, stats[0]);
-    
-    // Топ-5 стримеров по баллам
-    const topByPoints = [...stats]
-        .sort((a, b) => b.pointsEarned - a.pointsEarned)
-        .slice(0, 5);
-    
-    // Топ-5 стримеров по времени
-    const topByTime = [...stats]
-        .sort((a, b) => b.elapsedTime - a.elapsedTime)
-        .slice(0, 5);
-    
-    // Время просмотра за сегодня
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStats = stats.filter(s => {
-        // Предполагаем, что если стример онлайн, он активен сегодня
-        // Это упрощение, в реальности нужно проверять по сессиям
-        return s.status === 'ONLINE' || s.elapsedTime > 0;
-    });
-    const todayWatchTime = todayStats.reduce((sum, s) => sum + s.elapsedTime, 0);
-    
-    statsGrid.innerHTML = `
-        <div class="advanced-stat-card">
-            <div class="advanced-stat-header">
-                <span class="advanced-stat-icon">⚡</span>
-                <span class="advanced-stat-title">Средние баллы в час</span>
-            </div>
-            <div class="advanced-stat-value">${Math.round(avgPointsPerHour).toLocaleString()}</div>
-            <div class="advanced-stat-label">Баллов за час просмотра</div>
-        </div>
-        
-        <div class="advanced-stat-card">
-            <div class="advanced-stat-header">
-                <span class="advanced-stat-icon">👑</span>
-                <span class="advanced-stat-title">Самый активный стример</span>
-            </div>
-            <div class="advanced-stat-value">${mostActiveStreamer.streamerName}</div>
-            <div class="advanced-stat-label">${formatTime(mostActiveStreamer.elapsedTime)} просмотра</div>
-        </div>
-        
-        <div class="advanced-stat-card">
-            <div class="advanced-stat-header">
-                <span class="advanced-stat-icon">⏱️</span>
-                <span class="advanced-stat-title">Время просмотра сегодня</span>
-            </div>
-            <div class="advanced-stat-value">${formatTime(todayWatchTime)}</div>
-            <div class="advanced-stat-label">Активных стримеров: ${todayStats.length}</div>
-        </div>
-        
-        <div class="advanced-stat-card">
-            <div class="advanced-stat-header">
-                <span class="advanced-stat-icon">🏆</span>
-                <span class="advanced-stat-title">Топ-5 по баллам</span>
-            </div>
-            <ul class="advanced-stat-list">
-                ${topByPoints.map((s, i) => `
-                    <li class="advanced-stat-list-item">
-                        <span class="advanced-stat-list-item-name">
-                            <span>${i + 1}.</span>
-                            <a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a>
-                        </span>
-                        <span class="advanced-stat-list-item-value">${s.pointsEarned.toLocaleString()}</span>
-                    </li>
-                `).join('')}
-            </ul>
-        </div>
-        
-        <div class="advanced-stat-card">
-            <div class="advanced-stat-header">
-                <span class="advanced-stat-icon">⏰</span>
-                <span class="advanced-stat-title">Топ-5 по времени</span>
-            </div>
-            <ul class="advanced-stat-list">
-                ${topByTime.map((s, i) => `
-                    <li class="advanced-stat-list-item">
-                        <span class="advanced-stat-list-item-name">
-                            <span>${i + 1}.</span>
-                            <a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a>
-                        </span>
-                        <span class="advanced-stat-list-item-value">${formatTime(s.elapsedTime)}</span>
-                    </li>
-                `).join('')}
-            </ul>
-        </div>
-    `;
-    
-    // Загружаем календарь и тепловую карту (ленивая загрузка)
-    loadActivityCalendar();
-    loadActivityHeatmap();
-}
-
-/**
- * Определяет уровень активности по количеству баллов
- * @param {number} points Количество баллов
- * @param {number} maxPoints Максимальное количество баллов
- * @returns {string} Уровень активности
- */
-function getActivityLevel(points, maxPoints) {
-    if (points === 0) return 'activity-none';
-    if (maxPoints === 0) return 'activity-none';
-    
-    const ratio = points / maxPoints;
-    if (ratio >= 0.75) return 'activity-very-high';
-    if (ratio >= 0.5) return 'activity-high';
-    if (ratio >= 0.25) return 'activity-medium';
-    return 'activity-low';
-}
-
-/**
- * Загружает и отображает календарь активности
- */
-async function loadActivityCalendar() {
-    const section = document.getElementById('activityCalendarSection');
-    const container = document.getElementById('activityCalendar');
-    
-    if (!section || !container) return;
-    
-    // Ленивая загрузка - загружаем только при первом открытии
-    if (container.dataset.loaded === 'true') return;
-    
-    const history = await fetchData('/points-history?limit=1000');
-    if (!history || history.length === 0) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    // Показываем секцию календаря
-    section.style.display = 'block';
-    container.dataset.loaded = 'true';
-    
-    // Группируем по дням
-    const dailyPoints = new Map();
-    history.forEach(entry => {
-        const date = new Date(entry.timestamp);
-        const dayKey = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0];
-        
-        if (!dailyPoints.has(dayKey)) {
-            dailyPoints.set(dayKey, 0);
-        }
-        dailyPoints.set(dayKey, dailyPoints.get(dayKey) + entry.points);
-    });
-    
-    const maxPoints = Math.max(...Array.from(dailyPoints.values()), 1);
-    
-    // Создаем календарь на последние 6 недель (42 дня)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const calendarDays = [];
-    const startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 41); // 42 дня назад
-    
-    // Заполняем пустые дни до начала недели
-    const startDayOfWeek = startDate.getDay();
-    for (let i = 0; i < startDayOfWeek; i++) {
-        calendarDays.push({ empty: true });
-    }
-    
-    // Заполняем дни календаря
-    const currentDate = new Date(startDate);
-    while (currentDate <= today) {
-        const dayKey = currentDate.toISOString().split('T')[0];
-        const points = dailyPoints.get(dayKey) || 0;
-        const activityLevel = getActivityLevel(points, maxPoints);
-        
-        calendarDays.push({
-            date: new Date(currentDate),
-            points: points,
-            activityLevel: activityLevel,
-            empty: false
-        });
-        
-        currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    // Заполняем пустые дни до конца недели
-    const endDayOfWeek = today.getDay();
-    for (let i = endDayOfWeek + 1; i < 7; i++) {
-        calendarDays.push({ empty: true });
-    }
-    
-    const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-    
-    container.innerHTML = `
-        <div class="calendar-grid">
-            ${weekDays.map(day => `<div class="calendar-day-header">${day}</div>`).join('')}
-            ${calendarDays.map(day => {
-                if (day.empty) {
-                    return '<div class="calendar-day empty"></div>';
-                }
-                return `
-                    <div class="calendar-day ${day.activityLevel}" 
-                         title="${day.date.toLocaleDateString('ru-RU')}: ${day.points.toLocaleString()} баллов">
-                        <div class="calendar-day-number">${day.date.getDate()}</div>
-                        ${day.points > 0 ? `<div class="calendar-day-points">${day.points > 999 ? (day.points / 1000).toFixed(1) + 'k' : day.points}</div>` : ''}
-                    </div>
-                `;
-            }).join('')}
-        </div>
-    `;
-}
-
-/**
- * Загружает и отображает тепловую карту активности по часам
- */
-async function loadActivityHeatmap() {
-    const section = document.getElementById('activityHeatmapSection');
-    const container = document.getElementById('activityHeatmap');
-    
-    if (!section || !container) return;
-    
-    // Ленивая загрузка
-    if (container.dataset.loaded === 'true') return;
-    
-    const events = await fetchData('/events?limit=1000');
-    if (!events || !events.events || events.events.length === 0) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    container.dataset.loaded = 'true';
-    
-    // Группируем события по часам суток
-    const hourlyActivity = new Array(24).fill(0);
-    
-    events.events.forEach(event => {
-        const date = new Date(event.timestamp);
-        const hour = date.getHours();
-        hourlyActivity[hour]++;
-    });
-    
-    const maxActivity = Math.max(...hourlyActivity, 1);
-    
-    container.innerHTML = `
-        <div class="heatmap-grid">
-            ${hourlyActivity.map((count, hour) => {
-                const activityLevel = getActivityLevel(count, maxActivity);
-                return `
-                    <div class="heatmap-hour ${activityLevel}" 
-                         title="${hour}:00 - ${count} событий">
-                        ${hour}
-                    </div>
-                `;
-            }).join('')}
-        </div>
-        <div class="heatmap-legend">
-            <div class="heatmap-legend-item">
-                <div class="heatmap-legend-color activity-none"></div>
-                <span>Нет активности</span>
-            </div>
-            <div class="heatmap-legend-item">
-                <div class="heatmap-legend-color activity-low"></div>
-                <span>Низкая</span>
-            </div>
-            <div class="heatmap-legend-item">
-                <div class="heatmap-legend-color activity-medium"></div>
-                <span>Средняя</span>
-            </div>
-            <div class="heatmap-legend-item">
-                <div class="heatmap-legend-color activity-high"></div>
-                <span>Высокая</span>
-            </div>
-            <div class="heatmap-legend-item">
-                <div class="heatmap-legend-color activity-very-high"></div>
-                <span>Очень высокая</span>
-            </div>
-        </div>
-    `;
 }
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
@@ -2523,6 +2250,12 @@ window.addEventListener('load', () => {
     
     startAutoUpdate();
     
+    // Добавляем обработчик для кнопки пометки токена как невалидного
+    const markTokenInvalidBtn = document.getElementById('markTokenInvalidBtn');
+    if (markTokenInvalidBtn) {
+        markTokenInvalidBtn.addEventListener('click', markTokenAsInvalid);
+    }
+    
     // Добавляем обработчик для кнопки переключения офлайн стримеров
     const toggleBtn = document.getElementById('toggleOfflineBtn');
     if (toggleBtn) {
@@ -2654,6 +2387,52 @@ window.addEventListener('load', () => {
         exportChartBtn.addEventListener('click', exportChart);
     }
 });
+
+/**
+ * Помечает токен как невалидный (для тестирования перезапуска контейнера)
+ */
+async function markTokenAsInvalid() {
+    const btn = document.getElementById('markTokenInvalidBtn');
+    if (!btn) return;
+    
+    // Подтверждение действия
+    if (!confirm('Вы уверены, что хотите пометить токен как невалидный?\n\nЭто действие вызовет критическое уведомление и может привести к перезапуску контейнера через healthcheck.\n\nЭто действие предназначено только для тестирования.')) {
+        return;
+    }
+    
+    // Отключаем кнопку на время запроса
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Processing...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/token/mark-invalid`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', 'Token marked as invalid. Container restart will be triggered by healthcheck.');
+            // Обновляем информацию о токене
+            await updateTokenInfo();
+            // Обновляем критические уведомления
+            await updateCriticalNotifications();
+        } else {
+            showNotification('error', result.message || 'Failed to mark token as invalid');
+        }
+    } catch (error) {
+        console.error('Error marking token as invalid:', error);
+        showNotification('error', 'Failed to mark token as invalid');
+    } finally {
+        // Восстанавливаем кнопку
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
 
 /**
  * Добавляет стримера для отслеживания
@@ -3140,20 +2919,6 @@ function toggleSection(sectionId) {
         });
     }
     
-    // Если сворачивается Advanced Statistics, также скрываем Activity Heatmap
-    if (sectionId === 'advancedStatsContent') {
-        const heatmapSection = document.getElementById('activityHeatmapSection');
-        if (heatmapSection) {
-            if (isCollapsed) {
-                // Разворачиваем heatmap вместе с Advanced Statistics
-                heatmapSection.style.display = '';
-            } else {
-                // Сворачиваем heatmap вместе с Advanced Statistics
-                heatmapSection.style.display = 'none';
-            }
-        }
-    }
-    
     // Сохраняем состояние секции
     try {
         const collapsedSectionsStr = safeGetLocalStorage('collapsedSections', '[]');
@@ -3205,13 +2970,6 @@ function restoreCollapsedState() {
                 const section = document.getElementById(sectionId);
                 if (section) {
                     section.style.display = 'none';
-                    // Если сворачивается Advanced Statistics, также скрываем Activity Heatmap
-                    if (sectionId === 'advancedStatsContent') {
-                        const heatmapSection = document.getElementById('activityHeatmapSection');
-                        if (heatmapSection) {
-                            heatmapSection.style.display = 'none';
-                        }
-                    }
                     section.style.maxHeight = '0px';
                 // Иконка больше не используется
                 }

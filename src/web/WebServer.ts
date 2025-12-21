@@ -21,6 +21,7 @@ export interface StatisticsProvider {
     pointsEarned: number;
     currentPoints: number;
     status: string;
+    game: string | null;
   }>;
 
   /**
@@ -111,6 +112,11 @@ export interface StatisticsProvider {
    * Удаляет стримера из отслеживания
    */
   removeStreamer?(username: string): Promise<{ success: boolean; message: string }>;
+
+  /**
+   * Помечает токен как невалидный (для тестирования)
+   */
+  markTokenAsInvalid?(): void;
 }
 
 /**
@@ -404,6 +410,27 @@ export class WebServer {
         res.json(tokenInfo);
       } catch (error: any) {
         logger.error('Error getting token info:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для пометки токена как невалидного (для тестирования)
+    this.app.post('/api/token/mark-invalid', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        if (streamWatcher.markTokenAsInvalid) {
+          streamWatcher.markTokenAsInvalid();
+          res.json({ success: true, message: 'Token marked as invalid for testing' });
+        } else {
+          res.status(501).json({ error: 'Mark token as invalid functionality not available' });
+        }
+      } catch (error: any) {
+        logger.error('Error marking token as invalid:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });

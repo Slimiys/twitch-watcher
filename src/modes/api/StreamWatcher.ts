@@ -30,6 +30,7 @@ export class StreamWatcher {
   private isRunning = false;
   private watchInterval: NodeJS.Timeout | null = null;
   private statsInterval: NodeJS.Timeout | null = null;
+  private healthCheckMonitorInterval: NodeJS.Timeout | null = null;
   private authToken: string;
   private userAgent: string;
   private validatedUserId: string | null = null;
@@ -64,6 +65,17 @@ export class StreamWatcher {
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
   private configPath: string = './config.json'; // Путь к файлу конфигурации
+  // Персистентное состояние баллов между рестартами
+  private pointsStatePath: string | null = null;
+  private pointsState: Record<string, {
+    channelPoints: number;
+    initialChannelPoints: number | null;
+    lastChannelPoints: number | null;
+    isOnline: boolean;
+    updatedAt: number;
+  }> = {};
+  private lastPointsStateSave = 0;
+  private pointsStateSaveIntervalMs = 10000;
 
   /**
    * Создает экземпляр менеджера просмотра
@@ -129,6 +141,19 @@ export class StreamWatcher {
               'Your Twitch token is invalid. Please update it in config.json or .env file to continue watching streams.'
             );
             this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
+            
+            // Если включено автоматическое завершение при невалидном токене, завершаем процесс
+            const autoExitOnInvalidToken = process.env.AUTO_EXIT_ON_INVALID_TOKEN !== 'false';
+            if (autoExitOnInvalidToken) {
+              logger.warn('⚠️  Auto-exit on invalid token is enabled. Shutting down in 2 seconds...');
+              // Даем время на сохранение данных и логирование (уменьшено до 2 секунд для быстрого перезапуска)
+              setTimeout(() => {
+                logger.error('🛑  Shutting down due to invalid token (will be restarted by Docker)');
+                this.stop();
+                // Завершаем процесс с кодом ошибки, чтобы Docker перезапустил контейнер
+                process.exit(1);
+              }, 2000);
+            }
           },
         }
       );
@@ -141,6 +166,8 @@ export class StreamWatcher {
     try {
       const statsConfig = loadStatisticsConfig();
       this.statisticsStorage = new StatisticsStorage(statsConfig);
+      this.pointsStatePath = path.join(statsConfig.storagePath, 'current-points.json');
+      this.pointsState = this.loadPointsState();
       logger.verbose(`📊  Statistics storage initialized`);
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
@@ -214,6 +241,7 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, points, totalPoints);
+        this.savePointsState();
         },
         onClaimAvailable: async (streamerInfo, claimId) => {
           // Проверяем, доступен ли бонус для этого стримера перед попыткой собрать
@@ -252,6 +280,13 @@ export class StreamWatcher {
           streamerInfo.startTime = Date.now();
           this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
+          // Обновляем информацию о стримере
+          try {
+            await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
+          }
+          
           // Получаем начальные баллы
           await this.updateInitialPoints(streamerInfo);
           
@@ -270,6 +305,7 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+          this.savePointsState();
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
@@ -282,6 +318,7 @@ export class StreamWatcher {
             this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
             this.activeSessions.delete(streamerInfo.username);
           }
+          this.savePointsState();
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
           const now = Date.now();
@@ -329,17 +366,32 @@ export class StreamWatcher {
       logger.verbose(`✅  WebSocket initialized successfully (validated user_id: ${this.validatedUserId})`);
     } catch (error: any) {
       logger.error('❌  Failed to initialize WebSocket:', error.message || error);
+      logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
       logger.warn('⚠️  Continuing without WebSocket - events will be sent via API only');
+      logger.warn('⚠️  Channel points events will not be received in real-time');
+      logger.warn('⚠️  Attempting to reinitialize WebSocket in 30 seconds...');
+      
+      // Пытаемся переинициализировать WebSocket через 30 секунд
+      setTimeout(async () => {
+        await this.reinitializeWebSocket();
+      }, 30000);
     }
 
     // Инициализируем стримеров
     await this.initializeStreamers();
+    
 
     // Запускаем отправку событий просмотра
     this.startWatching();
 
     // Запускаем периодическую статистику
     this.startStatistics();
+    
+    // Запускаем периодическую проверку статуса стримеров
+    this.startStatusCheck();
+    
+    // Запускаем периодическую проверку и переинициализацию WebSocket
+    this.startWebSocketHealthCheck();
     
     // Запускаем TokenManager для отслеживания истечения токена
     if (this.tokenManager) {
@@ -357,6 +409,193 @@ export class StreamWatcher {
     
     // Запускаем веб-сервер
     this.startWebServer();
+  }
+
+  /**
+   * Повторно инициализирует WebSocket соединение
+   * Используется для восстановления соединения после ошибки инициализации
+   */
+  private async reinitializeWebSocket(): Promise<void> {
+    // Если WebSocket уже инициализирован, не делаем ничего
+    if (this.wsManager) {
+      logger.verbose('ℹ️  WebSocket already initialized, skipping reinitialization');
+      return;
+    }
+
+    logger.info('🔄  Attempting to reinitialize WebSocket connection...');
+    
+    try {
+      logger.verbose('Getting user ID from token validation...');
+      const tokenValidation = await this.twitchAPI.validateTokenWithInfo();
+      if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
+        logger.error('❌  Token validation failed during WebSocket reinitialization');
+        logger.error(`   Token valid: ${tokenValidation.isValid}`);
+        logger.error(`   Token info: ${JSON.stringify(tokenValidation.tokenInfo || {})}`);
+        logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
+        setTimeout(async () => {
+          await this.reinitializeWebSocket();
+        }, 5 * 60 * 1000); // 5 минут
+        return;
+      }
+      
+      const userId = tokenValidation.tokenInfo.user_id;
+      this.twitchAPI.setValidatedUserId(userId);
+      logger.info(`✅  User ID obtained from token validation: ${userId}`);
+      
+      const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
+      
+      // Используем те же обработчики событий, что и при первоначальной инициализации
+      const eventHandlers: WebSocketEventHandler = {
+        onPointsEarned: (streamerInfo, points, reason) => {
+          logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+          
+          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
+          
+          if (!this.activeSessions.has(streamerInfo.username) && 
+              streamerInfo.initialChannelPoints !== null && 
+              streamerInfo.isOnline &&
+              this.statisticsStorage) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+            logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
+          }
+          
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
+            this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
+          }
+          
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, points, totalPoints);
+          this.savePointsState();
+        },
+        onClaimAvailable: async (streamerInfo, claimId) => {
+          try {
+            const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+            if (pointsInfo?.availableClaim?.id === claimId) {
+              logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
+              const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+              if (success) {
+                logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+                this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+              } else {
+                logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket (возможно, уже собран)`);
+                this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+              }
+            } else {
+              logger.verbose(`ℹ️  [${streamerInfo.username}] Бонус ${claimId} не доступен для этого стримера (доступен: ${pointsInfo?.availableClaim?.id || 'none'})`);
+            }
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Ошибка проверки доступности бонуса, пробуем собрать: ${error.message || error}`);
+            const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+            if (success) {
+              logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
+              this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+            } else {
+              logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
+            }
+          }
+        },
+        onStreamUp: async (streamerInfo) => {
+          logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+          streamerInfo.startTime = Date.now();
+          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
+          
+          try {
+            await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          } catch (error: any) {
+            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
+          }
+          
+          await this.updateInitialPoints(streamerInfo);
+          
+          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+            const sessionId = this.statisticsStorage.createSession(
+              streamerInfo.username,
+              streamerInfo.initialChannelPoints,
+              streamerInfo.game,
+              streamerInfo.title
+            );
+            this.activeSessions.set(streamerInfo.username, sessionId);
+          }
+          
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+          this.savePointsState();
+        },
+        onStreamDown: (streamerInfo) => {
+          logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
+          
+          const sessionId = this.activeSessions.get(streamerInfo.username);
+          if (this.statisticsStorage && sessionId) {
+            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            this.activeSessions.delete(streamerInfo.username);
+          }
+          this.savePointsState();
+        },
+        onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
+          const now = Date.now();
+          const lastAttempt = this.processedRaids.get(raidId);
+          
+          if (lastAttempt && (now - lastAttempt) < this.raidCooldownMs) {
+            logger.verbose(`⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`);
+            return;
+          }
+          
+          this.processedRaids.set(raidId, now);
+          
+          const fiveMinutesAgo = now - 5 * 60 * 1000;
+          for (const [id, timestamp] of this.processedRaids.entries()) {
+            if (timestamp < fiveMinutesAgo) {
+              this.processedRaids.delete(id);
+            }
+          }
+          
+          logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
+          const success = await graphqlClient.joinRaid(raidId);
+          if (success) {
+            logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
+            this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
+          } else {
+            logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
+          }
+        },
+      };
+
+      this.wsManager = new WebSocketManager(this.authToken, userId, graphqlClient, eventHandlers);
+      await this.wsManager.start();
+      this.wsManager.startPingInterval();
+      
+      this.validatedUserId = this.wsManager.getValidatedUserId();
+      this.twitchAPI.setValidatedUserId(this.validatedUserId);
+      logger.info(`✅  WebSocket reinitialized successfully (validated user_id: ${this.validatedUserId})`);
+      
+      // Добавляем всех существующих стримеров в WebSocket менеджер
+      for (const streamerInfo of this.streamers.values()) {
+        this.wsManager.addStreamer(streamerInfo);
+      }
+      
+      this.addEvent('websocket-reconnected', 'system', 'WebSocket connection restored');
+    } catch (error: any) {
+      logger.error('❌  Failed to reinitialize WebSocket:', error.message || error);
+      logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
+      logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
+      
+      // Повторная попытка через 5 минут
+      setTimeout(async () => {
+        await this.reinitializeWebSocket();
+      }, 5 * 60 * 1000);
+    }
   }
 
   /**
@@ -394,6 +633,11 @@ export class StreamWatcher {
       this.wsManager = null;
     }
 
+    if (this.healthCheckMonitorInterval) {
+      clearInterval(this.healthCheckMonitorInterval);
+      this.healthCheckMonitorInterval = null;
+    }
+
     if (this.healthCheckServer) {
       this.healthCheckServer.stop();
       this.healthCheckServer = null;
@@ -403,6 +647,9 @@ export class StreamWatcher {
       this.tokenManager.stop();
       this.tokenManager = null;
     }
+
+    // Сохраняем текущее состояние баллов при остановке
+    this.savePointsState(true);
 
     logger.info('🛑 API mode watcher stopped');
   }
@@ -418,6 +665,7 @@ export class StreamWatcher {
         const streamerInfo = await this.twitchAPI.initializeStreamer(username);
         
         if (streamerInfo) {
+          this.applyPersistedPoints(streamerInfo);
           this.streamers.set(username, streamerInfo);
           
           if (this.wsManager) {
@@ -477,9 +725,13 @@ export class StreamWatcher {
           initialChannelPoints: null,
           lastChannelPoints: null,
         };
+        this.applyPersistedPoints(fallbackStreamerInfo);
         this.streamers.set(username, fallbackStreamerInfo);
       }
     }
+
+    // Сохраняем актуальное состояние после инициализации
+    this.savePointsState(true);
   }
 
   /**
@@ -705,8 +957,12 @@ export class StreamWatcher {
         pointsEarned,
         currentPoints,
         status: streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE',
+        game: streamerInfo.game,
       });
     }
+
+    // Периодически сохраняем состояние баллов
+    this.savePointsState();
 
     return stats;
   }
@@ -746,6 +1002,36 @@ export class StreamWatcher {
     setInterval(async () => {
       await this.checkStreamersStatus();
     }, 120000); // Каждые 2 минуты
+  }
+
+  /**
+   * Периодически проверяет статус WebSocket и пытается переинициализировать, если он не инициализирован
+   */
+  private startWebSocketHealthCheck(): void {
+    // Проверяем статус WebSocket каждые 5 минут
+    setInterval(async () => {
+      if (!this.wsManager) {
+        logger.warn('⚠️  WebSocket manager not initialized, attempting to reinitialize...');
+        await this.reinitializeWebSocket();
+      } else if (!this.wsManager.isConnected()) {
+        const state = this.wsManager.getConnectionState();
+        logger.warn(`⚠️  WebSocket not connected (state: ${state}), checking for reconnection...`);
+        
+        // Если WebSocket не подключен, но менеджер существует, возможно он пытается переподключиться
+        // Проверяем наличие критических ошибок
+        if (this.wsManager.hasCriticalErrors()) {
+          const lastError = this.wsManager.getLastCriticalError();
+          logger.warn(`⚠️  WebSocket has critical errors: ${lastError?.error || 'unknown'}`);
+          logger.warn('⚠️  Attempting to reinitialize WebSocket...');
+          // Останавливаем текущий менеджер и переинициализируем
+          this.wsManager.stop();
+          this.wsManager = null;
+          await this.reinitializeWebSocket();
+        }
+      } else {
+        logger.verbose('✅  WebSocket is connected and healthy');
+      }
+    }, 5 * 60 * 1000); // Каждые 5 минут
   }
 
   /**
@@ -821,14 +1107,55 @@ export class StreamWatcher {
 
         const isConnected = this.wsManager.isConnected();
         const state = this.wsManager.getConnectionState();
+        const hasCriticalErrors = this.wsManager.hasCriticalErrors();
+        const lastCriticalError = this.wsManager.getLastCriticalError();
+        const criticalErrors = this.wsManager.getCriticalErrors();
 
+        // Если есть критические ошибки (DNS и т.д.), помечаем как unhealthy
+        // даже если соединение установлено, так как это может быть временное соединение
+        // которое скоро упадет из-за DNS проблем
+        if (hasCriticalErrors && lastCriticalError) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `Критическая ошибка: ${lastCriticalError.error} (код: ${lastCriticalError.code})`,
+            lastCheck: Date.now(),
+            details: {
+              state,
+              isConnected,
+              hasCriticalErrors: true,
+              lastCriticalError: {
+                timestamp: lastCriticalError.timestamp,
+                error: lastCriticalError.error,
+                code: lastCriticalError.code
+              },
+              criticalErrorsCount: criticalErrors.length
+            }
+          };
+        }
+
+        // Если не подключен и нет критических ошибок, это может быть временная проблема
+        if (!isConnected) {
+          return {
+            status: ComponentStatus.UNHEALTHY,
+            message: `WebSocket не подключен (state: ${state})`,
+            lastCheck: Date.now(),
+            details: {
+              state,
+              isConnected,
+              hasCriticalErrors: false
+            }
+          };
+        }
+
+        // Все в порядке
         return {
-          status: isConnected ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
-          message: `WebSocket state: ${state}`,
+          status: ComponentStatus.HEALTHY,
+          message: `WebSocket подключен (state: ${state})`,
           lastCheck: Date.now(),
           details: {
             state,
-            isConnected
+            isConnected,
+            hasCriticalErrors: false
           }
         };
       },
@@ -873,6 +1200,34 @@ export class StreamWatcher {
       },
       checkToken: async () => {
         try {
+          // Сначала проверяем, был ли токен принудительно помечен как невалидный
+          if (this.tokenManager && this.tokenManager.isTokenManuallyMarkedInvalid()) {
+            return {
+              status: ComponentStatus.UNHEALTHY,
+              message: 'Token manually marked as invalid (for testing)',
+              lastCheck: Date.now(),
+              details: {
+                manuallyMarkedInvalid: true
+              }
+            };
+          }
+
+          // Проверяем последний результат валидации из TokenManager
+          if (this.tokenManager) {
+            const lastResult = this.tokenManager.getLastValidationResult();
+            if (lastResult && !lastResult.isValid) {
+              return {
+                status: ComponentStatus.UNHEALTHY,
+                message: 'Token validation failed (from last check)',
+                lastCheck: Date.now(),
+                details: {
+                  lastValidationResult: lastResult
+                }
+              };
+            }
+          }
+
+          // Если последний результат валиден или отсутствует, делаем реальную проверку
           const isValid = await this.twitchAPI.validateToken();
           return {
             status: isValid ? ComponentStatus.HEALTHY : ComponentStatus.UNHEALTHY,
@@ -919,8 +1274,88 @@ export class StreamWatcher {
       getMode: () => 'api'
     };
 
-    this.healthCheckServer = new HealthCheckServer(port, providers);
-    this.healthCheckServer.start();
+    try {
+      this.healthCheckServer = new HealthCheckServer(port, providers);
+      this.healthCheckServer.start();
+      logger.verbose(`🏥  Health check server initialization completed`);
+    } catch (error: any) {
+      logger.error(`❌  Failed to start health check server: ${error.message || error}`);
+      // Не прерываем работу приложения, если healthcheck не запустился
+    }
+  }
+
+  /**
+   * Запускает мониторинг healthcheck статуса и завершает процесс при unhealthy
+   */
+  private startHealthCheckMonitoring(): void {
+    const autoExitOnInvalidToken = process.env.AUTO_EXIT_ON_INVALID_TOKEN !== 'false';
+    if (!autoExitOnInvalidToken) {
+      logger.verbose(`ℹ️  Health check monitoring disabled (AUTO_EXIT_ON_INVALID_TOKEN=false)`);
+      return;
+    }
+
+    const checkInterval = 10000; // Проверяем каждые 10 секунд
+    let consecutiveUnhealthyCount = 0;
+    const maxUnhealthyCount = 3; // Завершаем после 3 неудачных проверок подряд
+
+    this.healthCheckMonitorInterval = setInterval(async () => {
+      try {
+        const port = process.env.HEALTH_CHECK_PORT ? parseInt(process.env.HEALTH_CHECK_PORT, 10) : 3000;
+        // Используем таймаут для fetch (совместимо с Node.js 18+)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`http://localhost:${port}/health`, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          // HTTP статус не 200 (может быть 503 при unhealthy)
+          consecutiveUnhealthyCount++;
+          logger.warn(`⚠️  Health check returned status ${response.status} (unhealthy count: ${consecutiveUnhealthyCount})`);
+          
+          if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
+            this.stop();
+            process.exit(1);
+          }
+          return;
+        }
+
+        const report = await response.json();
+        if (report.status === 'unhealthy') {
+          consecutiveUnhealthyCount++;
+          logger.warn(`⚠️  Health check report shows unhealthy status (unhealthy count: ${consecutiveUnhealthyCount})`);
+          
+          if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
+            this.stop();
+            process.exit(1);
+          }
+        } else {
+          // Статус healthy или degraded - сбрасываем счетчик
+          if (consecutiveUnhealthyCount > 0) {
+            logger.verbose(`✅  Health check recovered (status: ${report.status})`);
+            consecutiveUnhealthyCount = 0;
+          }
+        }
+      } catch (error: any) {
+        // Ошибка при проверке healthcheck (сервер недоступен)
+        consecutiveUnhealthyCount++;
+        logger.warn(`⚠️  Health check monitoring error: ${error.message || error} (unhealthy count: ${consecutiveUnhealthyCount})`);
+        
+        if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+          logger.error('🛑  Health check server is unavailable. Shutting down...');
+          this.stop();
+          process.exit(1);
+        }
+      }
+    }, checkInterval);
+
+    logger.verbose(`🔍  Health check monitoring started (interval: ${checkInterval}ms, max unhealthy: ${maxUnhealthyCount})`);
   }
 
   /**
@@ -1210,6 +1645,16 @@ export class StreamWatcher {
   }
 
   /**
+   * Помечает токен как невалидный (для тестирования перезапуска контейнера)
+   */
+  markTokenAsInvalid(): void {
+    if (this.tokenManager) {
+      this.tokenManager.markTokenAsInvalid();
+      logger.warn('⚠️  Token marked as invalid via API (for testing)');
+    }
+  }
+
+  /**
    * Добавляет стримера для отслеживания
    * @param username Имя стримера
    * @returns Результат операции
@@ -1391,6 +1836,69 @@ export class StreamWatcher {
     } catch (error: any) {
       logger.error(`❌  Error loading streamers from config: ${error.message || error}`);
       return null;
+    }
+  }
+
+  /**
+   * Загружает сохраненное состояние баллов
+   */
+  private loadPointsState(): typeof this.pointsState {
+    if (!this.pointsStatePath) return {};
+    try {
+      if (fs.existsSync(this.pointsStatePath)) {
+        const raw = fs.readFileSync(this.pointsStatePath, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to load points state: ${error.message || error}`);
+    }
+    return {};
+  }
+
+  /**
+   * Применяет сохраненное состояние баллов к стримеру
+   */
+  private applyPersistedPoints(streamerInfo: StreamerInfo): void {
+    const saved = this.pointsState[streamerInfo.username];
+    if (!saved) return;
+
+    if (Number.isFinite(saved.channelPoints)) {
+      streamerInfo.channelPoints = saved.channelPoints;
+      streamerInfo.lastChannelPoints = saved.channelPoints;
+    }
+    if (Number.isFinite(saved.initialChannelPoints)) {
+      streamerInfo.initialChannelPoints = saved.initialChannelPoints;
+    }
+  }
+
+  /**
+   * Сохраняет текущее состояние баллов с троттлингом
+   */
+  private savePointsState(force: boolean = false): void {
+    if (!this.pointsStatePath) return;
+    const now = Date.now();
+    if (!force && now - this.lastPointsStateSave < this.pointsStateSaveIntervalMs) {
+      return;
+    }
+
+    try {
+      const state: typeof this.pointsState = {};
+      for (const [username, info] of this.streamers.entries()) {
+        state[username] = {
+          channelPoints: info.channelPoints ?? 0,
+          initialChannelPoints: info.initialChannelPoints,
+          lastChannelPoints: info.lastChannelPoints,
+          isOnline: info.isOnline,
+          updatedAt: now,
+        };
+      }
+
+      fs.mkdirSync(path.dirname(this.pointsStatePath), { recursive: true });
+      fs.writeFileSync(this.pointsStatePath, JSON.stringify(state, null, 2), 'utf8');
+      this.pointsState = state;
+      this.lastPointsStateSave = now;
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to save points state: ${error.message || error}`);
     }
   }
 }

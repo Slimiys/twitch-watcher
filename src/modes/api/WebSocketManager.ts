@@ -39,6 +39,8 @@ export class WebSocketManager {
   private subscribedTopics: Set<string> = new Set(); // Отслеживание подписанных топиков
   private isFirstConnection = true; // Флаг первого подключения
   private processedResponses?: Set<string>; // Отслеживание обработанных ответов по nonce
+  private criticalErrors: Array<{ timestamp: number; error: string; code?: string }> = []; // Отслеживание критических ошибок
+  private maxCriticalErrorsHistory = 10; // Максимальное количество сохраняемых критических ошибок
   
   /**
    * Получает валидированный user_id
@@ -66,6 +68,37 @@ export class WebSocketManager {
     }
     const states = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
     return states[this.ws.readyState] || 'UNKNOWN';
+  }
+
+  /**
+   * Проверяет наличие критических ошибок (DNS и т.д.)
+   * @returns true если есть критические ошибки, false в противном случае
+   */
+  hasCriticalErrors(): boolean {
+    // Проверяем наличие критических ошибок за последние 5 минут
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    return this.criticalErrors.some(err => err.timestamp > fiveMinutesAgo);
+  }
+
+  /**
+   * Получает информацию о критических ошибках
+   * @returns Массив критических ошибок
+   */
+  getCriticalErrors(): Array<{ timestamp: number; error: string; code?: string }> {
+    // Возвращаем только ошибки за последние 5 минут
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    return this.criticalErrors.filter(err => err.timestamp > fiveMinutesAgo);
+  }
+
+  /**
+   * Получает последнюю критическую ошибку
+   * @returns Последняя критическая ошибка или null
+   */
+  getLastCriticalError(): { timestamp: number; error: string; code?: string } | null {
+    if (this.criticalErrors.length === 0) {
+      return null;
+    }
+    return this.criticalErrors[this.criticalErrors.length - 1];
   }
 
   /**
@@ -149,7 +182,22 @@ export class WebSocketManager {
         return null;
       }
     } catch (error: any) {
-      logger.warn(`⚠️  Token validation error: ${error.message || error}`);
+      const errorMessage = error.message || String(error);
+      logger.warn(`⚠️  Token validation error: ${errorMessage}`);
+      
+      // Детальная диагностика сетевых ошибок
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
+        logger.error(`❌  Сетевая ошибка при валидации токена через id.twitch.tv`);
+        logger.error(`   Возможные причины:`);
+        logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
+        logger.error(`   - Проблемы с интернет-соединением`);
+        logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
+        if (error.code) {
+          logger.error(`   Код ошибки: ${error.code}`);
+        }
+        logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+      }
+      
       return null;
     }
   }
@@ -229,8 +277,32 @@ export class WebSocketManager {
           this.handleMessage(data.toString());
         });
 
-        this.ws.on('error', (error) => {
-          logger.error('❌  WebSocket error:', error);
+        this.ws.on('error', (error: any) => {
+          // Специальная обработка DNS ошибок
+          if (error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND' || error.syscall === 'getaddrinfo') {
+            const errorMessage = `DNS ошибка: не удается разрешить домен ${error.hostname || 'pubsub-edge.twitch.tv'}`;
+            logger.error(`❌  ${errorMessage}`);
+            logger.error(`   Код ошибки: ${error.code || 'unknown'}`);
+            logger.error(`   Возможные причины:`);
+            logger.error(`   - Проблемы с DNS сервером`);
+            logger.error(`   - Проблемы с интернет-соединением`);
+            logger.error(`   - Блокировка доступа к Twitch`);
+            logger.error(`   Решение: проверьте DNS настройки (в Docker используйте dns: [8.8.8.8, 8.8.4.4])`);
+            
+            // Сохраняем критическую ошибку
+            this.criticalErrors.push({
+              timestamp: Date.now(),
+              error: errorMessage,
+              code: error.code || 'UNKNOWN'
+            });
+            
+            // Ограничиваем размер истории ошибок
+            if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
+              this.criticalErrors.shift();
+            }
+          } else {
+            logger.error('❌  WebSocket error:', error);
+          }
         });
 
         this.ws.on('close', () => {
@@ -243,8 +315,21 @@ export class WebSocketManager {
             logger.info(`🔄  Reconnecting WebSocket (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}) через ${Math.floor(delay)}ms...`);
             setTimeout(() => this.connect(), delay);
           } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            logger.error(`❌  Max reconnection attempts (${this.maxReconnectAttempts}) reached`);
+            const errorMessage = `Достигнуто максимальное количество попыток переподключения (${this.maxReconnectAttempts})`;
+            logger.error(`❌  ${errorMessage}`);
             this.isRunning = false;
+            
+            // Сохраняем критическую ошибку
+            this.criticalErrors.push({
+              timestamp: Date.now(),
+              error: errorMessage,
+              code: 'MAX_RECONNECT_ATTEMPTS'
+            });
+            
+            // Ограничиваем размер истории ошибок
+            if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
+              this.criticalErrors.shift();
+            }
           }
         });
       } catch (error: any) {

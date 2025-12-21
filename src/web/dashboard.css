@@ -323,14 +323,6 @@ h1 {
     overflow: hidden;
 }
 
-/* Переопределяем overflow для advancedStatsContent, чтобы не обрезать карточки */
-#advancedStatsContent {
-    overflow: visible !important;
-    width: 100%; /* Ограничиваем ширину */
-    box-sizing: border-box;
-    max-width: 100%; /* Не выходим за пределы родителя */
-}
-
 table {
     width: 100%;
     border-collapse: collapse;
@@ -929,6 +921,37 @@ td {
 
 .add-btn:active {
     transform: scale(0.98);
+}
+
+.test-btn {
+    background: #f59e0b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    height: 32px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.test-btn:hover {
+    background: #d97706;
+}
+
+.test-btn:active {
+    transform: scale(0.98);
+}
+
+.test-btn:disabled {
+    background: #4b5563;
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .add-streamer-input {
@@ -1656,330 +1679,6 @@ td {
     color: #adadb8;
     font-size: 14px;
     text-align: center;
-}
-
-/* Расширенная статистика */
-.advanced-stats-layout {
-    display: flex;
-    gap: 20px;
-    align-items: flex-start;
-    overflow: visible; /* Позволяет свечению не обрезаться */
-    width: 100%; /* Ограничиваем ширину */
-    box-sizing: border-box;
-    padding: 4px; /* Отступ для свечения при hover */
-    margin: -4px; /* Компенсируем padding, чтобы не выходить за границы */
-}
-
-.calendar-section {
-    flex: 1 1 0; /* Равномерное распределение пространства */
-    min-width: 0; /* Позволяет календарю сжиматься */
-    max-width: calc(50% - 10px); /* Учитываем gap */
-    overflow: visible;
-    box-sizing: border-box;
-}
-
-.advanced-stats-grid {
-    flex: 1 1 0; /* Равномерное распределение пространства */
-    min-width: 0; /* Позволяет статистике сжиматься */
-    max-width: calc(50% - 10px); /* Учитываем gap */
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 15px;
-    overflow: visible; /* Позволяет карточкам не обрезаться */
-    box-sizing: border-box;
-}
-
-@media (max-width: 768px) {
-    .advanced-stats-layout {
-        flex-direction: column;
-    }
-    
-    .calendar-section,
-    .advanced-stats-grid {
-        flex: 1 1 100%;
-        max-width: 100%;
-    }
-}
-
-.advanced-stat-card {
-    background: #18181b;
-    border: 1px solid #26262c;
-    border-radius: 8px;
-    padding: 20px;
-    transition: all 0.2s;
-    position: relative;
-    z-index: 1;
-    width: 100%; /* Карточка занимает всю ширину контейнера */
-    max-width: 100%; /* Не выходит за пределы */
-    box-sizing: border-box; /* Padding учитывается в ширине */
-    overflow: hidden; /* Предотвращаем выход содержимого за границы */
-}
-
-.advanced-stat-card:hover {
-    border-color: #9147ff;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.2);
-    z-index: 2; /* Поднимаем карточку выше при hover */
-}
-
-.advanced-stat-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.advanced-stat-icon {
-    font-size: 24px;
-}
-
-.advanced-stat-title {
-    color: #adadb8;
-    font-size: 14px;
-    font-weight: 500;
-    flex: 1;
-}
-
-.advanced-stat-value {
-    color: #efeff1;
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 8px;
-}
-
-.advanced-stat-label {
-    color: #adadb8;
-    font-size: 12px;
-}
-
-.advanced-stat-list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0 0;
-}
-
-.advanced-stat-list-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid #26262c;
-    color: #efeff1;
-    font-size: 14px;
-}
-
-.advanced-stat-list-item:last-child {
-    border-bottom: none;
-}
-
-.advanced-stat-list-item-name {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.advanced-stat-list-item-value {
-    font-weight: 600;
-    color: #9147ff;
-}
-
-/* Календарь активности */
-.activity-calendar {
-    background: #18181b;
-    border: 1px solid #26262c;
-    border-radius: 8px;
-    padding: 15px;
-    width: 100%;
-}
-
-.calendar-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 3px;
-    margin-top: 12px;
-    width: 100%;
-}
-
-.calendar-day-header {
-    text-align: center;
-    color: #adadb8;
-    font-size: 9px;
-    font-weight: 600;
-    padding: 2px;
-    text-transform: uppercase;
-    line-height: 1.2;
-    aspect-ratio: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.calendar-day {
-    aspect-ratio: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: #26262c;
-    border-radius: 2px;
-    cursor: pointer;
-    transition: all 0.2s;
-    position: relative;
-    padding: 3px;
-    width: 100%;
-}
-
-.calendar-day:hover {
-    transform: scale(1.1);
-    z-index: 10;
-    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.3);
-}
-
-.calendar-day.empty {
-    background: transparent;
-    cursor: default;
-}
-
-.calendar-day.empty:hover {
-    transform: none;
-    box-shadow: none;
-}
-
-.calendar-day-number {
-    font-size: 9px;
-    color: #efeff1;
-    font-weight: 600;
-    line-height: 1;
-}
-
-.calendar-day-points {
-    font-size: 7px;
-    color: #adadb8;
-    margin-top: 1px;
-    line-height: 1;
-}
-
-.calendar-day.activity-none {
-    background: #26262c;
-}
-
-.calendar-day.activity-low {
-    background: rgba(145, 71, 255, 0.2);
-}
-
-.calendar-day.activity-medium {
-    background: rgba(145, 71, 255, 0.4);
-}
-
-.calendar-day.activity-high {
-    background: rgba(145, 71, 255, 0.6);
-}
-
-.calendar-day.activity-very-high {
-    background: rgba(145, 71, 255, 0.8);
-}
-
-/* Тепловая карта активности */
-.activity-heatmap {
-    background: #18181b;
-    border: 1px solid #26262c;
-    border-radius: 8px;
-    padding: 20px;
-}
-
-.heatmap-grid {
-    display: grid;
-    grid-template-columns: repeat(24, 1fr);
-    gap: 4px;
-    margin-top: 16px;
-}
-
-.heatmap-hour {
-    aspect-ratio: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #26262c;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-    position: relative;
-    font-size: 10px;
-    color: #adadb8;
-}
-
-.heatmap-hour:hover {
-    transform: scale(1.2);
-    z-index: 10;
-    box-shadow: 0 4px 12px rgba(145, 71, 255, 0.3);
-}
-
-.heatmap-hour.activity-none {
-    background: #26262c;
-}
-
-.heatmap-hour.activity-low {
-    background: rgba(145, 71, 255, 0.2);
-}
-
-.heatmap-hour.activity-medium {
-    background: rgba(145, 71, 255, 0.4);
-}
-
-.heatmap-hour.activity-high {
-    background: rgba(145, 71, 255, 0.6);
-}
-
-.heatmap-hour.activity-very-high {
-    background: rgba(145, 71, 255, 0.8);
-}
-
-.heatmap-legend {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 20px;
-    justify-content: center;
-    flex-wrap: wrap;
-    padding: 12px;
-    background: rgba(38, 38, 44, 0.5);
-    border-radius: 6px;
-}
-
-.heatmap-legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #efeff1;
-    font-weight: 500;
-}
-
-.heatmap-legend-color {
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.heatmap-legend-color.activity-none {
-    background: #26262c;
-}
-
-.heatmap-legend-color.activity-low {
-    background: rgba(145, 71, 255, 0.2);
-}
-
-.heatmap-legend-color.activity-medium {
-    background: rgba(145, 71, 255, 0.4);
-}
-
-.heatmap-legend-color.activity-high {
-    background: rgba(145, 71, 255, 0.6);
-}
-
-.heatmap-legend-color.activity-very-high {
-    background: rgba(145, 71, 255, 0.8);
 }
 
 /* Адаптивный дизайн */

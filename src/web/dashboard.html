@@ -99,7 +99,12 @@
 
         <!-- Информация о токене -->
         <div class="section" id="tokenInfoSection" style="display: none;">
-            <h2>Token Information</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Token Information</h2>
+                <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
+                    🧪 Mark Invalid
+                </button>
+            </div>
             <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
                 <!-- Информация будет добавлена динамически -->
             </div>
@@ -144,6 +149,10 @@
                             <label class="column-settings-item">
                                 <input type="checkbox" data-column="currentPoints" checked>
                                 <span>Current Points</span>
+                            </label>
+                            <label class="column-settings-item">
+                                <input type="checkbox" data-column="game" checked>
+                                <span>Category</span>
                             </label>
                             <label class="column-settings-item">
                                 <input type="checkbox" data-column="actions" checked>
@@ -211,40 +220,6 @@
             <div id="chartSectionContent">
                 <div class="chart-container">
                     <canvas id="pointsChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Расширенная статистика -->
-        <div class="section collapsible-section" id="advancedStatsSection" style="display: none;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 class="section-header-clickable" data-section="advancedStatsContent" style="margin: 0; cursor: pointer;">
-                    Advanced Statistics
-                </h2>
-            </div>
-            <div id="advancedStatsContent" class="advanced-stats-layout">
-                <!-- Календарь активности -->
-                <div id="activityCalendarSection" class="calendar-section">
-                    <div id="activityCalendar" class="activity-calendar">
-                        <!-- Календарь будет добавлен динамически -->
-                    </div>
-                </div>
-                
-                <!-- Статистика -->
-                <div class="advanced-stats-grid">
-                    <!-- Статистика будет добавлена динамически -->
-                </div>
-            </div>
-            
-            <!-- Тепловая карта активности -->
-            <div id="activityHeatmapSection" style="display: none; margin-top: 30px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h3 style="margin: 0;">
-                        Activity Heatmap (by Hour)
-                    </h3>
-                </div>
-                <div id="activityHeatmap" class="activity-heatmap">
-                    <!-- Тепловая карта будет добавлена динамически -->
                 </div>
             </div>
         </div>
