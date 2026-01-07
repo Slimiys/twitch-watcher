@@ -1994,6 +1994,62 @@ async function updateTokenInfo() {
     `;
 }
 
+async function updateDatabaseInfo() {
+    const dbStatus = await fetchData('/database-status');
+    if (!dbStatus) return;
+
+    const section = document.getElementById('databaseInfoSection');
+    const content = document.getElementById('databaseInfoContent');
+    
+    if (!section || !content) return;
+
+    // Показываем секцию всегда
+    section.style.display = 'block';
+
+    let statusText = '';
+    let statusColor = '#adadb8';
+    let reasonText = 'Unknown';
+
+    if (dbStatus.ready) {
+        statusText = 'Active';
+        statusColor = '#00d166';
+        reasonText = 'Database is ready and operational';
+    } else if (dbStatus.available) {
+        statusText = 'Unavailable';
+        statusColor = '#f59e0b';
+        reasonText = dbStatus.reason || 'Database not ready';
+    } else {
+        statusText = 'Not Initialized';
+        statusColor = '#adadb8';
+        reasonText = dbStatus.reason || 'Database storage not initialized';
+    }
+
+    content.innerHTML = `
+        <div style="background: #18181b; padding: 15px; border-radius: 6px; border: 1px solid #26262c;">
+            <div style="color: #adadb8; font-size: 12px; margin-bottom: 5px;">Status</div>
+            <div style="color: ${statusColor}; font-size: 18px; font-weight: 600;">${statusText}</div>
+        </div>
+        <div style="background: #18181b; padding: 15px; border-radius: 6px; border: 1px solid #26262c;">
+            <div style="color: #adadb8; font-size: 12px; margin-bottom: 5px;">Reason</div>
+            <div style="color: #efeff1; font-size: 14px;">${reasonText}</div>
+        </div>
+        ${dbStatus.dbPath ? `
+        <div style="background: #18181b; padding: 15px; border-radius: 6px; border: 1px solid #26262c;">
+            <div style="color: #adadb8; font-size: 12px; margin-bottom: 5px;">Database Path</div>
+            <div style="color: #efeff1; font-size: 12px; font-family: monospace; word-break: break-all;">${dbStatus.dbPath}</div>
+        </div>
+        ` : ''}
+        ${!dbStatus.ready ? `
+        <div style="background: #1a1a1f; padding: 15px; border-radius: 6px; border: 1px solid #26262c; grid-column: 1 / -1;">
+            <div style="color: #adadb8; font-size: 12px; margin-bottom: 8px;">ℹ️ Note</div>
+            <div style="color: #adadb8; font-size: 13px; line-height: 1.5;">
+                Database features are optional. The application will continue to work using file-based storage (StatisticsStorage) if the database is not available. This is normal on platforms where better-sqlite3 cannot be compiled (e.g., Android without Python and build tools).
+            </div>
+        </div>
+        ` : ''}
+    `;
+}
+
 /**
  * Показывает индикатор загрузки
  */
@@ -2023,7 +2079,8 @@ async function updateAll() {
             updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
             updatePointsChart(),
             updateCriticalNotifications(),
-            updateTokenInfo()
+            updateTokenInfo(),
+            updateDatabaseInfo()
         ]);
     } finally {
         hideLoadingIndicator();

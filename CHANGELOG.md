@@ -5,6 +5,23 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.5.1] - 2026-01-07
+
+### Добавлено
+- Опциональная поддержка базы данных - приложение работает без `better-sqlite3` на платформах без Python/build tools
+- Динамический импорт `better-sqlite3` с graceful degradation
+- Отображение статуса базы данных в веб-интерфейсе (секция "Database Status")
+- API эндпоинт `/api/database-status` для проверки статуса БД
+- Информационные сообщения в интерфейсе о работе без БД
+
+### Изменено
+- База данных теперь опциональна - приложение продолжает работу без БД, используя только файловое хранилище
+- Улучшена обработка ошибок инициализации БД - ошибки не прерывают работу приложения
+
+### Исправлено
+- Приложение теперь работает на Android устройствах без Python и build tools
+- Устранена ошибка "Cannot find module 'better-sqlite3'" при отсутствии модуля
+
 ## [0.5.0] - 2026-01-07
 
 ### Добавлено
@@ -103,6 +120,7 @@
 - Добавлен веб-интерфейс для мониторинга и статистики
 - Добавлена поддержка сохранения статистики в файл
 
+[0.5.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.0...v0.4.1

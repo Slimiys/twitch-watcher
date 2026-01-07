@@ -414,6 +414,42 @@ export class WebServer {
       }
     });
 
+    // API для информации о статусе базы данных
+    this.app.get('/api/database-status', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage) {
+          res.json({
+            available: false,
+            ready: false,
+            reason: 'Database storage not initialized',
+            dbPath: null
+          });
+          return;
+        }
+
+        const isReady = databaseStorage.isReady();
+        const dbPath = databaseStorage.getDbPath();
+
+        res.json({
+          available: true,
+          ready: isReady,
+          reason: isReady ? 'Database is ready' : 'better-sqlite3 not available or not compiled',
+          dbPath: isReady ? dbPath : null
+        });
+      } catch (error: any) {
+        logger.error('Error getting database status:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     // API для пометки токена как невалидного (для тестирования)
     this.app.post('/api/token/mark-invalid', (req: Request, res: Response) => {
       try {
