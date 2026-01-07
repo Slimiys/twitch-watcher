@@ -2,11 +2,23 @@
  * Модуль для хранения статистики в базе данных SQLite
  */
 
-import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from './logger';
 import dayjs from 'dayjs';
+
+// Динамический импорт better-sqlite3 для поддержки платформ без нативной компиляции
+let Database: any = null;
+let isDatabaseAvailable = false;
+
+try {
+  // Пытаемся загрузить better-sqlite3
+  Database = require('better-sqlite3');
+  isDatabaseAvailable = true;
+} catch (error: any) {
+  logger.warn(`⚠️  better-sqlite3 not available: ${error.message || error}. Database features will be disabled.`);
+  isDatabaseAvailable = false;
+}
 
 /**
  * Конфигурация базы данных
@@ -53,7 +65,7 @@ export interface DailyPoints {
  */
 export class DatabaseStorage {
   private config: DatabaseStorageConfig;
-  private db: Database.Database | null = null;
+  private db: any = null; // Используем any, так как Database может быть недоступен
   private isInitialized = false;
 
   /**
@@ -62,13 +74,24 @@ export class DatabaseStorage {
    */
   constructor(config: Partial<DatabaseStorageConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.initialize();
+    
+    // Инициализируем только если better-sqlite3 доступен
+    if (isDatabaseAvailable) {
+      this.initialize();
+    } else {
+      logger.warn(`⚠️  DatabaseStorage: better-sqlite3 not available, database features disabled`);
+    }
   }
 
   /**
    * Инициализирует базу данных (создает файл, таблицы)
    */
   private initialize(): void {
+    if (!isDatabaseAvailable || !Database) {
+      logger.warn(`⚠️  Cannot initialize database: better-sqlite3 not available`);
+      return;
+    }
+
     try {
       // Создаем директорию, если её нет
       const dbDir = path.dirname(this.config.dbPath);
@@ -90,7 +113,8 @@ export class DatabaseStorage {
       logger.info(`✅  Database storage initialized: ${this.config.dbPath}`);
     } catch (error: any) {
       logger.error(`❌  Failed to initialize database storage: ${error.message || error}`);
-      throw error;
+      // Не бросаем ошибку, чтобы приложение могло работать без БД
+      this.isInitialized = false;
     }
   }
 
@@ -98,7 +122,7 @@ export class DatabaseStorage {
    * Создает таблицы в базе данных
    */
   private createTables(): void {
-    if (!this.db) return;
+    if (!isDatabaseAvailable || !this.db) return;
 
     // Таблица стримеров
     this.db.exec(`
@@ -143,7 +167,9 @@ export class DatabaseStorage {
    * @returns ID стримера
    */
   private getOrCreateStreamer(username: string): number {
-    if (!this.db) throw new Error('Database not initialized');
+    if (!isDatabaseAvailable || !this.db) {
+      throw new Error('Database not available');
+    }
 
     // Пытаемся найти существующего стримера
     const existing = this.db
@@ -171,8 +197,8 @@ export class DatabaseStorage {
    * @param date Дата (опционально, по умолчанию сегодня)
    */
   addDailyPoints(username: string, points: number, date?: string): void {
-    if (!this.db) {
-      logger.warn('⚠️  Database not initialized, skipping daily points');
+    if (!isDatabaseAvailable || !this.db) {
+      // Тихий возврат - база данных опциональна
       return;
     }
 
@@ -208,8 +234,8 @@ export class DatabaseStorage {
    * @param points Количество баллов для добавления
    */
   addTotalPoints(username: string, points: number): void {
-    if (!this.db) {
-      logger.warn('⚠️  Database not initialized, skipping total points update');
+    if (!isDatabaseAvailable || !this.db) {
+      // Тихий возврат - база данных опциональна
       return;
     }
 
@@ -233,8 +259,8 @@ export class DatabaseStorage {
    * @param watchTimeMs Время просмотра в миллисекундах
    */
   addWatchTime(username: string, watchTimeMs: number): void {
-    if (!this.db) {
-      logger.warn('⚠️  Database not initialized, skipping watch time update');
+    if (!isDatabaseAvailable || !this.db) {
+      // Тихий возврат - база данных опциональна
       return;
     }
 
@@ -389,7 +415,7 @@ export class DatabaseStorage {
    * Проверяет, инициализирована ли база данных
    */
   isReady(): boolean {
-    return this.isInitialized && this.db !== null;
+    return isDatabaseAvailable && this.isInitialized && this.db !== null;
   }
 
   /**

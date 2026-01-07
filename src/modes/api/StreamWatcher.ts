@@ -175,14 +175,19 @@ export class StreamWatcher {
       logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
     }
 
-    // Инициализируем модуль базы данных
+    // Инициализируем модуль базы данных (опционально, может не работать на некоторых платформах)
     try {
       const statsConfig = loadStatisticsConfig();
       const dbPath = path.join(statsConfig.storagePath, 'database.db');
       this.databaseStorage = new DatabaseStorage({ dbPath });
-      logger.verbose(`💾  Database storage initialized`);
+      if (this.databaseStorage.isReady()) {
+        logger.verbose(`💾  Database storage initialized`);
+      } else {
+        logger.verbose(`ℹ️  Database storage not available (better-sqlite3 not installed or not compatible)`);
+      }
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize database storage: ${error.message || error}`);
+      // Не критично - приложение может работать без БД
     }
   }
 
