@@ -23,6 +23,8 @@
     "url": "https://github.com/Slimiys/twitch-watcher.git"
   },
   "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.5.0",
     "cheerio": "^1.0.0-rc.3",
     "dayjs": "^1.8.24",
     "dotenv": "^8.2.0",

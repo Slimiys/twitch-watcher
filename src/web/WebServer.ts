@@ -502,6 +502,160 @@ export class WebServer {
       }
     });
 
+    // API для получения статистики стримера из базы данных
+    this.app.get('/api/database/streamer-stats', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage || !databaseStorage.isReady()) {
+          res.status(503).json({ error: 'Database storage not available' });
+          return;
+        }
+
+        const username = req.query.username as string | undefined;
+        if (!username) {
+          res.status(400).json({ error: 'Username parameter is required' });
+          return;
+        }
+
+        const stats = databaseStorage.getStreamerStats(username);
+        if (!stats) {
+          res.status(404).json({ error: 'Streamer not found' });
+          return;
+        }
+
+        res.json(stats);
+      } catch (error: any) {
+        logger.error('Error getting streamer stats from database:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для получения баллов за день
+    this.app.get('/api/database/daily-points', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage || !databaseStorage.isReady()) {
+          res.status(503).json({ error: 'Database storage not available' });
+          return;
+        }
+
+        const username = req.query.username as string | undefined;
+        const date = req.query.date as string | undefined;
+
+        if (!username || !date) {
+          res.status(400).json({ error: 'Username and date parameters are required (format: YYYY-MM-DD)' });
+          return;
+        }
+
+        const points = databaseStorage.getDailyPoints(username, date);
+        res.json({ username, date, pointsEarned: points });
+      } catch (error: any) {
+        logger.error('Error getting daily points from database:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для получения баллов за период
+    this.app.get('/api/database/daily-points-range', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage || !databaseStorage.isReady()) {
+          res.status(503).json({ error: 'Database storage not available' });
+          return;
+        }
+
+        const username = req.query.username as string | undefined;
+        const startDate = req.query.startDate as string | undefined;
+        const endDate = req.query.endDate as string | undefined;
+
+        if (!username || !startDate || !endDate) {
+          res.status(400).json({ error: 'Username, startDate and endDate parameters are required (format: YYYY-MM-DD)' });
+          return;
+        }
+
+        const points = databaseStorage.getDailyPointsRange(username, startDate, endDate);
+        res.json(points);
+      } catch (error: any) {
+        logger.error('Error getting daily points range from database:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для получения всех стримеров из базы данных
+    this.app.get('/api/database/all-streamers', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage || !databaseStorage.isReady()) {
+          res.status(503).json({ error: 'Database storage not available' });
+          return;
+        }
+
+        const stats = databaseStorage.getAllStreamerStats();
+        res.json(stats);
+      } catch (error: any) {
+        logger.error('Error getting all streamers from database:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для получения суммарных баллов за день
+    this.app.get('/api/database/total-daily-points', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (!databaseStorage || !databaseStorage.isReady()) {
+          res.status(503).json({ error: 'Database storage not available' });
+          return;
+        }
+
+        const date = req.query.date as string | undefined;
+        if (!date) {
+          res.status(400).json({ error: 'Date parameter is required (format: YYYY-MM-DD)' });
+          return;
+        }
+
+        const totalPoints = databaseStorage.getTotalDailyPoints(date);
+        res.json({ date, totalPoints });
+      } catch (error: any) {
+        logger.error('Error getting total daily points from database:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     // API для экспорта в JSON
     this.app.get('/api/export/json', (req: Request, res: Response) => {
       try {
