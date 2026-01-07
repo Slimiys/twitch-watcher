@@ -5,6 +5,34 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.5.0] - 2026-01-07
+
+### Добавлено
+- База данных SQLite для хранения статистики стримеров (`DatabaseStorage`)
+- Таблица `streamers` для хранения общей статистики (общие баллы, время просмотра)
+- Таблица `daily_points` для хранения баллов по дням для каждого стримера
+- Автоматическое сохранение баллов в базу данных при начислении
+- Автоматическое сохранение времени просмотра при завершении сессий
+- API эндпоинты для работы с базой данных:
+  - `/api/database/streamer-stats` - статистика стримера
+  - `/api/database/daily-points` - баллы за день
+  - `/api/database/daily-points-range` - баллы за период
+  - `/api/database/all-streamers` - все стримеры
+  - `/api/database/total-daily-points` - суммарные баллы за день
+- Документация по использованию базы данных (`docs/DATABASE.md`)
+- Документация по подключению к Android через SSH (`docs/SSH_CONNECTION.md`)
+- Выделение событий WATCH_STREAK в отдельную категорию `streak-earned`
+- Поддержка сборки `better-sqlite3` в Docker (добавлены системные зависимости)
+
+### Изменено
+- События WATCH_STREAK теперь имеют отдельный тип `streak-earned` вместо `points-earned`
+- Dockerfile обновлен для поддержки сборки нативных модулей
+
+### Технические улучшения
+- WAL режим для SQLite для лучшей производительности
+- Индексы для быстрого поиска по username и дате
+- Автоматическое создание таблиц при инициализации
+
 ## [0.4.2] - 2025-12-21
 
 ### Добавлено
@@ -75,6 +103,7 @@
 - Добавлен веб-интерфейс для мониторинга и статистики
 - Добавлена поддержка сохранения статистики в файл
 
+[0.5.0]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.0...v0.4.1
 [0.3.5]: https://github.com/Slimiys/twitch-watcher/compare/v0.3.4...v0.3.5

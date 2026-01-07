@@ -14,6 +14,7 @@ import { GQL_URL, CLIENT_ID } from './constants';
 import { WebServer, StatisticsProvider } from '../../web';
 import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
+import { DatabaseStorage } from './DatabaseStorage';
 import { loadStatisticsConfig } from './configLoader';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -61,6 +62,7 @@ export class StreamWatcher {
   }> = [];
   private maxCriticalNotifications: number = 10;
   private statisticsStorage: StatisticsStorage | null = null;
+  private databaseStorage: DatabaseStorage | null = null;
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
@@ -172,6 +174,16 @@ export class StreamWatcher {
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
     }
+
+    // Инициализируем модуль базы данных
+    try {
+      const statsConfig = loadStatisticsConfig();
+      const dbPath = path.join(statsConfig.storagePath, 'database.db');
+      this.databaseStorage = new DatabaseStorage({ dbPath });
+      logger.verbose(`💾  Database storage initialized`);
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to initialize database storage: ${error.message || error}`);
+    }
   }
 
   /**
@@ -210,8 +222,15 @@ export class StreamWatcher {
           logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
           
           // Используем разные типы событий в зависимости от причины
-          // CLAIM должен иметь свой тег, остальные - points-earned
-          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          // CLAIM → claim-earned, WATCH_STREAK → streak-earned, остальные → points-earned
+          let eventType: string;
+          if (reason === 'CLAIM') {
+            eventType = 'claim-earned';
+          } else if (reason === 'WATCH_STREAK') {
+            eventType = 'streak-earned';
+          } else {
+            eventType = 'points-earned';
+          }
           this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
           // Если сессия еще не создана, но initialChannelPoints установлен через WebSocket, создаем сессию
@@ -235,6 +254,14 @@ export class StreamWatcher {
           const sessionId = this.activeSessions.get(streamerInfo.username);
           if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
             this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
+          }
+          
+          // Сохраняем в базу данных
+          if (this.databaseStorage) {
+            // Добавляем баллы за день
+            this.databaseStorage.addDailyPoints(streamerInfo.username, points);
+            // Обновляем общее количество баллов
+            this.databaseStorage.addTotalPoints(streamerInfo.username, points);
           }
           
           // Добавляем в историю баллов
@@ -316,6 +343,10 @@ export class StreamWatcher {
           if (this.statisticsStorage && sessionId) {
             const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
             this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            
+            // Сохраняем время просмотра в базу данных
+            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
+            
             this.activeSessions.delete(streamerInfo.username);
           }
           this.savePointsState();
@@ -449,7 +480,16 @@ export class StreamWatcher {
         onPointsEarned: (streamerInfo, points, reason) => {
           logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
           
-          const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+          // Используем разные типы событий в зависимости от причины
+          // CLAIM → claim-earned, WATCH_STREAK → streak-earned, остальные → points-earned
+          let eventType: string;
+          if (reason === 'CLAIM') {
+            eventType = 'claim-earned';
+          } else if (reason === 'WATCH_STREAK') {
+            eventType = 'streak-earned';
+          } else {
+            eventType = 'points-earned';
+          }
           this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
           
           if (!this.activeSessions.has(streamerInfo.username) && 
@@ -539,6 +579,10 @@ export class StreamWatcher {
           if (this.statisticsStorage && sessionId) {
             const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
             this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            
+            // Сохраняем время просмотра в базу данных
+            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
+            
             this.activeSessions.delete(streamerInfo.username);
           }
           this.savePointsState();
@@ -621,11 +665,20 @@ export class StreamWatcher {
         if (streamerInfo) {
           const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
           this.statisticsStorage.endSession(sessionId, finalPoints, 'interrupted');
+          
+          // Сохраняем время просмотра в базу данных
+          this.saveWatchTimeToDatabase(streamerName, sessionId);
         }
       }
       this.activeSessions.clear();
       this.statisticsStorage.save();
       logger.verbose(`💾  All active sessions saved`);
+    }
+
+    // Закрываем соединение с базой данных
+    if (this.databaseStorage) {
+      this.databaseStorage.close();
+      this.databaseStorage = null;
     }
 
     if (this.wsManager) {
@@ -1078,6 +1131,10 @@ export class StreamWatcher {
           if (this.statisticsStorage && sessionId) {
             const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
             this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+            
+            // Сохраняем время просмотра в базу данных
+            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
+            
             this.activeSessions.delete(streamerInfo.username);
           }
         }
@@ -1390,6 +1447,29 @@ export class StreamWatcher {
   }
 
   /**
+   * Сохраняет время просмотра в базу данных при завершении сессии
+   * @param streamerName Имя стримера
+   * @param sessionId ID сессии
+   */
+  private saveWatchTimeToDatabase(streamerName: string, sessionId: string): void {
+    if (!this.databaseStorage || !this.statisticsStorage) return;
+
+    try {
+      const sessions = this.statisticsStorage.getSessions(streamerName, 1);
+      const session = sessions.find(s => s.id === sessionId);
+      
+      if (session) {
+        const watchTime = session.duration || (Date.now() - session.startTime);
+        if (watchTime > 0) {
+          this.databaseStorage.addWatchTime(streamerName, watchTime);
+        }
+      }
+    } catch (error: any) {
+      logger.warn(`⚠️  Failed to save watch time to database: ${error.message || error}`);
+    }
+  }
+
+  /**
    * Добавляет запись в историю баллов
    * @param streamer Имя стримера
    * @param points Количество заработанных баллов
@@ -1567,6 +1647,14 @@ export class StreamWatcher {
    */
   getStatisticsStorage(): StatisticsStorage | null {
     return this.statisticsStorage;
+  }
+
+  /**
+   * Получает модуль базы данных
+   * @returns DatabaseStorage или null
+   */
+  getDatabaseStorage(): DatabaseStorage | null {
+    return this.databaseStorage;
   }
 
   /**
@@ -1759,6 +1847,9 @@ export class StreamWatcher {
         if (sessionId && this.statisticsStorage && streamerInfo) {
           const finalPoints = streamerInfo.channelPoints || streamerInfo.lastChannelPoints || 0;
           this.statisticsStorage.endSession(sessionId, finalPoints, 'interrupted');
+          
+          // Сохраняем время просмотра в базу данных
+          this.saveWatchTimeToDatabase(normalizedUsername, sessionId);
         }
         this.activeSessions.delete(normalizedUsername);
       }

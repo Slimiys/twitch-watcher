@@ -266,7 +266,14 @@ describe('Points Earned', () => {
 
       // Создаем обработчик событий напрямую (как в StreamWatcher.start)
       const onPointsEarned = (streamerInfo: StreamerInfo, points: number, reason: string) => {
-        const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+        let eventType: string;
+        if (reason === 'CLAIM') {
+          eventType = 'claim-earned';
+        } else if (reason === 'WATCH_STREAK') {
+          eventType = 'streak-earned';
+        } else {
+          eventType = 'points-earned';
+        }
         (streamWatcher as any).addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
         
         const sessionId = (streamWatcher as any).activeSessions.get(streamerInfo.username);
@@ -310,7 +317,14 @@ describe('Points Earned', () => {
 
       // Создаем обработчик событий напрямую
       const onPointsEarned = (streamerInfo: StreamerInfo, points: number, reason: string) => {
-        const eventType = reason === 'CLAIM' ? 'claim-earned' : 'points-earned';
+        let eventType: string;
+        if (reason === 'CLAIM') {
+          eventType = 'claim-earned';
+        } else if (reason === 'WATCH_STREAK') {
+          eventType = 'streak-earned';
+        } else {
+          eventType = 'points-earned';
+        }
         (streamWatcher as any).addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
       };
 
@@ -318,6 +332,46 @@ describe('Points Earned', () => {
 
       // Проверяем, что событие было добавлено с правильным типом
       expect(mockAddEvent).toHaveBeenCalledWith('claim-earned', 'testuser', 'Earned 50 points (CLAIM)');
+    });
+
+    it('должен обработать событие начисления баллов через WATCH_STREAK', () => {
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 1000,
+        isOnline: true,
+        broadcastId: '456',
+        game: 'Test Game',
+        title: 'Test Title',
+        tags: [],
+        spadeUrl: null,
+        startTime: Date.now(),
+        initialChannelPoints: 1000,
+        lastChannelPoints: 1000,
+      };
+
+      (streamWatcher as any).streamers.set('testuser', streamerInfo);
+      (streamWatcher as any).activeSessions.set('testuser', 'session123');
+
+      const mockAddEvent = vi.spyOn(streamWatcher as any, 'addEvent');
+
+      // Создаем обработчик событий напрямую
+      const onPointsEarned = (streamerInfo: StreamerInfo, points: number, reason: string) => {
+        let eventType: string;
+        if (reason === 'CLAIM') {
+          eventType = 'claim-earned';
+        } else if (reason === 'WATCH_STREAK') {
+          eventType = 'streak-earned';
+        } else {
+          eventType = 'points-earned';
+        }
+        (streamWatcher as any).addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
+      };
+
+      onPointsEarned(streamerInfo, 100, 'WATCH_STREAK');
+
+      // Проверяем, что событие было добавлено с правильным типом
+      expect(mockAddEvent).toHaveBeenCalledWith('streak-earned', 'testuser', 'Earned 100 points (WATCH_STREAK)');
     });
 
     it('должен правильно установить initialChannelPoints вычитая earned из баланса при первом событии', () => {
