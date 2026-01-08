@@ -2017,7 +2017,7 @@ async function updateDatabaseInfo() {
     } else if (dbStatus.available) {
         statusText = 'Unavailable';
         statusColor = '#f59e0b';
-        reasonText = dbStatus.reason || 'Database not ready';
+        reasonText = dbStatus.reason || dbStatus.error || 'Database not ready';
     } else {
         statusText = 'Not Initialized';
         statusColor = '#adadb8';
@@ -2043,7 +2043,7 @@ async function updateDatabaseInfo() {
         <div style="background: #1a1a1f; padding: 15px; border-radius: 6px; border: 1px solid #26262c; grid-column: 1 / -1;">
             <div style="color: #adadb8; font-size: 12px; margin-bottom: 8px;">ℹ️ Note</div>
             <div style="color: #adadb8; font-size: 13px; line-height: 1.5;">
-                Database features are optional. The application will continue to work using file-based storage (StatisticsStorage) if the database is not available. This is normal on platforms where better-sqlite3 cannot be compiled (e.g., Android without Python and build tools).
+                Database features are optional. The application will continue to work using file-based storage (StatisticsStorage) if the database is not available. The application uses sql.js (WebAssembly-based SQLite) which works on all platforms including Android without requiring compilation.
             </div>
         </div>
         ` : ''}

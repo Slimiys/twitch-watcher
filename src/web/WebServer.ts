@@ -437,12 +437,14 @@ export class WebServer {
 
         const isReady = databaseStorage.isReady();
         const dbPath = databaseStorage.getDbPath();
+        const errorReason = databaseStorage.getErrorReason?.();
 
         res.json({
           available: true,
           ready: isReady,
-          reason: isReady ? 'Database is ready' : 'better-sqlite3 not available or not compiled',
-          dbPath: isReady ? dbPath : null
+          reason: isReady ? 'Database is ready' : (errorReason || 'sql.js not available'),
+          dbPath: isReady ? dbPath : null,
+          error: errorReason || null
         });
       } catch (error: any) {
         logger.error('Error getting database status:', error);

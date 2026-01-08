@@ -181,9 +181,14 @@ export class StreamWatcher {
       const dbPath = path.join(statsConfig.storagePath, 'database.db');
       this.databaseStorage = new DatabaseStorage({ dbPath });
       if (this.databaseStorage.isReady()) {
-        logger.verbose(`💾  Database storage initialized`);
+        logger.info(`💾  Database storage initialized successfully`);
       } else {
-        logger.verbose(`ℹ️  Database storage not available (better-sqlite3 not installed or not compatible)`);
+        const errorReason = this.databaseStorage.getErrorReason?.();
+        if (errorReason) {
+          logger.warn(`⚠️  Database storage not available: ${errorReason}`);
+        } else {
+          logger.verbose(`ℹ️  Database storage not available (sql.js not installed or not compatible)`);
+        }
       }
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize database storage: ${error.message || error}`);
