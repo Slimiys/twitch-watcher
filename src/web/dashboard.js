@@ -1,8 +1,5 @@
 const API_BASE = '/api';
-let pointsChart = null;
 let updateInterval = null;
-// Плагин зума Chart.js (ленивая инициализация, чтобы избежать ошибок TDZ)
-let zoomPlugin = null;
 
 /**
  * Безопасное получение значения из localStorage
@@ -32,10 +29,6 @@ function safeSetLocalStorage(key, value) {
     }
 }
 
-// Настройки графика
-let chartMode = safeGetLocalStorage('chartMode') || 'accumulated'; // 'accumulated' или 'daily'
-let chartPeriod = safeGetLocalStorage('chartPeriod') || '30'; // 'all', '90', '30', '7', '1'
-
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
@@ -53,10 +46,10 @@ let availableEventTags = new Set(); // Доступные теги из собы
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
 } catch (e) {
-    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, actions: true};
+    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
 }
 
 // Пагинация событий
@@ -155,10 +148,10 @@ function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
  * @returns {string} Класс для стилизации
  */
 function getPointsCategory(points) {
-    if (points >= 10000) return 'very-high';
-    if (points >= 5000) return 'high';
-    if (points >= 1000) return 'medium';
-    return 'low';
+    if (points >= 100001) return 'tier-4'; // 100001 - 1000000
+    if (points >= 10001) return 'tier-3';  // 10001 - 100000
+    if (points >= 1001) return 'tier-2';    // 1001 - 10000
+    return 'tier-1';                        // 0 - 1000
 }
 
 /**
@@ -206,6 +199,50 @@ function getEventIcon(eventType) {
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
+}
+
+/**
+ * Форматирует timestamp в читаемую дату и время
+ * @param {number} timestamp Timestamp в миллисекундах
+ * @returns {string} Отформатированная дата и время
+ */
+function formatDateTime(timestamp) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    // Если меньше минуты назад
+    if (diff < 60000) {
+        return 'Just now';
+    }
+    // Если меньше часа назад
+    if (diff < 3600000) {
+        const minutes = Math.floor(diff / 60000);
+        return `${minutes}m ago`;
+    }
+    // Если сегодня
+    if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+    // Если вчера
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+        return `Yesterday ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // Если меньше недели назад
+    if (diff < 7 * 24 * 3600000) {
+        return date.toLocaleDateString('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+    // Иначе полная дата и время
+    return date.toLocaleString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit' 
+    });
 }
 
 /**
@@ -260,22 +297,6 @@ function generateTableSkeleton(rows = 5) {
  * Генерирует skeleton loader для графика
  * @returns {string} HTML код skeleton loader
  */
-function generateChartSkeleton() {
-    // Создаем несколько линий для имитации графика
-    const lines = Array.from({ length: 5 }).map((_, i) => {
-        const width = 60 + Math.random() * 40;
-        const left = 10 + i * 20;
-        const height = 20 + Math.random() * 200;
-        return `<div class="skeleton-chart-line" style="left: ${left}%; width: ${width}%; height: ${height}px;"></div>`;
-    }).join('');
-    
-    return `
-        <div class="skeleton-chart">
-            ${lines}
-        </div>
-    `;
-}
-
 /**
  * Генерирует skeleton loader для списка событий
  * @param {number} items Количество элементов
@@ -509,6 +530,65 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
     }
 }
 
+/**
+ * Проверяет статус инициализации приложения
+ */
+async function checkInitializationStatus() {
+    const loadingScreen = document.getElementById('loadingScreen');
+    const mainContainer = document.getElementById('mainContainer');
+    const statusText = document.getElementById('loadingStatusText');
+    const progressBar = document.getElementById('loadingProgressBar');
+    const progressText = document.getElementById('loadingProgressText');
+    
+    if (!loadingScreen || !mainContainer || !statusText || !progressBar || !progressText) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/initialization-status');
+        if (!response.ok) {
+            // Если API недоступен (404 или другая ошибка), показываем сообщение и продолжаем проверку
+            if (response.status === 404) {
+                statusText.textContent = 'Waiting for server to start...';
+            } else {
+                statusText.textContent = 'Waiting for server...';
+            }
+            setTimeout(checkInitializationStatus, 1000);
+            return;
+        }
+        
+        const status = await response.json();
+        
+        // Обновляем статус
+        statusText.textContent = status.currentAction || 'Initializing...';
+        progressBar.style.width = `${status.progress}%`;
+        progressText.textContent = `${Math.round(status.progress)}%`;
+        
+        // Если инициализация завершена, скрываем экран загрузки
+        // Проверяем либо isInitialized, либо progress >= 100 (на случай если isInitialized не установлен)
+        if ((status.isInitialized || status.progress >= 100) && status.progress >= 100) {
+            setTimeout(() => {
+                loadingScreen.classList.add('hidden');
+                mainContainer.style.display = 'block';
+                // Удаляем экран загрузки из DOM после анимации
+                setTimeout(() => {
+                    if (loadingScreen && loadingScreen.parentNode) {
+                        loadingScreen.remove();
+                    }
+                }, 500);
+            }, 500);
+        } else {
+            // Продолжаем проверку
+            setTimeout(checkInitializationStatus, 500);
+        }
+    } catch (error) {
+        // При ошибке (сеть, CORS и т.д.) продолжаем проверку
+        console.log('Error checking initialization status:', error);
+        statusText.textContent = 'Connecting to server...';
+        setTimeout(checkInitializationStatus, 1000);
+    }
+}
+
 async function updateStatistics() {
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
@@ -578,6 +658,8 @@ async function updateStatistics() {
         { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
         { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
         { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
+        { key: 'lastStreamStart', label: 'Last Stream Start', visible: visibleColumns.lastStreamStart !== false },
+        { key: 'lastStreamEnd', label: 'Last Stream End', visible: visibleColumns.lastStreamEnd !== false },
         { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
     ];
     
@@ -606,6 +688,8 @@ async function updateStatistics() {
                         ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
                         ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
                         ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatDateTime(s.lastStreamStart) : '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamEnd !== false ? `<td>${s.lastStreamEnd ? formatDateTime(s.lastStreamEnd) : '-'}</td>` : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
@@ -637,155 +721,14 @@ async function updateStatistics() {
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
 
-/**
- * Фильтрует историю по выбранному периоду
- * @param {Array} history История баллов
- * @param {string} period Период ('all', '90', '30', '7', '1')
- * @returns {Array} Отфильтрованная история
- */
-function filterHistoryByPeriod(history, period) {
-    if (period === 'all') return history;
-    
-    const now = Date.now();
-    const days = parseInt(period);
-    const cutoffDate = new Date(now - days * 24 * 60 * 60 * 1000);
-    
-    return history.filter(entry => new Date(entry.timestamp) >= cutoffDate);
-}
-
-/**
- * Вычисляет статистику для графика
- * @param {Array} history История баллов
- * @param {string} mode Режим ('accumulated' или 'daily')
- * @returns {Object} Статистика
- */
-function calculateChartStats(history, mode) {
-    if (!history || history.length === 0) {
-        return {
-            total: 0,
-            average: 0,
-            max: 0,
-            trend: 'neutral'
-        };
-    }
-    
-    // Группируем по дням
-    const dailyPoints = new Map();
-    history.forEach(entry => {
-        const date = new Date(entry.timestamp);
-        const dayKey = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0];
-        
-        if (!dailyPoints.has(dayKey)) {
-            dailyPoints.set(dayKey, 0);
-        }
-        dailyPoints.set(dayKey, dailyPoints.get(dayKey) + entry.points);
-    });
-    
-    const dailyValues = Array.from(dailyPoints.values());
-    const total = dailyValues.reduce((sum, val) => sum + val, 0);
-    const average = dailyValues.length > 0 ? total / dailyValues.length : 0;
-    const max = dailyValues.length > 0 ? Math.max(...dailyValues) : 0;
-    
-    // Определяем тренд (сравниваем первую и вторую половину периода)
-    let trend = 'neutral';
-    if (dailyValues.length >= 4) {
-        const firstHalf = dailyValues.slice(0, Math.floor(dailyValues.length / 2));
-        const secondHalf = dailyValues.slice(Math.floor(dailyValues.length / 2));
-        const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
-        const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
-        
-        if (secondAvg > firstAvg * 1.1) trend = 'positive';
-        else if (secondAvg < firstAvg * 0.9) trend = 'negative';
-    }
-    
-    return { total, average, max, trend };
-}
-
-/**
- * Обновляет карточки статистики графика
- * @param {Object} stats Статистика
- */
-function updateChartStats(stats) {
-    const statsGrid = document.getElementById('chartStatsGrid');
-    if (!statsGrid) return;
-    
-    if (stats.total === 0) {
-        statsGrid.style.display = 'none';
-        return;
-    }
-    
-    statsGrid.style.display = 'grid';
-    
-    const trendIcon = stats.trend === 'positive' ? '↑' : stats.trend === 'negative' ? '↓' : '→';
-    const trendClass = stats.trend === 'positive' ? 'positive' : stats.trend === 'negative' ? 'negative' : 'neutral';
-    
-    statsGrid.innerHTML = `
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Total Points</div>
-            <div class="chart-stat-value">${Math.round(stats.total).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Average per Day</div>
-            <div class="chart-stat-value">${Math.round(stats.average).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Max per Day</div>
-            <div class="chart-stat-value">${Math.round(stats.max).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Trend</div>
-            <div class="chart-stat-value">${trendIcon}</div>
-            <div class="chart-stat-change ${trendClass}">
-                ${stats.trend === 'positive' ? 'Increasing' : stats.trend === 'negative' ? 'Decreasing' : 'Stable'}
-            </div>
-        </div>
-    `;
-}
-
-/**
- * Экспортирует график как изображение
- */
-function exportChart() {
-    if (!pointsChart) return;
-    
-    const canvas = document.getElementById('pointsChart');
-    if (!canvas) return;
-    
-    // Создаем ссылку для скачивания
-    const link = document.createElement('a');
-    link.download = `points-chart-${new Date().toISOString().split('T')[0]}.png`;
-    link.href = canvas.toDataURL('image/png');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-/**
- * Сбрасывает зум графика
- */
-function resetChartZoom() {
-    if (!pointsChart) return;
-    
-    if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
-        try {
-            pointsChart.resetZoom();
-            // Скрываем кнопку после сброса
-            const resetBtn = document.getElementById('resetZoomBtn');
-            if (resetBtn) {
-                resetBtn.style.display = 'none';
-            }
-        } catch (e) {
-            console.warn('Error resetting zoom:', e);
-        }
-    }
-}
-
+// Функции графика удалены - раздел Points History временно отключен
 async function updatePointsChart() {
-    const chartContainer = document.querySelector('.chart-container');
-    const isFirstLoad = !pointsChart;
-    
-    // Показываем skeleton только при первой загрузке
-    if (isFirstLoad && chartContainer) {
+    // Функция отключена - раздел Points History временно удален
+    return;
+}
+
+/**
+ * Обновляет индикатор устаревших данных
         const canvas = document.getElementById('pointsChart');
         if (canvas && canvas.parentElement) {
             canvas.parentElement.innerHTML = generateChartSkeleton();
@@ -1335,7 +1278,6 @@ function updateStaleDataIndicator(type, container) {
         indicator.addEventListener('click', () => {
             if (type === 'stats') updateStatistics();
             else if (type === 'events') updateEvents(true);
-            else if (type === 'chart') updatePointsChart();
             else if (type === 'overall') updateOverallStats();
         });
         
@@ -1546,7 +1488,8 @@ function toggleEventTag(tag) {
     updateFiltersUI();
     
     // Перефильтровываем кэшированные события без нового запроса
-    renderFilteredEvents(cachedEvents);
+    // Используем allLoadedEvents вместо cachedEvents для консистентности
+    renderFilteredEvents(allLoadedEvents.length > 0 ? allLoadedEvents : cachedEvents);
 }
 
 /**
@@ -1635,8 +1578,18 @@ function renderFilteredEvents(events) {
         return;
     }
 
+    // Удаляем дубликаты перед фильтрацией
+    const uniqueEventsMap = new Map();
+    events.forEach(event => {
+        const key = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
+        if (!uniqueEventsMap.has(key)) {
+            uniqueEventsMap.set(key, event);
+        }
+    });
+    const uniqueEvents = Array.from(uniqueEventsMap.values());
+
     // Фильтруем события по выбранным тегам и исключаем технические события
-    let filteredEvents = events.filter(event => event.type !== 'minute-watched');
+    let filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
     if (selectedEventTags.size > 0) {
         filteredEvents = filteredEvents.filter(event => selectedEventTags.has(event.type));
     }
@@ -1650,7 +1603,11 @@ function renderFilteredEvents(events) {
     filteredEvents.sort((a, b) => b.timestamp - a.timestamp);
 
     // Определяем новые события (из отфильтрованных)
-    const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
+    // Используем timestamp только если он был установлен (не 0)
+    // При фильтрации не помечаем события как новые, чтобы избежать дублирования
+    const newEvents = lastEventTimestamp > 0 && !list.querySelector('.event-group')
+        ? filteredEvents.filter(e => e.timestamp > lastEventTimestamp)
+        : [];
     
     // Автопрокрутка к новым событиям, если включена в настройках
     const settings = loadSettings();
@@ -1693,13 +1650,21 @@ function renderFilteredEvents(events) {
                             styleAttr = `style="background: ${bgColor}; color: ${textColor};"`;
                         }
                         
-                        const isNew = newEvents.some(ne => ne.timestamp === event.timestamp && ne.streamer === event.streamer);
+                        // Проверяем, является ли событие новым (только при первой загрузке, не при фильтрации)
+                        const isNew = newEvents.length > 0 && newEvents.some(ne => 
+                            ne.timestamp === event.timestamp && 
+                            ne.streamer === event.streamer && 
+                            ne.type === event.type &&
+                            ne.message === event.message
+                        );
                         const isImportant = isImportantEvent(event);
                         const importantClass = isImportant ? 'event-item-important' : '';
                         
                         const eventIcon = getEventIcon(event.type);
+                        // Используем уникальный ключ для предотвращения дублирования в DOM
+                        const eventKey = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
                         return `
-                            <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}">
+                            <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}" data-event-key="${eventKey}">
                                 <span class="event-time">${formatTimestamp(event.timestamp)}</span>
                                 <span class="event-icon">${eventIcon}</span>
                                 <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
@@ -1730,7 +1695,33 @@ function renderFilteredEvents(events) {
             }
         }, 500);
     } else {
-        list.innerHTML = html;
+        // Перед заменой содержимого удаляем старые элементы, чтобы избежать дублирования
+        // Используем data-event-key для проверки уникальности
+        const existingEventKeys = new Set();
+        list.querySelectorAll('[data-event-key]').forEach(el => {
+            const key = el.getAttribute('data-event-key');
+            if (key) {
+                existingEventKeys.add(key);
+            }
+        });
+        
+        // Создаем временный контейнер для нового HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        // Удаляем дубликаты из нового HTML
+        const newEventElements = tempDiv.querySelectorAll('[data-event-key]');
+        newEventElements.forEach(el => {
+            const key = el.getAttribute('data-event-key');
+            if (key && existingEventKeys.has(key)) {
+                el.remove();
+            } else if (key) {
+                existingEventKeys.add(key);
+            }
+        });
+        
+        // Заменяем содержимое
+        list.innerHTML = tempDiv.innerHTML;
         
         // Добавляем триггер для бесконечной прокрутки в конец списка
         if (hasMoreEvents && !isLoadingEvents) {
@@ -1785,6 +1776,7 @@ async function updateEvents(reset = false, loadMore = false) {
         eventsOffset = 0;
         allLoadedEvents = [];
         hasMoreEvents = true;
+        lastEventTimestamp = 0; // Сбрасываем timestamp при полном сбросе
     }
     
     if (isLoadingEvents) return;
@@ -1816,10 +1808,41 @@ async function updateEvents(reset = false, loadMore = false) {
         const fetchedEvents = response.events;
         
         if (reset) {
-            // При сбросе просто заменяем все события
+            // При сбросе загружаем все события постепенно
+            // Сначала загружаем первую порцию
             allLoadedEvents = fetchedEvents;
             eventsOffset = fetchedEvents.length;
             hasMoreEvents = response.hasMore;
+            
+            // Если есть еще события, загружаем их сразу (до разумного лимита, например 200)
+            if (hasMoreEvents && fetchedEvents.length < 200) {
+                // Загружаем еще события, чтобы показать события от всех стримеров
+                let continueLoading = true;
+                while (continueLoading && eventsOffset < 200 && hasMoreEvents) {
+                    const nextResponse = await fetchData(`/events?limit=${eventsPageSize}&offset=${eventsOffset}`);
+                    if (nextResponse && nextResponse.events && nextResponse.events.length > 0) {
+                        // Используем Map для предотвращения дубликатов
+                        const existingEventsMap = new Map();
+                        allLoadedEvents.forEach(e => {
+                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                            existingEventsMap.set(key, e);
+                        });
+                        
+                        // Добавляем только уникальные события
+                        const uniqueNewEvents = nextResponse.events.filter(e => {
+                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                            return !existingEventsMap.has(key);
+                        });
+                        
+                        allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
+                        eventsOffset += uniqueNewEvents.length;
+                        hasMoreEvents = nextResponse.hasMore;
+                    } else {
+                        continueLoading = false;
+                        hasMoreEvents = false;
+                    }
+                }
+            }
         } else if (isCheckingNew) {
             // При проверке новых событий объединяем их с уже загруженными
             // Создаем Map для быстрого поиска дубликатов
@@ -1843,8 +1866,20 @@ async function updateEvents(reset = false, loadMore = false) {
             // eventsOffset не меняется при проверке новых событий
         } else {
             // При прокрутке вниз добавляем старые события в конец
-            allLoadedEvents = [...allLoadedEvents, ...fetchedEvents];
-            eventsOffset += fetchedEvents.length;
+            // Проверяем на дубликаты перед добавлением
+            const existingEventsMap = new Map();
+            allLoadedEvents.forEach(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                existingEventsMap.set(key, e);
+            });
+            
+            const uniqueNewEvents = fetchedEvents.filter(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                return !existingEventsMap.has(key);
+            });
+            
+            allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
+            eventsOffset += uniqueNewEvents.length;
             hasMoreEvents = response.hasMore;
         }
 
@@ -2077,7 +2112,6 @@ async function updateAll() {
             updateOverallStats(),
             updateStatistics(),
             updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
-            updatePointsChart(),
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()
@@ -2249,6 +2283,14 @@ function closeColumnSettings() {
     dropdown.classList.remove('show');
 }
 
+/**
+ * Инициализация раздела событий (больше не требуется вычисление высоты)
+ */
+function setupStickyEventsSection() {
+    // Функция больше не нужна, так как используется CSS Grid
+    // Оставляем пустую функцию для совместимости
+}
+
 window.addEventListener('load', () => {
     // Применяем настройки при загрузке (только если DOM готов)
     try {
@@ -2305,7 +2347,19 @@ window.addEventListener('load', () => {
         settingsBtn.addEventListener('click', showSettingsModal);
     }
     
+    // Проверяем статус инициализации
+    checkInitializationStatus();
+    
     startAutoUpdate();
+    
+    // Настраиваем sticky-позиционирование раздела событий
+    setupStickyEventsSection();
+    
+    // Добавляем обработчик для кнопки заполнения тестовыми данными
+    const fillTestDataBtn = document.getElementById('fillTestDataBtn');
+    if (fillTestDataBtn) {
+        fillTestDataBtn.addEventListener('click', fillTestData);
+    }
     
     // Добавляем обработчик для кнопки пометки токена как невалидного
     const markTokenInvalidBtn = document.getElementById('markTokenInvalidBtn');
@@ -2392,6 +2446,9 @@ window.addEventListener('load', () => {
         });
     }
     
+    // Проверяем статус инициализации
+    checkInitializationStatus();
+    
     // Инициализируем загрузку событий с пагинацией
     updateEvents(true);
     
@@ -2444,6 +2501,54 @@ window.addEventListener('load', () => {
         exportChartBtn.addEventListener('click', exportChart);
     }
 });
+
+/**
+ * Заполняет приложение тестовыми данными
+ */
+async function fillTestData() {
+    const btn = document.getElementById('fillTestDataBtn');
+    if (!btn) return;
+    
+    // Подтверждение действия
+    if (!confirm('Вы уверены, что хотите заполнить приложение тестовыми данными?\n\nЭто действие создаст:\n- Около 1000 тестовых событий различных типов\n- Несколько тестовых стримеров\n\nЭто действие предназначено только для тестирования.')) {
+        return;
+    }
+    
+    // Отключаем кнопку на время запроса
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Generating...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/test/fill-data`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', `Test data generated successfully!\n- ${result.eventsCount || 0} events created\n- ${result.streamersCount || 0} streamers added`);
+            // Обновляем все данные
+            await Promise.all([
+                updateStatistics(),
+                updateEvents(true),
+                updateOverallStats()
+            ]);
+        } else {
+            showNotification('error', result.message || 'Failed to generate test data');
+        }
+    } catch (error) {
+        console.error('Error filling test data:', error);
+        showNotification('error', 'Failed to generate test data');
+    } finally {
+        // Восстанавливаем кнопку
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
 
 /**
  * Помечает токен как невалидный (для тестирования перезапуска контейнера)

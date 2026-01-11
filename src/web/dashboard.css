@@ -61,6 +61,96 @@ body.density-spacious td {
 .container {
     max-width: 1400px;
     margin: 0 auto;
+    /* Убеждаемся, что нет overflow, который блокирует sticky */
+    overflow: visible;
+}
+
+/* Двухколоночный макет с табличным позиционированием */
+.main-layout {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    grid-template-rows: auto auto auto; /* 3 строки */
+    gap: 20px;
+    align-items: start;
+    align-content: start; /* Выравниваем содержимое по началу */
+}
+
+/* All Streamers: строка 1, столбец 1 */
+.grid-item-streamers {
+    grid-row: 1;
+    grid-column: 1;
+}
+
+/* Token Information: строка 2, столбец 1 */
+#tokenInfoSection {
+    grid-row: 2;
+    grid-column: 1;
+}
+
+/* Database Status: строка 3, столбец 1 */
+#databaseInfoSection {
+    grid-row: 3;
+    grid-column: 1;
+}
+
+/* Recent Events: строка 1, столбец 2, занимает 3 строки */
+.grid-item-events {
+    grid-row: 1 / 4; /* От строки 1 до строки 4 (занимает 3 строки) */
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+    align-self: stretch; /* Растягиваемся на всю высоту строк */
+    margin-bottom: 0; /* Убираем отступ снизу, чтобы раздел не был длиннее левой колонки */
+}
+
+/* Заголовок раздела событий не должен растягиваться */
+.grid-item-events > div:first-child {
+    flex-shrink: 0;
+}
+
+.grid-item-events #eventsSectionContent {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.grid-item-events .event-filters {
+    flex-shrink: 0;
+}
+
+.grid-item-events .events-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Когда список событий пуст, показываем сообщение по центру */
+.grid-item-events .events-list p {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+}
+
+/* Адаптация для мобильных устройств */
+@media (max-width: 1200px) {
+    .main-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto auto; /* 4 строки для мобильных */
+    }
+    
+    .grid-item-events {
+        grid-row: 4; /* На мобильных устройствах раздел событий идет после всех остальных */
+        grid-column: 1;
+    }
 }
 
 header {
@@ -102,6 +192,81 @@ h1 {
     to {
         transform: rotate(360deg);
     }
+}
+
+/* Экран загрузки */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #0e0e10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    transition: opacity 0.5s ease-out;
+}
+
+.loading-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    text-align: center;
+    max-width: 400px;
+    padding: 40px;
+}
+
+.loading-logo h1 {
+    color: #9147ff;
+    font-size: 32px;
+    margin-bottom: 30px;
+    font-weight: 600;
+}
+
+.loading-spinner-large {
+    width: 60px;
+    height: 60px;
+    border: 4px solid #26262c;
+    border-top-color: #9147ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 30px;
+}
+
+.loading-status {
+    margin-top: 30px;
+}
+
+.loading-status-text {
+    color: #efeff1;
+    font-size: 16px;
+    margin-bottom: 20px;
+    min-height: 24px;
+}
+
+.loading-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #26262c;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.loading-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #9147ff, #772ce8);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.loading-progress-text {
+    color: #adadb8;
+    font-size: 14px;
 }
 
 .connection-status {
@@ -261,10 +426,16 @@ h1 {
     border: 1px solid #26262c;
 }
 
+/* Для правой колонки section не должен иметь margin-bottom, чтобы растягиваться */
+.sidebar-content .section {
+    margin-bottom: 0;
+}
+
 .section h2 {
     color: #efeff1;
     margin-bottom: 20px;
     font-size: 20px;
+    flex-shrink: 0;
 }
 
 .section-header-clickable {
@@ -548,6 +719,12 @@ td {
     overflow-y: auto;
 }
 
+/* Для правой колонки events-list должен занимать всю высоту */
+.sidebar-content .events-list {
+    max-height: none;
+    flex: 1;
+}
+
 .event-item {
     padding: 10px;
     border-bottom: 1px solid #26262c;
@@ -659,6 +836,7 @@ td {
     background: #18181b;
     border-radius: 6px;
     border: 1px solid #26262c;
+    flex-shrink: 0;
 }
 
 .filter-label {
@@ -2019,25 +2197,29 @@ td {
     transition: all 0.3s ease;
 }
 
-.points-badge.low {
+/* Tier 1: 0 - 1000 */
+.points-badge.tier-1 {
     background: rgba(239, 68, 68, 0.15);
     color: #ff6b6b;
     border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
-.points-badge.medium {
+/* Tier 2: 1001 - 10000 */
+.points-badge.tier-2 {
     background: rgba(245, 158, 11, 0.15);
     color: #fbbf24;
     border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
-.points-badge.high {
+/* Tier 3: 10001 - 100000 */
+.points-badge.tier-3 {
     background: rgba(0, 209, 102, 0.15);
     color: #00d166;
     border: 1px solid rgba(0, 209, 102, 0.3);
 }
 
-.points-badge.very-high {
+/* Tier 4: 100001 - 1000000 */
+.points-badge.tier-4 {
     background: rgba(145, 71, 255, 0.15);
     color: #9147ff;
     border: 1px solid rgba(145, 71, 255, 0.3);

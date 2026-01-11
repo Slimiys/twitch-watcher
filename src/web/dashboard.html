@@ -12,7 +12,24 @@
     <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
-    <div class="container">
+    <!-- Экран загрузки -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">
+                <h1>Twitch Watcher</h1>
+            </div>
+            <div class="loading-spinner-large"></div>
+            <div class="loading-status">
+                <div id="loadingStatusText" class="loading-status-text">Starting application...</div>
+                <div class="loading-progress-bar">
+                    <div id="loadingProgressBar" class="loading-progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <div id="loadingProgressText" class="loading-progress-text">0%</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="mainContainer" style="display: none;">
         <header>
             <div>
                 <h1>Twitch Watcher Dashboard</h1>
@@ -97,153 +114,111 @@
             <!-- Уведомления будут добавлены динамически -->
         </div>
 
-        <!-- Информация о токене -->
-        <div class="section" id="tokenInfoSection" style="display: none;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="margin: 0;">Token Information</h2>
-                <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
-                    🧪 Mark Invalid
-                </button>
-            </div>
-            <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                <!-- Информация будет добавлена динамически -->
-            </div>
-        </div>
-
-        <!-- Информация о базе данных -->
-        <div class="section" id="databaseInfoSection" style="display: none;">
-            <h2 style="margin: 0; margin-bottom: 20px;">Database Status</h2>
-            <div id="databaseInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                <!-- Информация будет добавлена динамически -->
-            </div>
-        </div>
-
-        <div class="section collapsible-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 class="section-header-clickable" data-section="streamersSectionContent" style="margin: 0; cursor: pointer;">
-                    All Streamers
-                </h2>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
-                               class="add-streamer-input"
-                               onkeypress="if(event.key === 'Enter') addStreamer()">
-                        <button onclick="addStreamer()" class="add-btn">
-                            Add
-                        </button>
-                    </div>
-                    <div class="column-settings-menu">
-                        <button id="columnSettingsBtn" class="toggle-btn" title="Column settings">
-                            <span>⚙️</span>
-                        </button>
-                        <div class="column-settings-dropdown" id="columnSettingsDropdown">
-                            <div class="column-settings-header">Visible Columns</div>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="streamer" checked>
-                                <span>Streamer</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="status" checked>
-                                <span>Status</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="watchTime" checked>
-                                <span>Watch Time</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="pointsEarned" checked>
-                                <span>Points Earned</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="currentPoints" checked>
-                                <span>Current Points</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="game" checked>
-                                <span>Category</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="actions" checked>
-                                <span>Actions</span>
-                            </label>
-                        </div>
-                    </div>
-                    <button id="toggleOfflineBtn" class="toggle-btn">
-                        <span id="toggleOfflineText">Hide Offline</span>
-                    </button>
-                </div>
-            </div>
-            <div id="streamersSectionContent">
-                <div id="watchesTable">
-                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
-                </div>
-            </div>
-        </div>
-
-        <div class="section collapsible-section">
-            <div class="chart-header">
-                <h2 class="chart-title section-header-clickable" data-section="chartSectionContent" style="cursor: pointer;">
-                    Points History
-                </h2>
-                <div class="chart-controls">
-                    <!-- Переключатель режима отображения -->
-                    <div class="chart-mode-control">
-                        <span class="chart-control-label">Mode:</span>
-                        <div class="mode-buttons">
-                            <button class="mode-btn active" data-mode="accumulated" id="modeAccumulated" title="Accumulated points">
-                                Accumulated
-                            </button>
-                            <button class="mode-btn" data-mode="daily" id="modeDaily" title="Daily points">
-                                Daily
+        <!-- Двухколоночный макет -->
+        <div class="main-layout">
+            <!-- All Streamers: строка 1, столбец 1 -->
+            <div class="section collapsible-section grid-item-streamers">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 class="section-header-clickable" data-section="streamersSectionContent" style="margin: 0; cursor: pointer;">
+                        All Streamers
+                    </h2>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
+                                       class="add-streamer-input"
+                                       onkeypress="if(event.key === 'Enter') addStreamer()">
+                                <button onclick="addStreamer()" class="add-btn">
+                                    Add
+                                </button>
+                            </div>
+                            <div class="column-settings-menu">
+                                <button id="columnSettingsBtn" class="toggle-btn" title="Column settings">
+                                    <span>⚙️</span>
+                                </button>
+                                <div class="column-settings-dropdown" id="columnSettingsDropdown">
+                                    <div class="column-settings-header">Visible Columns</div>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="streamer" checked>
+                                        <span>Streamer</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="status" checked>
+                                        <span>Status</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="watchTime" checked>
+                                        <span>Watch Time</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="pointsEarned" checked>
+                                        <span>Points Earned</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="currentPoints" checked>
+                                        <span>Current Points</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="game" checked>
+                                        <span>Category</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="actions" checked>
+                                        <span>Actions</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button id="toggleOfflineBtn" class="toggle-btn">
+                                <span id="toggleOfflineText">Hide Offline</span>
                             </button>
                         </div>
                     </div>
-                    <!-- Фильтр по периодам -->
-                    <div class="chart-period-control">
-                        <span class="chart-control-label">Period:</span>
-                        <select id="chartPeriod" class="period-select" title="Select time period">
-                            <option value="all">All Time</option>
-                            <option value="90">Last 90 Days</option>
-                            <option value="30" selected>Last 30 Days</option>
-                            <option value="7">Last 7 Days</option>
-                            <option value="1">Today</option>
-                        </select>
+                    <div id="streamersSectionContent">
+                        <div id="watchesTable">
+                            <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                        </div>
                     </div>
-                    <!-- Кнопка сброса зума -->
-                    <button id="resetZoomBtn" class="chart-control-btn" title="Reset zoom" style="display: none;">
-                        <span>🔍</span>
-                        <span class="chart-btn-text">Reset Zoom</span>
-                    </button>
-                    <!-- Кнопка экспорта -->
-                    <button id="exportChartBtn" class="chart-control-btn" title="Export chart as image">
-                        <span>📥</span>
-                        <span class="chart-btn-text">Export</span>
-                    </button>
                 </div>
-            </div>
-            <!-- Карточки статистики -->
-            <div class="chart-stats-grid" id="chartStatsGrid" style="display: none;">
-                <!-- Статистика будет добавлена динамически -->
-            </div>
-            <div id="chartSectionContent">
-                <div class="chart-container">
-                    <canvas id="pointsChart"></canvas>
-                </div>
-            </div>
-        </div>
 
-        <div class="section collapsible-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 class="section-header-clickable" data-section="eventsSectionContent" style="margin: 0; cursor: pointer;">
-                    Recent Events
-                </h2>
-            </div>
-            <div id="eventsSectionContent">
-                <div class="event-filters" id="eventFilters">
-                    <span class="filter-label">Filter:</span>
+            <!-- Token Information: строка 2, столбец 1 -->
+            <div class="section" id="tokenInfoSection" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Token Information</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="fillTestDataBtn" class="test-btn" title="Fill with test data (1000 events, test streamers)">
+                            🧪 Fill Test Data
+                        </button>
+                        <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
+                            🧪 Mark Invalid
+                        </button>
+                    </div>
                 </div>
-                <div class="events-list" id="eventsList">
-                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <!-- Информация будет добавлена динамически -->
+                </div>
+            </div>
+
+            <!-- Database Status: строка 3, столбец 1 -->
+            <div class="section" id="databaseInfoSection" style="display: none;">
+                <h2 style="margin: 0; margin-bottom: 20px;">Database Status</h2>
+                <div id="databaseInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <!-- Информация будет добавлена динамически -->
+                </div>
+            </div>
+
+            <!-- Recent Events: строка 1, столбец 2, занимает 3 строки -->
+            <div class="section collapsible-section events-section-sticky grid-item-events">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 class="section-header-clickable" data-section="eventsSectionContent" style="margin: 0; cursor: pointer;">
+                        Recent Events
+                    </h2>
+                </div>
+                <div id="eventsSectionContent">
+                    <div class="event-filters" id="eventFilters">
+                        <span class="filter-label">Filter:</span>
+                    </div>
+                    <div class="events-list" id="eventsList">
+                        <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                    </div>
                 </div>
             </div>
         </div>
