@@ -52,6 +52,20 @@ try {
     visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
 }
 
+// Настройки сортировки таблицы
+let tableSort = {
+    column: null, // 'streamer', 'lastStreamStart', 'lastStreamEnd'
+    direction: 'asc' // 'asc' или 'desc'
+};
+try {
+    const sort = safeGetLocalStorage('tableSort');
+    if (sort) {
+        tableSort = JSON.parse(sort);
+    }
+} catch (e) {
+    // Используем значения по умолчанию
+}
+
 // Пагинация событий
 let eventsPageSize = 20; // Количество событий на странице
 let eventsOffset = 0; // Текущий offset для загрузки старых событий при прокрутке
@@ -243,6 +257,22 @@ function formatDateTime(timestamp) {
         hour: '2-digit', 
         minute: '2-digit' 
     });
+}
+
+/**
+ * Форматирует timestamp в формат даты и времени dd:MM:yyyy HH:mm
+ * @param {number} timestamp Timestamp в миллисекундах
+ * @returns {string} Дата и время в формате dd:MM:yyyy HH:mm или '-'
+ */
+function formatTimeHHMM(timestamp) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}.${month}.${year} ${hours}:${minutes}`;
 }
 
 /**
@@ -589,6 +619,243 @@ async function checkInitializationStatus() {
     }
 }
 
+/**
+ * Сравнивает два значения с обработкой пустых значений
+ * Пустые значения (null, undefined, пустая строка) всегда идут в конец списка
+ * @param {*} valueA Первое значение
+ * @param {*} valueB Второе значение
+ * @param {Function} compareFn Функция сравнения для непустых значений (опционально)
+ * @param {boolean} treatZeroAsEmpty Считать ли 0 пустым значением (по умолчанию false)
+ * @returns {number} Результат сравнения (-1, 0, 1)
+ */
+function compareWithNulls(valueA, valueB, compareFn = null, treatZeroAsEmpty = false) {
+    // Проверяем, являются ли значения пустыми
+    let isEmptyA = valueA === null || valueA === undefined || valueA === '';
+    let isEmptyB = valueB === null || valueB === undefined || valueB === '';
+    
+    // Для числовых значений проверяем NaN и, опционально, 0
+    if (typeof valueA === 'number') {
+        isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
+    }
+    if (typeof valueB === 'number') {
+        isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
+    }
+
+    // Если оба пустые, они равны
+    if (isEmptyA && isEmptyB) {
+        return 0;
+    }
+    
+    // Если только первое пустое, оно идет в конец
+    if (isEmptyA) {
+        return 1;
+    }
+    
+    // Если только второе пустое, оно идет в конец
+    if (isEmptyB) {
+        return -1;
+    }
+    
+    // Если оба не пустые, используем функцию сравнения или числовое сравнение
+    if (compareFn) {
+        return compareFn(valueA, valueB);
+    }
+    
+    // По умолчанию числовое сравнение
+    return Number(valueA) - Number(valueB);
+}
+
+/**
+ * Сортирует данные таблицы по указанной колонке и направлению
+ * @param {Array} data Массив данных для сортировки
+ * @param {Object} sort Объект с полями column и direction
+ * @returns {Array} Отсортированный массив
+ */
+function sortTableData(data, sort) {
+    console.log('[sortTableData] Начало сортировки:', {
+        column: sort.column,
+        direction: sort.direction,
+        dataCount: data.length
+    });
+
+    if (!sort.column) {
+        // Сортировка по умолчанию: сначала онлайн, потом офлайн, внутри группы - по имени
+        const result = data.sort((a, b) => {
+            if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
+            if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
+            return a.streamerName.localeCompare(b.streamerName);
+        });
+        console.log('[sortTableData] Сортировка по умолчанию, результат:', result.map(s => ({
+            name: s.streamerName,
+            status: s.status,
+            lastStreamEnd: s.lastStreamEnd
+        })));
+        return result;
+    }
+
+    const direction = sort.direction === 'desc' ? -1 : 1;
+    console.log('[sortTableData] Направление сортировки:', direction === 1 ? 'asc' : 'desc');
+
+    const result = data.sort((a, b) => {
+        // Сначала проверяем, есть ли пустые значения - они всегда идут в конец
+        let valueA, valueB, treatZeroAsEmpty = false;
+        
+        switch (sort.column) {
+            case 'streamer':
+                valueA = a.streamerName;
+                valueB = b.streamerName;
+                break;
+            case 'lastStreamStart':
+                valueA = a.lastStreamStart ? Number(a.lastStreamStart) : null;
+                valueB = b.lastStreamStart ? Number(b.lastStreamStart) : null;
+                treatZeroAsEmpty = true;
+                break;
+            case 'lastStreamEnd':
+                valueA = a.lastStreamEnd ? Number(a.lastStreamEnd) : null;
+                valueB = b.lastStreamEnd ? Number(b.lastStreamEnd) : null;
+                treatZeroAsEmpty = true;
+                break;
+            case 'game':
+                valueA = a.game;
+                valueB = b.game;
+                break;
+            case 'watchTime':
+                valueA = a.elapsedTime;
+                valueB = b.elapsedTime;
+                break;
+            case 'pointsEarned':
+                valueA = a.pointsEarned;
+                valueB = b.pointsEarned;
+                break;
+            case 'currentPoints':
+                valueA = a.currentPoints;
+                valueB = b.currentPoints;
+                break;
+            case 'status':
+                valueA = a.status;
+                valueB = b.status;
+                break;
+            default:
+                // Если колонка не поддерживает сортировку, используем сортировку по умолчанию
+                if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
+                if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
+                return a.streamerName.localeCompare(b.streamerName);
+        }
+
+        // Проверяем, являются ли значения пустыми
+        let isEmptyA = valueA === null || valueA === undefined || valueA === '';
+        let isEmptyB = valueB === null || valueB === undefined || valueB === '';
+        
+        // Для числовых значений проверяем NaN и, опционально, 0
+        if (typeof valueA === 'number') {
+            isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
+        }
+        if (typeof valueB === 'number') {
+            isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
+        }
+
+        // Логирование для отладки (только для первых нескольких сравнений)
+        const shouldLog = Math.random() < 0.1; // Логируем ~10% сравнений
+        if (shouldLog) {
+            console.log('[sortTableData] Сравнение:', {
+                streamerA: a.streamerName,
+                streamerB: b.streamerName,
+                valueA: valueA,
+                valueB: valueB,
+                isEmptyA: isEmptyA,
+                isEmptyB: isEmptyB,
+                treatZeroAsEmpty: treatZeroAsEmpty
+            });
+        }
+
+        // Пустые значения всегда идут в конец, независимо от направления сортировки
+        if (isEmptyA && isEmptyB) {
+            if (shouldLog) console.log('[sortTableData] Оба пустые, возвращаем 0');
+            return 0; // Оба пустые - равны
+        }
+        if (isEmptyA) {
+            if (shouldLog) console.log('[sortTableData] Первое пустое, возвращаем 1');
+            return 1; // Первое пустое - идет в конец
+        }
+        if (isEmptyB) {
+            if (shouldLog) console.log('[sortTableData] Второе пустое, возвращаем -1');
+            return -1; // Второе пустое - идет в конец
+        }
+
+        // Если оба не пустые, выполняем обычное сравнение
+        let comparison = 0;
+        
+        switch (sort.column) {
+            case 'streamer':
+                comparison = valueA.localeCompare(valueB);
+                break;
+            case 'lastStreamStart':
+            case 'lastStreamEnd':
+                comparison = Number(valueA) - Number(valueB);
+                break;
+            case 'game':
+                comparison = valueA.localeCompare(valueB);
+                break;
+            case 'watchTime':
+            case 'pointsEarned':
+            case 'currentPoints':
+                comparison = Number(valueA) - Number(valueB);
+                break;
+            case 'status':
+                const statusOrder = { 'ONLINE': 0, 'OFFLINE': 1 };
+                comparison = (statusOrder[valueA] || 2) - (statusOrder[valueB] || 2);
+                break;
+        }
+
+        const finalComparison = comparison * direction;
+        if (shouldLog) {
+            console.log('[sortTableData] Сравнение непустых значений:', {
+                comparison: comparison,
+                direction: direction,
+                finalComparison: finalComparison
+            });
+        }
+
+        // Применяем направление сортировки только к непустым значениям
+        return finalComparison;
+    });
+
+    console.log('[sortTableData] Результат сортировки:', result.map(s => ({
+        name: s.streamerName,
+        status: s.status,
+        lastStreamEnd: s.lastStreamEnd,
+        lastStreamStart: s.lastStreamStart,
+        game: s.game
+    })));
+
+    return result;
+}
+
+/**
+ * Обработчик клика на заголовок таблицы для сортировки
+ * @param {string} column Ключ колонки для сортировки
+ */
+window.handleTableSort = function(column) {
+    // Определяем, является ли колонка временной (для временных колонок начальное направление - desc)
+    const isTimeColumn = column === 'lastStreamStart' || column === 'lastStreamEnd';
+    
+    // Если кликнули на ту же колонку, меняем направление сортировки
+    if (tableSort.column === column) {
+        tableSort.direction = tableSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        // Если кликнули на другую колонку, устанавливаем новую колонку и направление по умолчанию
+        tableSort.column = column;
+        // Для временных колонок начальное направление - desc, для остальных - asc
+        tableSort.direction = isTimeColumn ? 'desc' : 'asc';
+    }
+
+    // Сохраняем настройки сортировки в localStorage
+    safeSetLocalStorage('tableSort', JSON.stringify(tableSort));
+
+    // Обновляем таблицу
+    updateStatistics();
+};
+
 async function updateStatistics() {
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
@@ -601,7 +868,6 @@ async function updateStatistics() {
     
     // Запрашиваем всех стримеров, включая офлайн
     const stats = await fetchData('/statistics?includeOffline=true');
-    
     
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
@@ -627,13 +893,8 @@ async function updateStatistics() {
         filteredStats = stats.filter(s => s.status === 'ONLINE');
     }
 
-    // Сортируем: сначала онлайн, потом офлайн, внутри группы - по имени
-    const sortedStats = [...filteredStats].sort((a, b) => {
-        if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
-        if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
-        // Если оба онлайн или оба офлайн, сортируем по имени
-        return a.streamerName.localeCompare(b.streamerName);
-    });
+    // Сортируем данные
+    const sortedStats = sortTableData([...filteredStats], tableSort);
 
     // Если офлайн стримеры скрыты и нет онлайн стримеров, показываем сообщение
     if (!showOffline && sortedStats.length === 0) {
@@ -669,7 +930,19 @@ async function updateStatistics() {
         <table>
             <thead>
                 <tr>
-                    ${visibleColumnsList.map(col => `<th>${col.label}</th>`).join('')}
+                    ${visibleColumnsList.map(col => {
+                        // Определяем, можно ли сортировать эту колонку
+                        const isSortable = ['streamer', 'lastStreamStart', 'lastStreamEnd'].includes(col.key);
+                        const isSorted = tableSort.column === col.key;
+                        const sortIcon = isSorted 
+                            ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
+                            : (isSortable ? ' ↕' : '');
+                        const sortClass = isSorted ? ` sort-${tableSort.direction}` : '';
+                        const clickHandler = isSortable ? ` onclick="handleTableSort('${col.key}')"` : '';
+                        const cursorStyle = isSortable ? ' style="cursor: pointer; user-select: none;"' : '';
+                        
+                        return `<th class="table-header${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}>${col.label}${sortIcon}</th>`;
+                    }).join('')}
                 </tr>
             </thead>
             <tbody>
@@ -688,8 +961,36 @@ async function updateStatistics() {
                         ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
                         ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
                         ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
-                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatDateTime(s.lastStreamStart) : '-'}</td>` : ''}
-                        ${visibleColumns.lastStreamEnd !== false ? `<td>${s.lastStreamEnd ? formatDateTime(s.lastStreamEnd) : '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeHHMM(s.lastStreamStart) : '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamEnd !== false ? (() => {
+                            const endTime = s.lastStreamEnd;
+                            const startTime = s.lastStreamStart;
+                            
+                            // Если нет времени окончания, показываем прочерк
+                            if (!endTime) return '<td>-</td>';
+                            
+                            const end = Number(endTime);
+                            if (isNaN(end) || end <= 0) return '<td>-</td>';
+                            
+                            // Если есть время окончания, но нет времени начала, показываем полупрозрачным
+                            if (!startTime) {
+                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                            }
+                            
+                            const start = Number(startTime);
+                            if (isNaN(start) || start <= 0) {
+                                // Если время начала некорректное, но есть время окончания, показываем полупрозрачным
+                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                            }
+                            
+                            // Если время окончания меньше времени начала (некорректное состояние), показываем полупрозрачным
+                            if (end < start) {
+                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                            }
+                            
+                            // Все корректно - показываем обычным цветом
+                            return `<td>${formatTimeHHMM(endTime)}</td>`;
+                        })() : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
@@ -1277,7 +1578,6 @@ function updateStaleDataIndicator(type, container) {
         
         indicator.addEventListener('click', () => {
             if (type === 'stats') updateStatistics();
-            else if (type === 'events') updateEvents(true);
             else if (type === 'overall') updateOverallStats();
         });
         
@@ -1415,16 +1715,34 @@ function applySettings(settings) {
 function updateAvailableTags(events) {
     const newTags = new Set();
     events.forEach(event => {
-        if (event.type) {
+        if (event.type && event.type !== 'minute-watched') {
             newTags.add(event.type);
         }
     });
     
-    // Добавляем новые теги к доступным
-    newTags.forEach(tag => availableEventTags.add(tag));
+    // Обновляем доступные теги (заменяем, а не добавляем)
+    const oldAvailableTags = availableEventTags;
+    availableEventTags = newTags;
     
-    // Обновляем UI фильтров
-    updateFiltersUI();
+    // Очищаем выбранные теги, которых больше нет в доступных тегах
+    // Это предотвращает ситуацию, когда выбраны теги, которых нет в текущих событиях
+    const tagsToRemove = [];
+    selectedEventTags.forEach(tag => {
+        if (!availableEventTags.has(tag)) {
+            tagsToRemove.push(tag);
+        }
+    });
+    
+    if (tagsToRemove.length > 0) {
+        tagsToRemove.forEach(tag => selectedEventTags.delete(tag));
+        // Сохраняем обновленные теги в localStorage
+        safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+        // Обновляем UI фильтров
+        updateFiltersUI();
+    } else if (oldAvailableTags.size === 0 && newTags.size > 0) {
+        // При первой загрузке (когда старых тегов не было) обновляем UI
+        updateFiltersUI();
+    }
 }
 
 /**
@@ -1487,9 +1805,22 @@ function toggleEventTag(tag) {
     // Обновляем UI
     updateFiltersUI();
     
+    // Временно отключаем observer при фильтрации, чтобы избежать бесконечного обновления
+    if (window.eventsScrollObserver) {
+        window.eventsScrollObserver.disconnect();
+    }
+    
     // Перефильтровываем кэшированные события без нового запроса
     // Используем allLoadedEvents вместо cachedEvents для консистентности
-    renderFilteredEvents(allLoadedEvents.length > 0 ? allLoadedEvents : cachedEvents);
+    const eventsToFilter = allLoadedEvents.length > 0 ? allLoadedEvents : cachedEvents;
+    if (eventsToFilter.length > 0) {
+        renderFilteredEvents(eventsToFilter, false);
+    }
+    
+    // Восстанавливаем observer после небольшой задержки
+    setTimeout(() => {
+        setupInfiniteScroll();
+    }, 100);
 }
 
 /**
@@ -1557,9 +1888,15 @@ function formatGroupTime(timestamp) {
 /**
  * Отображает отфильтрованные события с группировкой
  * @param events Массив событий для отображения
+ * @param shouldSetupScroll Нужно ли настраивать бесконечную прокрутку (по умолчанию true)
  */
-function renderFilteredEvents(events) {
+function renderFilteredEvents(events, shouldSetupScroll = true) {
     const list = document.getElementById('eventsList');
+    if (!list) {
+        console.error('eventsList element not found');
+        return;
+    }
+    
     const hasContent = list && (list.querySelector('.event-group') || list.querySelector('table'));
     const hasSkeleton = list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'));
     
@@ -1590,12 +1927,39 @@ function renderFilteredEvents(events) {
 
     // Фильтруем события по выбранным тегам и исключаем технические события
     let filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
+    const eventsBeforeFilter = filteredEvents.length;
+    
+    // Если выбраны теги, фильтруем по ним
     if (selectedEventTags.size > 0) {
         filteredEvents = filteredEvents.filter(event => selectedEventTags.has(event.type));
+        
+        // Если после фильтрации событий не осталось, но были события до фильтрации,
+        // это означает, что выбранные теги не соответствуют ни одному событию
+        // В этом случае очищаем selectedEventTags и показываем все события
+        if (filteredEvents.length === 0 && eventsBeforeFilter > 0) {
+            // Очищаем selectedEventTags, так как выбранные теги не соответствуют событиям
+            selectedEventTags.clear();
+            safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+            // Обновляем UI фильтров
+            updateFiltersUI();
+            // Показываем все события (без фильтра)
+            filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
+        }
     }
 
     if (filteredEvents.length === 0) {
-        list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
+        if (uniqueEvents.length === 0) {
+            // Событий вообще нет
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        } else if (selectedEventTags.size > 0) {
+            // Есть события, но они не соответствуют выбранным фильтрам
+            // Это не должно происходить, так как мы уже очистили фильтры выше,
+            // но на всякий случай показываем сообщение
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
+        } else {
+            // События есть, но после фильтрации их не осталось (не должно происходить)
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        }
         return;
     }
 
@@ -1679,22 +2043,33 @@ function renderFilteredEvents(events) {
 
     // Если был skeleton, заменяем плавно
     if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
-        // Добавляем триггер для бесконечной прокрутки перед заменой
-        if (hasMoreEvents && !isLoadingEvents) {
+        // Добавляем триггер для бесконечной прокрутки перед заменой только если нужно
+        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
             html += '<div id="loadMoreTrigger" style="height: 20px; width: 100%;"></div>';
         } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
             html += '<div style="text-align: center; padding: 20px; color: #adadb8; font-size: 14px;">All events loaded</div>';
         }
         replaceSkeletonWithContent(list, html);
         
-        // Устанавливаем observer после замены
-        setTimeout(() => {
-            const loadMoreTrigger = document.getElementById('loadMoreTrigger');
-            if (loadMoreTrigger && window.eventsScrollObserver) {
-                window.eventsScrollObserver.observe(loadMoreTrigger);
-            }
-        }, 500);
+        // Устанавливаем observer после замены только если нужно
+        if (shouldSetupScroll) {
+            setTimeout(() => {
+                const loadMoreTrigger = document.getElementById('loadMoreTrigger');
+                if (loadMoreTrigger && window.eventsScrollObserver) {
+                    window.eventsScrollObserver.observe(loadMoreTrigger);
+                }
+            }, 500);
+        }
     } else {
+        // Сохраняем состояние свернутых групп перед заменой содержимого
+        const collapsedGroups = new Set();
+        list.querySelectorAll('.event-group-content').forEach(content => {
+            if (content.style.display === 'none') {
+                const groupId = content.id.replace('content-', '');
+                collapsedGroups.add(groupId);
+            }
+        });
+        
         // Перед заменой содержимого удаляем старые элементы, чтобы избежать дублирования
         // Используем data-event-key для проверки уникальности
         const existingEventKeys = new Set();
@@ -1723,8 +2098,18 @@ function renderFilteredEvents(events) {
         // Заменяем содержимое
         list.innerHTML = tempDiv.innerHTML;
         
-        // Добавляем триггер для бесконечной прокрутки в конец списка
-        if (hasMoreEvents && !isLoadingEvents) {
+        // Восстанавливаем состояние свернутых групп
+        collapsedGroups.forEach(groupId => {
+            const content = document.getElementById(`content-${groupId}`);
+            const toggle = document.getElementById(`toggle-${groupId}`);
+            if (content && toggle) {
+                content.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        });
+        
+        // Добавляем триггер для бесконечной прокрутки в конец списка только если нужно
+        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
             const loadMoreTrigger = document.createElement('div');
             loadMoreTrigger.id = 'loadMoreTrigger';
             loadMoreTrigger.style.height = '20px';
@@ -1924,6 +2309,16 @@ function setupInfiniteScroll() {
         window.eventsScrollObserver.disconnect();
     }
     
+    // Если больше нет событий для загрузки, не создаем триггер
+    if (!hasMoreEvents || isLoadingEvents) {
+        // Удаляем существующий триггер, если есть
+        const existingTrigger = document.getElementById('loadMoreTrigger');
+        if (existingTrigger) {
+            existingTrigger.remove();
+        }
+        return;
+    }
+    
     // Создаем элемент-триггер для загрузки
     let loadMoreTrigger = document.getElementById('loadMoreTrigger');
     if (!loadMoreTrigger) {
@@ -1934,20 +2329,41 @@ function setupInfiniteScroll() {
         eventsList.appendChild(loadMoreTrigger);
     }
     
-    // Создаем Intersection Observer
-    window.eventsScrollObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
-                updateEvents(false, true); // loadMore=true для загрузки старых событий
-            }
+    // Проверяем, виден ли триггер сразу после создания
+    // Если да, то добавляем небольшую задержку перед наблюдением, чтобы избежать немедленной загрузки
+    setTimeout(() => {
+        // Проверяем еще раз, что триггер существует и условия все еще выполняются
+        const trigger = document.getElementById('loadMoreTrigger');
+        if (!trigger || !hasMoreEvents || isLoadingEvents) {
+            return;
+        }
+        
+        // Проверяем, виден ли триггер в viewport
+        const rect = trigger.getBoundingClientRect();
+        const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+        
+        // Если триггер виден сразу, это означает, что контента мало и прокрутка не нужна
+        // В этом случае не наблюдаем за триггером, чтобы избежать бесконечной загрузки
+        if (isVisible && eventsList.scrollHeight <= eventsList.clientHeight) {
+            // Контент помещается на экране, не нужно наблюдать за триггером
+            return;
+        }
+        
+        // Создаем Intersection Observer только если триггер не виден сразу
+        window.eventsScrollObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
+                    updateEvents(false, true); // loadMore=true для загрузки старых событий
+                }
+            });
+        }, {
+            root: eventsList, // Используем eventsList как root для правильного определения видимости
+            rootMargin: '100px',
+            threshold: 0.1
         });
-    }, {
-        root: null,
-        rootMargin: '100px',
-        threshold: 0.1
-    });
-    
-    window.eventsScrollObserver.observe(loadMoreTrigger);
+        
+        window.eventsScrollObserver.observe(trigger);
+    }, 100); // Небольшая задержка для проверки видимости
 }
 
 async function updateTokenInfo() {
@@ -2111,7 +2527,6 @@ async function updateAll() {
         await Promise.all([
             updateOverallStats(),
             updateStatistics(),
-            updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()
@@ -2352,8 +2767,7 @@ window.addEventListener('load', () => {
     
     startAutoUpdate();
     
-    // Настраиваем sticky-позиционирование раздела событий
-    setupStickyEventsSection();
+    // Раздел событий удален
     
     // Добавляем обработчик для кнопки заполнения тестовыми данными
     const fillTestDataBtn = document.getElementById('fillTestDataBtn');
@@ -2449,8 +2863,7 @@ window.addEventListener('load', () => {
     // Проверяем статус инициализации
     checkInitializationStatus();
     
-    // Инициализируем загрузку событий с пагинацией
-    updateEvents(true);
+    // Инициализация событий отключена
     
     // Обработчики для управления графиком
     // Переключатель режима отображения
@@ -2534,7 +2947,6 @@ async function fillTestData() {
             // Обновляем все данные
             await Promise.all([
                 updateStatistics(),
-                updateEvents(true),
                 updateOverallStats()
             ]);
         } else {

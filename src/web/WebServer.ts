@@ -117,6 +117,11 @@ export interface StatisticsProvider {
    * Помечает токен как невалидный (для тестирования)
    */
   markTokenAsInvalid?(): void;
+
+  /**
+   * Заполняет приложение тестовыми данными
+   */
+  fillTestData?(): Promise<{ eventsCount: number; streamersCount: number }>;
 }
 
 /**
@@ -166,7 +171,19 @@ export class WebServer {
    * Настраивает маршруты
    */
   private setupRoutes(): void {
-    // API маршруты
+    // API маршруты - должны быть ДО статических файлов
+    // Эндпоинт для проверки статуса инициализации
+    this.app.get('/api/initialization-status', (req: Request, res: Response) => {
+      try {
+        const status = this.getInitializationStatus();
+        res.setHeader('Content-Type', 'application/json');
+        res.json(status);
+      } catch (error: any) {
+        logger.error('Error getting initialization status:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     this.app.get('/api/statistics', (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
@@ -177,7 +194,27 @@ export class WebServer {
         // Поддерживаем параметр includeOffline для включения офлайн стримеров
         const includeOffline = req.query.includeOffline === 'true';
         const statistics = this.statisticsProvider.getStatistics(includeOffline);
-        res.json(statistics);
+        
+        // Обогащаем статистику данными из базы данных (время последнего запуска/завершения стрима)
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (databaseStorage && databaseStorage.isReady()) {
+          const enrichedStatistics = statistics.map((stat: any) => {
+            const dbStats = databaseStorage.getStreamerStats(stat.streamerName);
+            if (dbStats) {
+              return {
+                ...stat,
+                lastStreamStart: dbStats.lastStreamStart,
+                lastStreamEnd: dbStats.lastStreamEnd,
+              };
+            }
+            return stat;
+          });
+          res.json(enrichedStatistics);
+        } else {
+          res.json(statistics);
+        }
       } catch (error: any) {
         logger.error('Error getting statistics:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
@@ -449,6 +486,36 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error getting database status:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для заполнения тестовыми данными
+    this.app.post('/api/test/fill-data', async (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        if (!streamWatcher.fillTestData) {
+          res.status(501).json({ error: 'Fill test data functionality not available' });
+          return;
+        }
+
+        const result = await streamWatcher.fillTestData();
+        res.json({
+          success: true,
+          eventsCount: result.eventsCount,
+          streamersCount: result.streamersCount,
+          message: `Generated ${result.eventsCount} events and ${result.streamersCount} streamers`
+        });
+      } catch (error: any) {
+        logger.error('Error filling test data:', error);
+        res.status(500).json({ 
+          success: false,
+          error: error.message || 'Unknown error' 
+        });
       }
     });
 
@@ -764,6 +831,55 @@ export class WebServer {
    */
   setStatisticsProvider(provider: StatisticsProvider): void {
     this.statisticsProvider = provider;
+  }
+
+  /**
+   * Получает статус инициализации приложения
+   */
+  getInitializationStatus(): {
+    isInitialized: boolean;
+    currentAction: string;
+    progress: number;
+  } {
+    if (!this.statisticsProvider) {
+      return {
+        isInitialized: false,
+        currentAction: 'Waiting for application to start...',
+        progress: 0
+      };
+    }
+
+    const streamWatcher = this.statisticsProvider as any;
+    if (streamWatcher && typeof streamWatcher.getInitializationStatus === 'function') {
+      const status = streamWatcher.getInitializationStatus();
+      // Если статус не определен, возвращаем дефолтный
+      if (status && typeof status === 'object') {
+        return status;
+      }
+    }
+
+    // Если метод не доступен или вернул неверные данные, 
+    // проверяем, запущен ли watcher (если есть статистика, значит готов)
+    try {
+      const stats = this.statisticsProvider.getStatistics();
+      if (Array.isArray(stats)) {
+        // Если можем получить статистику, значит приложение готово
+        return {
+          isInitialized: true,
+          currentAction: 'Ready',
+          progress: 100
+        };
+      }
+    } catch (e) {
+      // Игнорируем ошибки
+    }
+
+    // По умолчанию считаем что инициализация завершена
+    return {
+      isInitialized: true,
+      currentAction: 'Ready',
+      progress: 100
+    };
   }
 
   /**

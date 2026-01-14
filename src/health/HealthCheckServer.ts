@@ -119,6 +119,15 @@ export class HealthCheckServer {
             timestamp: Date.now()
           }));
         }
+      } else if (urlPath === '/' || urlPath === '/dashboard') {
+        // Редирект на веб-интерфейс (порт 3001)
+        const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
+        const host = req.headers.host?.split(':')[0] || 'localhost';
+        res.writeHead(302, { 
+          'Location': `http://${host}:${webPort}/`,
+          'Content-Type': 'text/plain'
+        });
+        res.end(`Redirecting to web dashboard on port ${webPort}...`);
       } else {
         // 404 для других путей
         res.writeHead(404, { 'Content-Type': 'application/json' });

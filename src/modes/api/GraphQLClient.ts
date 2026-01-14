@@ -42,6 +42,14 @@ export class GraphQLClient {
   }
 
   /**
+   * Получает состояние CircuitBreaker
+   * @returns Состояние CircuitBreaker ('CLOSED', 'OPEN', 'HALF_OPEN')
+   */
+  getCircuitBreakerState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN' {
+    return this.circuitBreaker.getState();
+  }
+
+  /**
    * Выполняет GraphQL запрос с retry и Circuit Breaker
    * @param operation GraphQL операция
    * @returns Ответ от сервера

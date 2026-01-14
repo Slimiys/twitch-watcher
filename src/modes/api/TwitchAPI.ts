@@ -424,13 +424,22 @@ export class TwitchAPI {
           logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить баллы через GraphQL (будут обновлены через WebSocket)`);
         }
       } else {
-        // streamInfo null означает, что стример офлайн
-        // Устанавливаем isOnline = false только если стример был онлайн
-        // Это важно для корректного определения офлайн статуса
-        if (streamerInfo.isOnline) {
+        // streamInfo null может означать, что стример офлайн ИЛИ GraphQL недоступен
+        // Проверяем состояние CircuitBreaker перед установкой isOnline = false
+        const circuitBreakerState = this.graphqlClient.getCircuitBreakerState?.();
+        const isCircuitBreakerOpen = circuitBreakerState === 'OPEN' || circuitBreakerState === 'HALF_OPEN';
+        
+        // Устанавливаем isOnline = false только если:
+        // 1. Стример был онлайн
+        // 2. CircuitBreaker не открыт (GraphQL доступен)
+        // Это предотвращает установку isOnline=false из-за недоступности GraphQL
+        if (streamerInfo.isOnline && !isCircuitBreakerOpen) {
           logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
           streamerInfo.isOnline = false;
           streamerInfo.startTime = 0;
+        } else if (streamerInfo.isOnline && isCircuitBreakerOpen) {
+          // Если CircuitBreaker открыт, не меняем статус - полагаемся на WebSocket события
+          logger.verbose(`⚠️  [${streamerInfo.username}] GraphQL unavailable (CircuitBreaker ${circuitBreakerState}), keeping current status`);
         }
       }
     } catch (error: any) {

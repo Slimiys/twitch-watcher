@@ -69,6 +69,16 @@ export class StreamWatcher {
   private configPath: string = './config.json'; // Путь к файлу конфигурации
   // Персистентное состояние баллов между рестартами
   private pointsStatePath: string | null = null;
+  // Статус инициализации
+  private initializationStatus: {
+    isInitialized: boolean;
+    currentAction: string;
+    progress: number; // 0-100
+  } = {
+    isInitialized: false,
+    currentAction: 'Starting application...',
+    progress: 0
+  };
   private pointsState: Record<string, {
     channelPoints: number;
     initialChannelPoints: number | null;
@@ -206,10 +216,19 @@ export class StreamWatcher {
 
     logger.info('🚀  Starting API mode watcher...');
     this.isRunning = true;
+    this.updateInitializationStatus('Starting application...', 5);
+    
+    // Запускаем веб-сервер СРАЗУ, чтобы интерфейс был доступен во время инициализации
+    this.updateInitializationStatus('Starting web server...', 10);
+    this.startWebServer();
+    
+    // Небольшая задержка, чтобы веб-сервер успел запуститься
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Инициализируем WebSocket
     try {
       logger.verbose('🔌  Initializing WebSocket connection...');
+      this.updateInitializationStatus('Validating token...', 15);
       
       // Всегда получаем user ID из валидации токена (это правильный способ)
       // User ID нужен для WebSocket подписки на события текущего пользователя
@@ -314,12 +333,22 @@ export class StreamWatcher {
         },
         onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
-          streamerInfo.startTime = Date.now();
+          const streamStartTime = Date.now();
+          streamerInfo.startTime = streamStartTime;
+          
+          // Сохраняем время запуска стрима в базу данных
+          if (this.databaseStorage && this.databaseStorage.isReady()) {
+            this.databaseStorage.updateLastStreamStart(streamerInfo.username, streamStartTime);
+          }
+          
           this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
           // Обновляем информацию о стримере
           try {
+            const previousGame = streamerInfo.game;
             await this.twitchAPI.updateStreamerInfo(streamerInfo);
+            // Сохраняем категорию в БД при изменении
+            this.saveGameToDatabaseIfChanged(streamerInfo, previousGame);
           } catch (error: any) {
             logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
           }
@@ -346,6 +375,13 @@ export class StreamWatcher {
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          const streamEndTime = Date.now();
+          
+          // Сохраняем время завершения стрима в базу данных
+          if (this.databaseStorage && this.databaseStorage.isReady()) {
+            this.databaseStorage.updateLastStreamEnd(streamerInfo.username, streamEndTime);
+          }
+          
           this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
           
           // Завершаем сессию просмотра
@@ -405,12 +441,14 @@ export class StreamWatcher {
       // Передаем валидированный user_id в TwitchAPI
       this.twitchAPI.setValidatedUserId(this.validatedUserId);
       logger.verbose(`✅  WebSocket initialized successfully (validated user_id: ${this.validatedUserId})`);
+      this.updateInitializationStatus('WebSocket connected', 45);
     } catch (error: any) {
       logger.error('❌  Failed to initialize WebSocket:', error.message || error);
       logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
       logger.warn('⚠️  Continuing without WebSocket - events will be sent via API only');
       logger.warn('⚠️  Channel points events will not be received in real-time');
       logger.warn('⚠️  Attempting to reinitialize WebSocket in 30 seconds...');
+      this.updateInitializationStatus('WebSocket initialization failed, continuing...', 30);
       
       // Пытаемся переинициализировать WebSocket через 30 секунд
       setTimeout(async () => {
@@ -419,10 +457,12 @@ export class StreamWatcher {
     }
 
     // Инициализируем стримеров
+    this.updateInitializationStatus('Loading streamers...', 55);
     await this.initializeStreamers();
     
 
     // Запускаем отправку событий просмотра
+    this.updateInitializationStatus('Starting watch services...', 70);
     this.startWatching();
 
     // Запускаем периодическую статистику
@@ -446,10 +486,14 @@ export class StreamWatcher {
     }, 2000);
 
     // Запускаем health check server
+    this.updateInitializationStatus('Starting health check server...', 90);
     this.startHealthCheckServer();
     
-    // Запускаем веб-сервер
-    this.startWebServer();
+    // Даем время на завершение инициализации, затем завершаем
+    setTimeout(() => {
+      this.updateInitializationStatus('Application ready', 100);
+      this.initializationStatus.isInitialized = true;
+    }, 1000);
   }
 
   /**
@@ -728,6 +772,8 @@ export class StreamWatcher {
         const streamerInfo = await this.twitchAPI.initializeStreamer(username);
         
         if (streamerInfo) {
+          // Загружаем данные из базы данных перед применением сохраненного состояния
+          this.loadStreamerDataFromDatabase(streamerInfo);
           this.applyPersistedPoints(streamerInfo);
           this.streamers.set(username, streamerInfo);
           
@@ -1014,12 +1060,14 @@ export class StreamWatcher {
         }
       }
 
+      const status = streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE';
+      
       stats.push({
         streamerName: streamerInfo.username,
         elapsedTime: elapsed,
         pointsEarned,
         currentPoints,
-        status: streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE',
+        status,
         game: streamerInfo.game,
       });
     }
@@ -1104,12 +1152,23 @@ export class StreamWatcher {
     for (const streamerInfo of this.streamers.values()) {
       try {
         const wasOnline = streamerInfo.isOnline;
+        const previousGame = streamerInfo.game;
         await this.twitchAPI.updateStreamerInfo(streamerInfo);
+        
+        // Сохраняем категорию в БД при изменении
+        this.saveGameToDatabaseIfChanged(streamerInfo, previousGame);
 
         if (!wasOnline && streamerInfo.isOnline) {
           // Стример перешел из офлайн в онлайн
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
-          streamerInfo.startTime = Date.now();
+          const streamStartTime = Date.now();
+          streamerInfo.startTime = streamStartTime;
+          
+          // Сохраняем время запуска стрима в базу данных
+          if (this.databaseStorage && this.databaseStorage.isReady()) {
+            this.databaseStorage.updateLastStreamStart(streamerInfo.username, streamStartTime);
+          }
+          
           try {
             await this.updateInitialPoints(streamerInfo);
           } catch (error: any) {
@@ -1135,6 +1194,12 @@ export class StreamWatcher {
         } else if (wasOnline && !streamerInfo.isOnline) {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+          const streamEndTime = Date.now();
+          
+          // Сохраняем время завершения стрима в базу данных
+          if (this.databaseStorage && this.databaseStorage.isReady()) {
+            this.databaseStorage.updateLastStreamEnd(streamerInfo.username, streamEndTime);
+          }
           
           // Завершаем сессию просмотра
           const sessionId = this.activeSessions.get(streamerInfo.username);
@@ -1668,6 +1733,28 @@ export class StreamWatcher {
   }
 
   /**
+   * Обновляет статус инициализации
+   * @param currentAction Текущее действие
+   * @param progress Прогресс (0-100)
+   */
+  private updateInitializationStatus(currentAction: string, progress: number): void {
+    this.initializationStatus.currentAction = currentAction;
+    this.initializationStatus.progress = Math.min(100, Math.max(0, progress));
+  }
+
+  /**
+   * Получает статус инициализации
+   * @returns Статус инициализации
+   */
+  getInitializationStatus(): {
+    isInitialized: boolean;
+    currentAction: string;
+    progress: number;
+  } {
+    return { ...this.initializationStatus };
+  }
+
+  /**
    * Получает информацию о токене (реализация StatisticsProvider)
    */
   getTokenInfo(): {
@@ -1796,6 +1883,10 @@ export class StreamWatcher {
         return { success: false, message: `Failed to initialize streamer "${normalizedUsername}". This might be a temporary issue. Please try again later.` };
       }
 
+      // Загружаем данные из базы данных перед добавлением
+      this.loadStreamerDataFromDatabase(streamerInfo);
+      this.applyPersistedPoints(streamerInfo);
+      
       // Стример успешно инициализирован
       this.streamers.set(normalizedUsername, streamerInfo);
       
@@ -1957,6 +2048,70 @@ export class StreamWatcher {
   }
 
   /**
+   * Загружает данные стримера из базы данных и применяет их
+   * @param streamerInfo Информация о стримере
+   */
+  /**
+   * Сохраняет категорию стрима в базу данных при изменении
+   * @param streamerInfo Информация о стримере
+   * @param previousGame Предыдущая категория (для проверки изменения)
+   */
+  private saveGameToDatabaseIfChanged(streamerInfo: StreamerInfo, previousGame: string | null): void {
+    if (!this.databaseStorage || !this.databaseStorage.isReady()) {
+      return;
+    }
+
+    // Сохраняем категорию, если она изменилась и не пустая
+    if (streamerInfo.game !== previousGame && streamerInfo.game) {
+      this.databaseStorage.updateLastGame(streamerInfo.username, streamerInfo.game);
+    }
+  }
+
+  private loadStreamerDataFromDatabase(streamerInfo: StreamerInfo): void {
+    if (!this.databaseStorage || !this.databaseStorage.isReady()) {
+      return;
+    }
+
+    try {
+      const dbStats = this.databaseStorage.getStreamerStats(streamerInfo.username);
+      
+      if (dbStats) {
+        // Логируем информацию из БД
+        logger.verbose(`📊  [${streamerInfo.username}] Loaded from DB: total_points=${dbStats.totalPoints}, watch_time=${dbStats.totalWatchTimeMs}ms`);
+        
+        if (dbStats.lastStreamStart) {
+          logger.verbose(`📊  [${streamerInfo.username}] Last stream start: ${new Date(dbStats.lastStreamStart).toISOString()}`);
+        }
+        if (dbStats.lastStreamEnd) {
+          logger.verbose(`📊  [${streamerInfo.username}] Last stream end: ${new Date(dbStats.lastStreamEnd).toISOString()}`);
+        }
+        if (dbStats.lastGame) {
+          logger.verbose(`📊  [${streamerInfo.username}] Last game: ${dbStats.lastGame}`);
+          // Загружаем последнюю категорию из БД, если текущая категория не установлена
+          if (!streamerInfo.game && dbStats.lastGame) {
+            streamerInfo.game = dbStats.lastGame;
+          }
+        }
+        
+        // Если текущие баллы установлены через API, но начальные баллы еще не установлены,
+        // используем текущие баллы как начальные (это нормальная ситуация при первом запуске)
+        // Данные из БД используются как справочная информация для понимания истории стримера
+        if (streamerInfo.channelPoints > 0 && streamerInfo.initialChannelPoints === null) {
+          // Устанавливаем начальные баллы равными текущим, если они еще не установлены
+          // Это позволит корректно отслеживать заработанные баллы с момента запуска
+          streamerInfo.initialChannelPoints = streamerInfo.channelPoints;
+          logger.verbose(`📊  [${streamerInfo.username}] Set initial points from current balance: ${streamerInfo.channelPoints}`);
+        }
+      } else {
+        logger.verbose(`📊  [${streamerInfo.username}] No database record found (will be created on first points earned)`);
+      }
+    } catch (error: any) {
+      // Не критично - продолжаем работу без данных из БД
+      logger.verbose(`⚠️  [${streamerInfo.username}] Failed to load from database: ${error.message || error}`);
+    }
+  }
+
+  /**
    * Применяет сохраненное состояние баллов к стримеру
    */
   private applyPersistedPoints(streamerInfo: StreamerInfo): void {
@@ -1970,6 +2125,153 @@ export class StreamWatcher {
     if (Number.isFinite(saved.initialChannelPoints)) {
       streamerInfo.initialChannelPoints = saved.initialChannelPoints;
     }
+  }
+
+  /**
+   * Заполняет приложение тестовыми данными
+   * @returns Результат операции с количеством созданных событий и стримеров
+   */
+  async fillTestData(): Promise<{ eventsCount: number; streamersCount: number }> {
+    logger.info('🧪  Filling application with test data...');
+    
+    const testStreamers = [
+      'test_streamer_1', 'test_streamer_2', 'test_streamer_3', 'test_streamer_4', 'test_streamer_5',
+      'test_streamer_6', 'test_streamer_7', 'test_streamer_8', 'test_streamer_9', 'test_streamer_10'
+    ];
+    
+    const eventTypes = [
+      'points-earned', 'claim-earned', 'streak-earned', 'claim-success', 'claim-failed',
+      'stream-up', 'stream-down', 'raid-joined', 'token-expired', 'websocket-reconnected'
+    ];
+    
+    const messages = {
+      'points-earned': ['Earned {points} points (WATCH_STREAK)', 'Earned {points} points (BONUS)', 'Earned {points} points (AD_WATCH)'],
+      'claim-earned': ['Bonus chest available', 'Channel points bonus ready'],
+      'streak-earned': ['Watch streak bonus earned'],
+      'claim-success': ['Bonus chest claimed', 'Successfully claimed bonus'],
+      'claim-failed': ['Failed to claim bonus', 'Bonus claim failed'],
+      'stream-up': ['Stream went online', 'Stream started'],
+      'stream-down': ['Stream went offline', 'Stream ended'],
+      'raid-joined': ['Joined raid to {target}', 'Successfully joined raid'],
+      'token-expired': ['Token has expired - please update it'],
+      'websocket-reconnected': ['WebSocket connection restored']
+    };
+    
+    let eventsCount = 0;
+    let streamersCount = 0;
+    const now = Date.now();
+    
+    // Добавляем тестовых стримеров
+    for (const username of testStreamers) {
+      if (!this.streamers.has(username)) {
+        try {
+          const isOnline = Math.random() > 0.5;
+          const streamerInfo: StreamerInfo = {
+            username,
+            channelId: `test_${username}_${Date.now()}`,
+            isOnline,
+            channelPoints: Math.floor(Math.random() * 100000) + 1000,
+            initialChannelPoints: Math.floor(Math.random() * 100000) + 1000,
+            lastChannelPoints: null,
+            startTime: isOnline ? now - Math.floor(Math.random() * 3600000) : 0,
+            game: ['Just Chatting', 'Minecraft', 'Fortnite', 'Valorant', 'League of Legends'][Math.floor(Math.random() * 5)],
+            title: `Test stream ${username}`,
+            broadcastId: null,
+            tags: [],
+            spadeUrl: null
+          };
+          
+          // Загружаем данные из базы данных
+          this.loadStreamerDataFromDatabase(streamerInfo);
+          this.applyPersistedPoints(streamerInfo);
+          
+          this.streamers.set(username, streamerInfo);
+          
+          // Добавляем в WebSocket менеджер, если он доступен
+          if (this.wsManager) {
+            this.wsManager.addStreamer(streamerInfo);
+          }
+          
+          streamersCount++;
+        } catch (error: any) {
+          logger.warn(`⚠️  Failed to add test streamer ${username}: ${error.message || error}`);
+        }
+      }
+    }
+    
+    // Генерируем около 1000 событий
+    const targetEventsCount = 1000;
+    const streamersList = Array.from(this.streamers.keys());
+    
+    if (streamersList.length === 0) {
+      logger.warn('⚠️  No streamers available for generating test events');
+      return { eventsCount: 0, streamersCount };
+    }
+    
+    for (let i = 0; i < targetEventsCount; i++) {
+      const streamer = streamersList[Math.floor(Math.random() * streamersList.length)];
+      const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+      const typeMessages = messages[eventType as keyof typeof messages] || ['Test event'];
+      const messageTemplate = typeMessages[Math.floor(Math.random() * typeMessages.length)];
+      
+      // Заменяем плейсхолдеры в сообщениях
+      let message = messageTemplate;
+      if (message.includes('{points}')) {
+        message = message.replace('{points}', String(Math.floor(Math.random() * 1000) + 10));
+      }
+      if (message.includes('{target}')) {
+        message = message.replace('{target}', streamersList[Math.floor(Math.random() * streamersList.length)]);
+      }
+      
+      // Генерируем timestamp в диапазоне последних 7 дней
+      const daysAgo = Math.random() * 7;
+      const timestamp = now - (daysAgo * 24 * 60 * 60 * 1000);
+      
+      this.eventsHistory.push({
+        timestamp: Math.floor(timestamp),
+        type: eventType,
+        streamer,
+        message
+      });
+      
+      eventsCount++;
+      
+      // Если событие связано с баллами, добавляем в историю баллов
+      if (eventType === 'points-earned' || eventType === 'claim-earned' || eventType === 'streak-earned') {
+        const points = Math.floor(Math.random() * 1000) + 10;
+        const streamerInfo = this.streamers.get(streamer);
+        if (streamerInfo) {
+          // Обновляем баллы стримера
+          streamerInfo.channelPoints = (streamerInfo.channelPoints || 0) + points;
+          
+          // Сохраняем в базу данных
+          if (this.databaseStorage) {
+            this.databaseStorage.addDailyPoints(streamer, points);
+            this.databaseStorage.addTotalPoints(streamer, points);
+          }
+          
+          // Добавляем в историю баллов
+          const stats = this.getStatistics();
+          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+          this.addPointsHistory(streamer, points, totalPoints + points);
+        }
+      }
+    }
+    
+    // Ограничиваем размер истории событий
+    if (this.eventsHistory.length > this.maxEventsHistory) {
+      this.eventsHistory = this.eventsHistory.slice(-this.maxEventsHistory);
+    }
+    
+    // Сортируем события по времени
+    this.eventsHistory.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Сохраняем состояние
+    this.savePointsState(true);
+    
+    logger.info(`✅  Test data generated: ${eventsCount} events, ${streamersCount} streamers`);
+    
+    return { eventsCount, streamersCount };
   }
 
   /**

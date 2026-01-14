@@ -65,91 +65,18 @@ body.density-spacious td {
     overflow: visible;
 }
 
-/* Двухколоночный макет с табличным позиционированием */
+/* Одноколоночный макет */
 .main-layout {
-    display: grid;
-    grid-template-columns: 1fr 400px;
-    grid-template-rows: auto auto auto; /* 3 строки */
+    display: flex;
+    flex-direction: column;
     gap: 20px;
-    align-items: start;
-    align-content: start; /* Выравниваем содержимое по началу */
 }
 
-/* All Streamers: строка 1, столбец 1 */
-.grid-item-streamers {
-    grid-row: 1;
-    grid-column: 1;
-}
-
-/* Token Information: строка 2, столбец 1 */
-#tokenInfoSection {
-    grid-row: 2;
-    grid-column: 1;
-}
-
-/* Database Status: строка 3, столбец 1 */
-#databaseInfoSection {
-    grid-row: 3;
-    grid-column: 1;
-}
-
-/* Recent Events: строка 1, столбец 2, занимает 3 строки */
-.grid-item-events {
-    grid-row: 1 / 4; /* От строки 1 до строки 4 (занимает 3 строки) */
-    grid-column: 2;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-height: 0;
-    align-self: stretch; /* Растягиваемся на всю высоту строк */
-    margin-bottom: 0; /* Убираем отступ снизу, чтобы раздел не был длиннее левой колонки */
-}
-
-/* Заголовок раздела событий не должен растягиваться */
-.grid-item-events > div:first-child {
-    flex-shrink: 0;
-}
-
-.grid-item-events #eventsSectionContent {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-}
-
-.grid-item-events .event-filters {
-    flex-shrink: 0;
-}
-
-.grid-item-events .events-list {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-/* Когда список событий пуст, показываем сообщение по центру */
-.grid-item-events .events-list p {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0;
-}
 
 /* Адаптация для мобильных устройств */
 @media (max-width: 1200px) {
     .main-layout {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto auto auto; /* 4 строки для мобильных */
-    }
-    
-    .grid-item-events {
-        grid-row: 4; /* На мобильных устройствах раздел событий идет после всех остальных */
-        grid-column: 1;
+        gap: 15px;
     }
 }
 
@@ -431,6 +358,14 @@ h1 {
     margin-bottom: 0;
 }
 
+/* Для grid-item-events section должен растягиваться на всю высоту */
+.grid-item-events.section {
+    margin-bottom: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
 .section h2 {
     color: #efeff1;
     margin-bottom: 20px;
@@ -512,8 +447,31 @@ th {
     text-transform: uppercase;
 }
 
+/* Стили для сортируемых заголовков */
+th.sortable {
+    position: relative;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+th.sortable:hover {
+    background-color: rgba(145, 71, 255, 0.1);
+    color: #9147ff;
+}
+
+th.sortable.sort-asc,
+th.sortable.sort-desc {
+    color: #9147ff;
+    background-color: rgba(145, 71, 255, 0.15);
+}
+
 td {
     color: #efeff1;
+}
+
+/* Стиль для некорректного времени (когда время окончания меньше времени начала) */
+td.invalid-time {
+    color: rgba(239, 239, 241, 0.4);
+    opacity: 0.5;
 }
 
 .streamer-name {
@@ -717,6 +675,13 @@ td {
 .events-list {
     max-height: 400px;
     overflow-y: auto;
+}
+
+/* Для grid-item-events events-list должен занимать всю доступную высоту */
+.grid-item-events .events-list {
+    max-height: none;
+    flex: 1 1 auto; /* Растягиваемся и занимаем все доступное пространство */
+    min-height: 0; /* Позволяем сжиматься при необходимости */
 }
 
 /* Для правой колонки events-list должен занимать всю высоту */
