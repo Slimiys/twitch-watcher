@@ -291,6 +291,8 @@ export class StreamWatcher {
             this.databaseStorage.addDailyPoints(streamerInfo.username, points);
             // Обновляем общее количество баллов
             this.databaseStorage.addTotalPoints(streamerInfo.username, points);
+            // Сохраняем текущий баланс
+            this.databaseStorage.updateLastBalance(streamerInfo.username, streamerInfo.channelPoints);
           }
           
           // Добавляем в историю баллов
@@ -395,6 +397,15 @@ export class StreamWatcher {
             
             this.activeSessions.delete(streamerInfo.username);
           }
+          
+          // Сохраняем последний известный баланс в базу данных
+          if (this.databaseStorage && this.databaseStorage.isReady()) {
+            const finalBalance = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+            if (finalBalance > 0) {
+              this.databaseStorage.updateLastBalance(streamerInfo.username, finalBalance);
+            }
+          }
+          
           this.savePointsState();
         },
         onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
@@ -1057,6 +1068,22 @@ export class StreamWatcher {
           // и pointsEarned будет 0, пока не установятся начальные баллы
           // Это предотвратит неправильное отображение заработанных баллов
           pointsEarned = 0;
+        }
+      } else {
+        // Для офлайн стримеров используем lastChannelPoints, если channelPoints равен 0
+        // Это позволяет отображать последнее известное значение баланса
+        if (currentPoints === 0 && streamerInfo.lastChannelPoints !== null) {
+          currentPoints = streamerInfo.lastChannelPoints;
+        }
+        
+        // Если все еще 0, пробуем загрузить из сохраненного состояния
+        if (currentPoints === 0) {
+          const saved = this.pointsState[streamerInfo.username];
+          if (saved && Number.isFinite(saved.channelPoints) && saved.channelPoints > 0) {
+            currentPoints = saved.channelPoints;
+            // Обновляем lastChannelPoints для будущих обновлений
+            streamerInfo.lastChannelPoints = saved.channelPoints;
+          }
         }
       }
 
@@ -2090,6 +2117,17 @@ export class StreamWatcher {
           // Загружаем последнюю категорию из БД, если текущая категория не установлена
           if (!streamerInfo.game && dbStats.lastGame) {
             streamerInfo.game = dbStats.lastGame;
+          }
+        }
+        
+        // Загружаем последний известный баланс из БД для офлайн стримеров
+        if (dbStats.lastBalance !== null && dbStats.lastBalance !== undefined) {
+          // Если channelPoints равен 0 (что часто бывает для офлайн стримеров),
+          // используем значение из базы данных
+          if (streamerInfo.channelPoints === 0 || streamerInfo.channelPoints === null) {
+            streamerInfo.channelPoints = dbStats.lastBalance;
+            streamerInfo.lastChannelPoints = dbStats.lastBalance;
+            logger.verbose(`📊  [${streamerInfo.username}] Loaded last balance from DB: ${dbStats.lastBalance}`);
           }
         }
         

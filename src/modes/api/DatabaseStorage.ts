@@ -99,6 +99,7 @@ export interface StreamerStats {
   lastStreamStart: number | null; // Время последнего запуска стрима (timestamp)
   lastStreamEnd: number | null; // Время последнего завершения стрима (timestamp)
   lastGame: string | null; // Последняя категория стрима
+  lastBalance: number | null; // Последний известный баланс баллов (currentPoints)
 }
 
 /**
@@ -263,6 +264,17 @@ export class DatabaseStorage {
       // Поле уже существует - это нормально
       if (!error.message?.includes('duplicate column name')) {
         logger.verbose(`⚠️  Failed to add last_game column: ${error.message}`);
+      }
+    }
+
+    try {
+      this.db.exec(`
+        ALTER TABLE streamers ADD COLUMN last_balance INTEGER;
+      `);
+    } catch (error: any) {
+      // Поле уже существует - это нормально
+      if (!error.message?.includes('duplicate column name')) {
+        logger.verbose(`⚠️  Failed to add last_balance column: ${error.message}`);
       }
     }
 
@@ -437,7 +449,7 @@ export class DatabaseStorage {
     if (!this.db) return null;
 
     try {
-      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game FROM streamers WHERE username = ?');
+      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game, last_balance FROM streamers WHERE username = ?');
       stmt.bind([username]);
       const result = stmt.step() ? stmt.getAsObject() as any : null;
       stmt.free();
@@ -453,6 +465,7 @@ export class DatabaseStorage {
         lastStreamStart: result.last_stream_start ?? null,
         lastStreamEnd: result.last_stream_end ?? null,
         lastGame: result.last_game ?? null,
+        lastBalance: result.last_balance ?? null,
       };
     } catch (error: any) {
       logger.error(`❌  Failed to get streamer stats: ${error.message || error}`);
@@ -536,7 +549,7 @@ export class DatabaseStorage {
     if (!this.db) return [];
 
     try {
-      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game FROM streamers ORDER BY total_points DESC');
+      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game, last_balance FROM streamers ORDER BY total_points DESC');
       
       const results: StreamerStats[] = [];
       while (stmt.step()) {
@@ -550,6 +563,7 @@ export class DatabaseStorage {
           lastStreamStart: row.last_stream_start ?? null,
           lastStreamEnd: row.last_stream_end ?? null,
           lastGame: row.last_game ?? null,
+          lastBalance: row.last_balance ?? null,
         });
       }
       stmt.free();
@@ -645,6 +659,31 @@ export class DatabaseStorage {
       logger.verbose(`🎮  Updated last game for ${username}: ${game || 'null'}`);
     } catch (error: any) {
       logger.error(`❌  Failed to update last game: ${error.message || error}`);
+    }
+  }
+
+  /**
+   * Обновляет последний известный баланс баллов стримера
+   * @param username Имя стримера
+   * @param balance Текущий баланс баллов
+   */
+  updateLastBalance(username: string, balance: number | null): void {
+    if (!isDatabaseAvailable || !this.db) {
+      return;
+    }
+    try {
+      const streamerId = this.getOrCreateStreamer(username);
+      const now = Date.now();
+      const stmt = this.db.prepare('UPDATE streamers SET last_balance = ?, updated_at = ? WHERE id = ?');
+      stmt.bind([balance, now, streamerId]);
+      stmt.step();
+      stmt.free();
+      if (this.config.autoSave) {
+        this.saveDatabase();
+      }
+      logger.verbose(`💰  Updated last balance for ${username}: ${balance || 'null'}`);
+    } catch (error: any) {
+      logger.error(`❌  Failed to update last balance: ${error.message || error}`);
     }
   }
 
