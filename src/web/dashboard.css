@@ -470,8 +470,11 @@ td {
 
 /* Стиль для некорректного времени (когда время окончания меньше времени начала) */
 td.invalid-time {
-    color: rgba(239, 239, 241, 0.4);
     opacity: 0.5;
+}
+
+td.invalid-time span {
+    opacity: 1;
 }
 
 .streamer-name {
@@ -1375,6 +1378,62 @@ td.invalid-time {
     border-color: #9147ff;
 }
 
+.colorize-toggle-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #26262c;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #adadb8;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: #9147ff;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+    background-color: white;
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 1px #9147ff;
+}
+
 /* Анимации обновления */
 @keyframes fadeIn {
     from {
@@ -2189,6 +2248,21 @@ td.invalid-time {
     color: #9147ff;
     border: 1px solid rgba(145, 71, 255, 0.3);
     box-shadow: 0 0 8px rgba(145, 71, 255, 0.3);
+}
+
+/* Стили для отображения разницы баллов */
+.points-diff {
+    font-size: 0.85em;
+    font-weight: 500;
+    margin-left: 4px;
+}
+
+.points-diff.diff-positive {
+    color: #00d166;
+}
+
+.points-diff.diff-negative {
+    color: #ef4444;
 }
 
 /* Иконки для типов событий */

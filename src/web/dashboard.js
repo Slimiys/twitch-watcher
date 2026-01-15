@@ -32,6 +32,10 @@ function safeSetLocalStorage(key, value) {
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
+let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
+let eventSource = null; // Для Server-Sent Events
+let lastEventCheckTimestamp = 0; // Timestamp последнего проверенного события
+let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
 
 let selectedEventTags = new Set();
 try {
@@ -64,6 +68,30 @@ try {
     }
 } catch (e) {
     // Используем значения по умолчанию
+}
+
+// Предыдущие значения статистики по стримерам (для отображения разницы)
+// Эти значения обновляются только при изменении баллов
+let previousStreamerStats = {};
+try {
+    const prevStats = safeGetLocalStorage('previousStreamerStats');
+    if (prevStats) {
+        previousStreamerStats = JSON.parse(prevStats);
+    }
+} catch (e) {
+    previousStreamerStats = {};
+}
+
+// Сохраняем старое значение currentPoints для каждого стримера
+// Это нужно для обновления previousPoints перед следующим изменением
+let lastCurrentPoints = {};
+try {
+    const lastPoints = safeGetLocalStorage('lastCurrentPoints');
+    if (lastPoints) {
+        lastCurrentPoints = JSON.parse(lastPoints);
+    }
+} catch (e) {
+    lastCurrentPoints = {};
 }
 
 // Пагинация событий
@@ -169,6 +197,25 @@ function getPointsCategory(points) {
 }
 
 /**
+ * Генерирует цвет на основе строки (детерминированно)
+ * @param {string} str Строка для генерации цвета
+ * @returns {string} HEX цвет
+ */
+function generateColorFromString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    
+    // Генерируем яркие, насыщенные цвета
+    const hue = Math.abs(hash) % 360;
+    const saturation = 60 + (Math.abs(hash) % 20); // 60-80%
+    const lightness = 50 + (Math.abs(hash) % 15); // 50-65%
+    
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+}
+
+/**
  * Генерирует бейдж с цветовым кодированием для баллов
  * @param {number} points Количество баллов
  * @returns {string} HTML код бейджа
@@ -176,6 +223,27 @@ function getPointsCategory(points) {
 function generatePointsBadge(points) {
     const category = getPointsCategory(points);
     return `<span class="points-badge ${category}">${points.toLocaleString()}</span>`;
+}
+
+/**
+ * Генерирует бейдж с баллами и разницей между текущим и предыдущим значением
+ * @param {number} currentPoints Текущее значение
+ * @param {number|null|undefined} previousPoints Предыдущее значение (до изменения)
+ * @returns {string} HTML с бейджем и разницей
+ */
+function generatePointsBadgeWithDiff(currentPoints, previousPoints) {
+    const category = getPointsCategory(currentPoints);
+    const currentFormatted = currentPoints.toLocaleString();
+    
+    let diffHtml = '';
+    if (previousPoints !== null && previousPoints !== undefined && previousPoints !== currentPoints) {
+        const diff = currentPoints - previousPoints;
+        const diffFormatted = diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
+        const diffClass = diff > 0 ? 'diff-positive' : 'diff-negative';
+        diffHtml = ` <span class="points-diff ${diffClass}">(${diffFormatted})</span>`;
+    }
+    
+    return `<span class="points-badge ${category}">${currentFormatted}</span>${diffHtml}`;
 }
 
 /**
@@ -273,6 +341,23 @@ function formatTimeHHMM(timestamp) {
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+/**
+ * Форматирует дату и время с разделением по цветам
+ * @param {number} timestamp Timestamp
+ * @param {string} timeColor Цвет для времени (CSS цвет)
+ * @returns {string} HTML с датой (белой) и временем (цветным)
+ */
+function formatTimeWithColors(timestamp, timeColor) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `<span style="color: #efeff1;">${day}.${month}.${year}</span> <span style="color: ${timeColor};">${hours}:${minutes}</span>`;
 }
 
 /**
@@ -612,8 +697,6 @@ async function checkInitializationStatus() {
             setTimeout(checkInitializationStatus, 500);
         }
     } catch (error) {
-        // При ошибке (сеть, CORS и т.д.) продолжаем проверку
-        console.log('Error checking initialization status:', error);
         statusText.textContent = 'Connecting to server...';
         setTimeout(checkInitializationStatus, 1000);
     }
@@ -672,32 +755,21 @@ function compareWithNulls(valueA, valueB, compareFn = null, treatZeroAsEmpty = f
  * @returns {Array} Отсортированный массив
  */
 function sortTableData(data, sort) {
-    console.log('[sortTableData] Начало сортировки:', {
-        column: sort.column,
-        direction: sort.direction,
-        dataCount: data.length
-    });
-
     if (!sort.column) {
-        // Сортировка по умолчанию: сначала онлайн, потом офлайн, внутри группы - по имени
         const result = data.sort((a, b) => {
             if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
             if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
             return a.streamerName.localeCompare(b.streamerName);
         });
-        console.log('[sortTableData] Сортировка по умолчанию, результат:', result.map(s => ({
-            name: s.streamerName,
-            status: s.status,
-            lastStreamEnd: s.lastStreamEnd
-        })));
         return result;
     }
 
     const direction = sort.direction === 'desc' ? -1 : 1;
-    console.log('[sortTableData] Направление сортировки:', direction === 1 ? 'asc' : 'desc');
 
     const result = data.sort((a, b) => {
-        // Сначала проверяем, есть ли пустые значения - они всегда идут в конец
+        if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
+        if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
+        
         let valueA, valueB, treatZeroAsEmpty = false;
         
         switch (sort.column) {
@@ -736,17 +808,14 @@ function sortTableData(data, sort) {
                 valueB = b.status;
                 break;
             default:
-                // Если колонка не поддерживает сортировку, используем сортировку по умолчанию
-                if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
-                if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
-                return a.streamerName.localeCompare(b.streamerName);
+                valueA = a.streamerName;
+                valueB = b.streamerName;
+                break;
         }
 
-        // Проверяем, являются ли значения пустыми
         let isEmptyA = valueA === null || valueA === undefined || valueA === '';
         let isEmptyB = valueB === null || valueB === undefined || valueB === '';
         
-        // Для числовых значений проверяем NaN и, опционально, 0
         if (typeof valueA === 'number') {
             isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
         }
@@ -754,35 +823,10 @@ function sortTableData(data, sort) {
             isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
         }
 
-        // Логирование для отладки (только для первых нескольких сравнений)
-        const shouldLog = Math.random() < 0.1; // Логируем ~10% сравнений
-        if (shouldLog) {
-            console.log('[sortTableData] Сравнение:', {
-                streamerA: a.streamerName,
-                streamerB: b.streamerName,
-                valueA: valueA,
-                valueB: valueB,
-                isEmptyA: isEmptyA,
-                isEmptyB: isEmptyB,
-                treatZeroAsEmpty: treatZeroAsEmpty
-            });
-        }
+        if (isEmptyA && isEmptyB) return 0;
+        if (isEmptyA) return 1;
+        if (isEmptyB) return -1;
 
-        // Пустые значения всегда идут в конец, независимо от направления сортировки
-        if (isEmptyA && isEmptyB) {
-            if (shouldLog) console.log('[sortTableData] Оба пустые, возвращаем 0');
-            return 0; // Оба пустые - равны
-        }
-        if (isEmptyA) {
-            if (shouldLog) console.log('[sortTableData] Первое пустое, возвращаем 1');
-            return 1; // Первое пустое - идет в конец
-        }
-        if (isEmptyB) {
-            if (shouldLog) console.log('[sortTableData] Второе пустое, возвращаем -1');
-            return -1; // Второе пустое - идет в конец
-        }
-
-        // Если оба не пустые, выполняем обычное сравнение
         let comparison = 0;
         
         switch (sort.column) {
@@ -807,26 +851,8 @@ function sortTableData(data, sort) {
                 break;
         }
 
-        const finalComparison = comparison * direction;
-        if (shouldLog) {
-            console.log('[sortTableData] Сравнение непустых значений:', {
-                comparison: comparison,
-                direction: direction,
-                finalComparison: finalComparison
-            });
-        }
-
-        // Применяем направление сортировки только к непустым значениям
-        return finalComparison;
+        return comparison * direction;
     });
-
-    console.log('[sortTableData] Результат сортировки:', result.map(s => ({
-        name: s.streamerName,
-        status: s.status,
-        lastStreamEnd: s.lastStreamEnd,
-        lastStreamStart: s.lastStreamStart,
-        game: s.game
-    })));
 
     return result;
 }
@@ -893,6 +919,90 @@ async function updateStatistics() {
         filteredStats = stats.filter(s => s.status === 'ONLINE');
     }
 
+    // Сохраняем предыдущие значения для отображения разницы
+    // Используем lastCurrentPoints, если он отличается от текущего, иначе previousStreamerStats
+    const currentPreviousStats = {};
+    stats.forEach(s => {
+        if (s.streamerName) {
+            const streamerName = s.streamerName;
+            const currentPointsEarned = s.pointsEarned || 0;
+            const currentCurrentPoints = s.currentPoints || 0;
+            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
+            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
+            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
+            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
+            
+            if (lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned) {
+                currentPreviousStats[streamerName] = { 
+                    pointsEarned: lastPointsEarned,
+                    currentPoints: lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints
+                };
+            } else if (lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints) {
+                currentPreviousStats[streamerName] = { 
+                    pointsEarned: lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned,
+                    currentPoints: lastCurrentPointsValue
+                };
+            } else if (previousStreamerStats[streamerName]) {
+                currentPreviousStats[streamerName] = { ...previousStreamerStats[streamerName] };
+            }
+        }
+    });
+    
+    stats.forEach(s => {
+        if (s.streamerName) {
+            const streamerName = s.streamerName;
+            const currentPointsEarned = s.pointsEarned || 0;
+            const currentCurrentPoints = s.currentPoints || 0;
+            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
+            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
+            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
+            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
+            
+            if (prevPointsEarned === undefined) {
+                previousStreamerStats[streamerName] = {
+                    pointsEarned: currentPointsEarned,
+                    currentPoints: currentCurrentPoints
+                };
+                lastCurrentPoints[streamerName] = {
+                    pointsEarned: currentPointsEarned,
+                    currentPoints: currentCurrentPoints
+                };
+            } else {
+                const pointsEarnedChanged = prevPointsEarned !== currentPointsEarned;
+                const currentPointsChanged = prevCurrentPoints !== currentCurrentPoints;
+                
+                if (pointsEarnedChanged || currentPointsChanged) {
+                    // Определяем старое значение: если lastCurrentPoints равен currentPoints,
+                    // используем previousStreamerStats, иначе lastCurrentPoints
+                    let newPrevPointsEarned, newPrevCurrentPoints;
+                    const lastPointsEarnedChanged = lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned;
+                    const lastCurrentPointsChanged = lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints;
+                    
+                    if (!lastPointsEarnedChanged && !lastCurrentPointsChanged && (lastPointsEarned !== undefined || lastCurrentPointsValue !== undefined)) {
+                        newPrevPointsEarned = prevPointsEarned;
+                        newPrevCurrentPoints = prevCurrentPoints;
+                    } else {
+                        newPrevPointsEarned = lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned;
+                        newPrevCurrentPoints = lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints;
+                    }
+                    
+                    previousStreamerStats[streamerName] = {
+                        pointsEarned: newPrevPointsEarned,
+                        currentPoints: newPrevCurrentPoints
+                    };
+                    
+                    lastCurrentPoints[streamerName] = {
+                        pointsEarned: currentPointsEarned,
+                        currentPoints: currentCurrentPoints
+                    };
+                }
+            }
+        }
+    });
+    
+    safeSetLocalStorage('previousStreamerStats', JSON.stringify(previousStreamerStats));
+    safeSetLocalStorage('lastCurrentPoints', JSON.stringify(lastCurrentPoints));
+    
     // Сортируем данные
     const sortedStats = sortTableData([...filteredStats], tableSort);
 
@@ -948,7 +1058,11 @@ async function updateStatistics() {
             <tbody>
                 ${sortedStats.map(s => `
                     <tr>
-                        ${visibleColumns.streamer !== false ? `<td class="streamer-name"><a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a></td>` : ''}
+                        ${visibleColumns.streamer !== false ? (() => {
+                            const streamerColor = colorizeStreamerNames ? generateColorFromString(s.streamerName) : null;
+                            const colorStyle = streamerColor ? `style="color: ${streamerColor};"` : '';
+                            return `<td class="streamer-name"><a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link" ${colorStyle}>${s.streamerName}</a></td>`;
+                        })() : ''}
                         ${visibleColumns.status !== false ? `
                             <td>
                                 <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
@@ -958,10 +1072,18 @@ async function updateStatistics() {
                             </td>
                         ` : ''}
                         ${visibleColumns.watchTime !== false ? `<td>${generateWatchTimeProgress(s.elapsedTime)}</td>` : ''}
-                        ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
-                        ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
+                        ${visibleColumns.pointsEarned !== false ? (() => {
+                            const prevPointsEarned = currentPreviousStats[s.streamerName]?.pointsEarned;
+                            const currentPointsEarned = s.pointsEarned || 0;
+                            return `<td>${generatePointsBadgeWithDiff(currentPointsEarned, prevPointsEarned)}</td>`;
+                        })() : ''}
+                        ${visibleColumns.currentPoints !== false ? (() => {
+                            const prevCurrentPoints = currentPreviousStats[s.streamerName]?.currentPoints;
+                            const currentCurrentPoints = s.currentPoints || 0;
+                            return `<td>${generatePointsBadgeWithDiff(currentCurrentPoints, prevCurrentPoints)}</td>`;
+                        })() : ''}
                         ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
-                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeHHMM(s.lastStreamStart) : '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeWithColors(s.lastStreamStart, '#00d166') : '-'}</td>` : ''}
                         ${visibleColumns.lastStreamEnd !== false ? (() => {
                             const endTime = s.lastStreamEnd;
                             const startTime = s.lastStreamStart;
@@ -974,22 +1096,22 @@ async function updateStatistics() {
                             
                             // Если есть время окончания, но нет времени начала, показываем полупрозрачным
                             if (!startTime) {
-                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
                             }
                             
                             const start = Number(startTime);
                             if (isNaN(start) || start <= 0) {
                                 // Если время начала некорректное, но есть время окончания, показываем полупрозрачным
-                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
                             }
                             
                             // Если время окончания меньше времени начала (некорректное состояние), показываем полупрозрачным
                             if (end < start) {
-                                return `<td class="invalid-time">${formatTimeHHMM(endTime)}</td>`;
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
                             }
                             
-                            // Все корректно - показываем обычным цветом
-                            return `<td>${formatTimeHHMM(endTime)}</td>`;
+                            // Все корректно - показываем с красным временем
+                            return `<td>${formatTimeWithColors(endTime, '#ef4444')}</td>`;
                         })() : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
@@ -1018,6 +1140,9 @@ async function updateStatistics() {
     
     lastDataUpdate.stats = Date.now();
     updateStaleDataIndicator('stats', table);
+    
+    // previousStreamerStats уже обновлен выше, перед отображением разницы
+    // Это гарантирует, что при следующем обновлении previous будет равен текущему значению
 }
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
@@ -2581,32 +2706,107 @@ async function dismissNotification(id) {
 }
 
 function setUpdateInterval(seconds) {
-    updateIntervalMs = seconds * 1000;
-    
-    // Сохраняем интервал в localStorage
-    safeSetLocalStorage('updateIntervalMs', updateIntervalMs.toString());
-    
-    // Обновляем активную кнопку
-    document.querySelectorAll('.interval-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (parseInt(btn.dataset.interval) === seconds) {
-            btn.classList.add('active');
-        }
-    });
-    
-    // Перезапускаем автообновление с новым интервалом
+    // Останавливаем текущее обновление
     if (updateInterval) {
         clearInterval(updateInterval);
+        updateInterval = null;
     }
-    updateInterval = setInterval(updateAll, updateIntervalMs);
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    
+    if (seconds === 'event') {
+        // Режим обновления по событию
+        updateMode = 'event';
+        safeSetLocalStorage('updateMode', 'event');
+        
+        // Обновляем активную кнопку
+        document.querySelectorAll('.interval-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.interval === 'event') {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Запускаем проверку событий
+        startEventBasedUpdate();
+    } else {
+        // Режим периодического обновления
+        updateMode = 'interval';
+        updateIntervalMs = seconds * 1000;
+        safeSetLocalStorage('updateMode', 'interval');
+        safeSetLocalStorage('updateIntervalMs', updateIntervalMs.toString());
+        
+        // Обновляем активную кнопку
+        document.querySelectorAll('.interval-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (parseInt(btn.dataset.interval) === seconds) {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Перезапускаем автообновление с новым интервалом
+        updateInterval = setInterval(updateAll, updateIntervalMs);
+    }
+}
+
+async function startEventBasedUpdate() {
+    // Загружаем начальные данные
+    await updateAll();
+    
+    // Инициализируем timestamp последнего события
+    try {
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response && response.events && response.events.length > 0) {
+            lastEventCheckTimestamp = response.events[0].timestamp;
+        }
+    } catch (error) {
+        // Игнорируем ошибки
+    }
+    
+    // Начинаем проверку новых событий
+    checkForNewEvents();
+}
+
+async function checkForNewEvents() {
+    if (updateMode !== 'event') return;
+    
+    try {
+        // Проверяем новые события с момента последней проверки
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response && response.events && response.events.length > 0) {
+            const latestEvent = response.events[0];
+            
+            // Если есть новое событие (с timestamp больше последнего проверенного)
+            if (latestEvent.timestamp > lastEventCheckTimestamp) {
+                lastEventCheckTimestamp = latestEvent.timestamp;
+                // Обновляем все данные при получении нового события
+                await updateAll();
+            }
+        }
+    } catch (error) {
+        // Игнорируем ошибки, продолжаем проверку
+    }
+    
+    // Проверяем снова через небольшую задержку (polling)
+    if (updateMode === 'event') {
+        setTimeout(checkForNewEvents, 2000); // Проверяем каждые 2 секунды
+    }
 }
 
 function startAutoUpdate() {
     updateAll();
-    updateInterval = setInterval(updateAll, updateIntervalMs);
     
     // Проверка подключения при старте
     updateConnectionStatus(false);
+    
+    // Запускаем обновление в зависимости от режима
+    if (updateMode === 'event') {
+        startEventBasedUpdate();
+    } else {
+        updateInterval = setInterval(updateAll, updateIntervalMs);
+    }
 }
 
 function toggleOfflineStreamers() {
@@ -2748,13 +2948,28 @@ window.addEventListener('load', () => {
     }
     
     // Восстанавливаем активную кнопку интервала обновления
-    const savedIntervalSeconds = updateIntervalMs / 1000;
     document.querySelectorAll('.interval-btn').forEach(btn => {
         btn.classList.remove('active');
-        if (parseInt(btn.dataset.interval) === savedIntervalSeconds) {
+        if (updateMode === 'event' && btn.dataset.interval === 'event') {
             btn.classList.add('active');
+        } else if (updateMode === 'interval') {
+            const savedIntervalSeconds = updateIntervalMs / 1000;
+            if (parseInt(btn.dataset.interval) === savedIntervalSeconds) {
+                btn.classList.add('active');
+            }
         }
     });
+    
+    // Восстанавливаем состояние переключателя цветовой кодировки
+    const colorizeToggle = document.getElementById('colorizeStreamerNamesToggle');
+    if (colorizeToggle) {
+        colorizeToggle.checked = colorizeStreamerNames;
+        colorizeToggle.addEventListener('change', (e) => {
+            colorizeStreamerNames = e.target.checked;
+            safeSetLocalStorage('colorizeStreamerNames', colorizeStreamerNames.toString());
+            updateStatistics(); // Обновляем таблицу для применения цветов
+        });
+    }
     
     // Обработчик для кнопки настроек
     const settingsBtn = document.getElementById('settingsBtn');
@@ -2790,8 +3005,12 @@ window.addEventListener('load', () => {
     // Добавляем обработчики для кнопок интервала обновления
     document.querySelectorAll('.interval-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            const interval = parseInt(btn.dataset.interval);
-            setUpdateInterval(interval);
+            const interval = btn.dataset.interval;
+            if (interval === 'event') {
+                setUpdateInterval('event');
+            } else {
+                setUpdateInterval(parseInt(interval));
+            }
         });
     });
     
@@ -3593,6 +3812,9 @@ window.toggleCard = toggleCard;
 window.addEventListener('beforeunload', () => {
     if (updateInterval) {
         clearInterval(updateInterval);
+    }
+    if (eventSource) {
+        eventSource.close();
     }
 });
 
