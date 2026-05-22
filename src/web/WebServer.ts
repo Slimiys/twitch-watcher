@@ -11,6 +11,7 @@ import {
   ensureHttpsCredentials,
   getWebServerScheme,
   isWebServerHttpsEnabled,
+  resolveHttpsCredentialPaths,
 } from './httpsCredentials';
 
 /**
@@ -903,12 +904,22 @@ export class WebServer {
     }
 
     const scheme = getWebServerScheme();
+    const httpsEnv = process.env.WEB_SERVER_HTTPS ?? '(not set)';
+    if (isWebServerHttpsEnabled()) {
+      const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      logger.info(`🔐  WEB_SERVER_HTTPS=${httpsEnv} — дашборд только по HTTPS`);
+      logger.verbose(`    cert: ${certPath}`);
+      logger.verbose(`    key:  ${keyPath}`);
+    } else if (httpsEnv !== '(not set)' && httpsEnv.trim() !== '') {
+      logger.warn(`⚠️  WEB_SERVER_HTTPS=${httpsEnv} не распознан — используется HTTP`);
+    }
+
     const onListening = () => {
       logger.info(`Web server started on port ${this.port} (${scheme.toUpperCase()})`);
-      logger.verbose(`Dashboard: ${scheme}://localhost:${this.port}`);
-      logger.verbose(`API: ${scheme}://localhost:${this.port}/api`);
+      logger.verbose(`Dashboard: ${scheme}://0.0.0.0:${this.port}`);
+      logger.verbose(`API: ${scheme}://0.0.0.0:${this.port}/api`);
       if (isWebServerHttpsEnabled()) {
-        logger.verbose('   При первом открытии в браузере подтвердите самоподписанный сертификат.');
+        logger.verbose('   Откройте https://<IP>:3001 (не http). Подтвердите самоподписанный сертификат.');
       }
     };
 
@@ -924,9 +935,9 @@ export class WebServer {
       if (isWebServerHttpsEnabled()) {
         const { cert, key } = ensureHttpsCredentials();
         this.server = https.createServer({ cert, key }, this.app);
-        this.server.listen(this.port, onListening);
+        this.server.listen(this.port, '0.0.0.0', onListening);
       } else {
-        this.server = this.app.listen(this.port, onListening);
+        this.server = this.app.listen(this.port, '0.0.0.0', onListening);
       }
       this.server.on('error', onError);
     } catch (error: unknown) {

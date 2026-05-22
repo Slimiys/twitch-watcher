@@ -43,14 +43,31 @@ const cmd = [
   `-addext "subjectAltName=${san}"`,
 ].join(' ');
 
+const simpleCmd = [
+  'openssl req -x509',
+  '-newkey rsa:2048',
+  '-nodes',
+  `-keyout "${keyPath}"`,
+  `-out "${certPath}"`,
+  '-days 825',
+  `-subj "/CN=${cn}"`,
+].join(' ');
+
 try {
   execSync(cmd, { stdio: 'inherit' });
   console.log(`\n✅  Certificate: ${certPath}`);
   console.log(`✅  Private key:  ${keyPath}`);
   console.log(`    SAN: ${san}`);
-  console.log('\nВ .env добавьте: WEB_SERVER_HTTPS=true');
 } catch (e) {
-  console.error('❌  openssl не найден или команда завершилась с ошибкой.');
-  console.error('    Termux: pkg install openssl');
-  process.exit(1);
+  console.warn('⚠️  -addext не сработал, пробуем без SAN...');
+  try {
+    execSync(simpleCmd, { stdio: 'inherit' });
+    console.log(`\n✅  Certificate (no SAN): ${certPath}`);
+    console.log(`✅  Private key:  ${keyPath}`);
+  } catch (e2) {
+    console.error('❌  openssl не найден или команда завершилась с ошибкой.');
+    console.error('    Termux: pkg install openssl');
+    process.exit(1);
+  }
 }
+console.log('\nВ .env добавьте: WEB_SERVER_HTTPS=true');

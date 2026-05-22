@@ -77,7 +77,7 @@ function generateSelfSignedCredentials(certPath: string, keyPath: string): void 
   fs.mkdirSync(path.dirname(certPath), { recursive: true });
   const cn = (process.env.SSL_CERT_CN || 'twitch-watcher').replace(/"/g, '');
   const san = buildSubjectAltName();
-  const opensslCmd = [
+  const baseArgs = [
     'openssl req -x509',
     '-newkey rsa:2048',
     '-nodes',
@@ -85,18 +85,26 @@ function generateSelfSignedCredentials(certPath: string, keyPath: string): void 
     `-out "${certPath}"`,
     '-days 825',
     `-subj "/CN=${cn}"`,
-    `-addext "subjectAltName=${san}"`,
-  ].join(' ');
+  ];
+  const withSan = [...baseArgs, `-addext "subjectAltName=${san}"`].join(' ');
+  const simple = baseArgs.join(' ');
 
   try {
-    execSync(opensslCmd, { stdio: 'pipe', encoding: 'utf8' });
+    execSync(withSan, { stdio: 'pipe', encoding: 'utf8' });
     logger.info(`🔐  Создан самоподписанный TLS-сертификат: ${certPath}`);
     logger.verbose(`    SAN: ${san}`);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Не удалось создать SSL-сертификат (нужен openssl в PATH). `
-      + `Выполните: npm run certs:generate. ${message}`,
-    );
+  } catch (sanErr: unknown) {
+    logger.warn('openssl -addext не поддерживается, создаём сертификат без SAN...');
+    try {
+      execSync(simple, { stdio: 'pipe', encoding: 'utf8' });
+      logger.info(`🔐  Создан TLS-сертификат (без SAN): ${certPath}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        'Не удалось создать SSL-сертификат (нужен openssl: pkg install openssl). '
+        + 'Выполните: npm run certs:generate. '
+        + message,
+      );
+    }
   }
 }
