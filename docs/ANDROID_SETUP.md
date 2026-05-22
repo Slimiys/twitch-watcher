@@ -39,7 +39,7 @@ mkdir -p ~/twitch_watcher
 cd ~/twitch_watcher
 
 # Если есть git, клонируем:
-git clone https://github.com/your-repo/twitch_watcher.git .
+git clone -b dev https://github.com/Slimiys/twitch-watcher.git .
 
 # Или копируем файлы вручную через файловый менеджер Android
 # в папку ~/twitch_watcher
