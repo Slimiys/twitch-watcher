@@ -113,6 +113,31 @@ export async function retryWithExponentialBackoff<T>(
   throw lastError || new Error('Retry failed');
 }
 
+/** Таймаут HTTP-запроса по умолчанию (мс) */
+const DEFAULT_FETCH_TIMEOUT_MS = 20000;
+
+/**
+ * fetch с таймаутом (предотвращает зависание при обрыве сети)
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Обертка для fetch с retry
  * @param url URL для запроса
@@ -125,11 +150,12 @@ export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
   config: Partial<RetryConfig> = {},
-  context: string = 'fetch'
+  context: string = 'fetch',
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   return retryWithExponentialBackoff(
     async () => {
-      const response = await fetch(url, options);
+      const response = await fetchWithTimeout(url, options, timeoutMs);
       
       // Если статус код указывает на ошибку, выбрасываем исключение
       if (!response.ok) {

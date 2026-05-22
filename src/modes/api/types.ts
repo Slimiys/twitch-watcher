@@ -145,12 +145,21 @@ export interface TokenInfo {
 }
 
 /**
+ * Причина неуспешной валидации токена
+ * - invalid: токен отклонён Twitch (401 и т.д.)
+ * - network: запрос не удался из-за сети/DNS
+ */
+export type TokenValidationErrorType = 'invalid' | 'network';
+
+/**
  * Результат валидации токена
  */
 export interface TokenValidationResult {
   isValid: boolean;
   tokenInfo?: TokenInfo;
   expiresAt?: number; // Timestamp когда токен истечет (если известен)
+  /** Причина ошибки при isValid: false (чтобы не путать сетевые ошибки с невалидным токеном) */
+  errorType?: TokenValidationErrorType;
 }
 
 /**

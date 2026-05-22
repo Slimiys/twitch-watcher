@@ -124,6 +124,11 @@ export class TokenManager {
       this.lastValidationResult = result;
 
       if (!result.isValid) {
+        // Сетевую ошибку не считаем невалидным токеном — не завершаем приложение
+        if (result.errorType === 'network') {
+          logger.warn('⚠️  Не удалось проверить токен из-за сетевой ошибки (DNS/доступ к Twitch). Токен не помечен как невалидный.');
+          return;
+        }
         logger.warn('⚠️  Token validation failed - token is invalid');
         // Критическое уведомление - токен невалиден
         if (this.eventHandlers.onTokenInvalid) {

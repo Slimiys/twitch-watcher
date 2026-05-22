@@ -1,7 +1,7 @@
-import * as dotenv from 'dotenv';
+import { setupNetwork } from './setupNetwork';
 
-// Загружаем переменные окружения явно
-dotenv.config();
+setupNetwork();
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { askLogin } from './input';

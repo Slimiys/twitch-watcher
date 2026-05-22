@@ -8,6 +8,7 @@ import { WEBSOCKET_URL, PUBSUB_TOPICS } from './constants';
 import { GraphQLClient } from './GraphQLClient';
 import { logger } from './logger';
 import { loadRetryConfig } from './configLoader';
+import { isNetworkError } from './errorUtils';
 
 /**
  * Обработчик событий WebSocket
@@ -157,11 +158,13 @@ export class WebSocketManager {
    */
   private async validateTokenAndGetUserId(): Promise<string | null> {
     try {
+      const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
       const response = await fetch('https://id.twitch.tv/oauth2/validate', {
         method: 'GET',
         headers: {
           'Authorization': `OAuth ${this.authToken}`,
         },
+        signal: AbortSignal.timeout(fetchTimeoutMs),
       });
 
       if (response.status === 200) {
@@ -177,28 +180,24 @@ export class WebSocketManager {
         }
         
         return validatedUserId;
+      } else if (response.status === 401) {
+        logger.warn(`⚠️  Токен отклонён Twitch (401) — обновите token в .env или config.json`);
+        return null;
       } else {
-        logger.warn(`⚠️  Token validation failed: ${response.status} ${response.statusText}`);
+        logger.warn(`⚠️  Ответ валидации токена: ${response.status} ${response.statusText}`);
         return null;
       }
     } catch (error: any) {
       const errorMessage = error.message || String(error);
-      logger.warn(`⚠️  Token validation error: ${errorMessage}`);
-      
-      // Детальная диагностика сетевых ошибок
-      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
-        logger.error(`❌  Сетевая ошибка при валидации токена через id.twitch.tv`);
-        logger.error(`   Возможные причины:`);
-        logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
-        logger.error(`   - Проблемы с интернет-соединением`);
-        logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
-        if (error.code) {
-          logger.error(`   Код ошибки: ${error.code}`);
-        }
-        logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+      if (isNetworkError(error)) {
+        logger.warn(
+          `⚠️  Сетевая ошибка при повторной проверке токена (id.twitch.tv): ${errorMessage} — токен не считается невалидным`
+        );
+        // При сетевой ошибке используем user_id, полученный при старте приложения
+        return this.userId || null;
       }
-      
-      return null;
+      logger.warn(`⚠️  Token validation error: ${errorMessage}`);
+      return this.userId || null;
     }
   }
 
@@ -212,10 +211,14 @@ export class WebSocketManager {
 
     this.isRunning = true;
     
-    // Валидируем токен и получаем правильный user_id
-    const validatedUserId = await this.validateTokenAndGetUserId();
-    if (!validatedUserId) {
-      logger.warn(`⚠️  Token validation failed, but continuing anyway...`);
+    // user_id уже получен при старте StreamWatcher — повторная проверка только при необходимости
+    if (this.userId) {
+      logger.verbose(`ℹ️  WebSocket: используем user_id ${this.userId} (уже проверен при старте)`);
+    } else {
+      const validatedUserId = await this.validateTokenAndGetUserId();
+      if (!validatedUserId) {
+        logger.warn(`⚠️  Не удалось получить user_id для WebSocket, продолжаем подключение...`);
+      }
     }
     
     await this.connect();
@@ -253,6 +256,8 @@ export class WebSocketManager {
         this.ws.on('open', () => {
           logger.info('🔌  WebSocket connected');
           this.reconnectAttempts = 0;
+          // Сбрасываем старые DNS-ошибки — соединение восстановлено
+          this.criticalErrors = [];
           
           if (this.isFirstConnection) {
             // При первом подключении просто подписываемся на user топик

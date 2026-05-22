@@ -101,6 +101,8 @@ describe('TwitchAPI', () => {
     it('должен установить isOnline в false когда стример офлайн', async () => {
       const mockGraphQLClient = (twitchAPI as any).graphqlClient;
       mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
+      mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
+      mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
 
       const streamerInfo: StreamerInfo = {
         username: 'testuser',
