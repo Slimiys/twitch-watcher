@@ -3212,6 +3212,20 @@ function setupStickyEventsSection() {
     // Оставляем пустую функцию для совместимости
 }
 
+/** Запуск опроса API и автообновления (не ждём Chart.js CDN и window.load) */
+let dashboardCoreStarted = false;
+
+function startDashboardCore() {
+    if (dashboardCoreStarted) {
+        return;
+    }
+    dashboardCoreStarted = true;
+    checkInitializationStatus();
+    startAutoUpdate();
+}
+
+document.addEventListener('DOMContentLoaded', startDashboardCore);
+
 window.addEventListener('load', () => {
     // Применяем настройки при загрузке (только если DOM готов)
     try {
@@ -3283,11 +3297,6 @@ window.addEventListener('load', () => {
         settingsBtn.addEventListener('click', showSettingsModal);
     }
     
-    // Проверяем статус инициализации
-    checkInitializationStatus();
-    
-    startAutoUpdate();
-    
     // Раздел событий удален
     
     // Добавляем обработчик для кнопки заполнения тестовыми данными
@@ -3354,7 +3363,7 @@ window.addEventListener('load', () => {
     
     // Закрываем меню при клике вне его
     document.addEventListener('click', (e) => {
-        if (exportDropdown && !exportDropdown.contains(e.target) && !exportBtn.contains(e.target)) {
+        if (exportDropdown && !exportDropdown.contains(e.target) && exportBtn && !exportBtn.contains(e.target)) {
             closeExportDropdown();
         }
         
@@ -3384,9 +3393,6 @@ window.addEventListener('load', () => {
             toggleColumnSettings();
         });
     }
-    
-    // Проверяем статус инициализации
-    checkInitializationStatus();
     
     // Инициализация событий отключена
     
