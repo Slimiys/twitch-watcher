@@ -1118,8 +1118,9 @@ async function updateStatistics() {
                         const sortClass = isSorted ? ` sort-${tableSort.direction}` : '';
                         const clickHandler = isSortable ? ` onclick="handleTableSort('${col.key}')"` : '';
                         const cursorStyle = isSortable ? ' style="cursor: pointer; user-select: none;"' : '';
+                        const notifyClass = col.key === 'notify' ? ' notify-header' : '';
                         
-                        return `<th class="table-header${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}>${col.label}${sortIcon}</th>`;
+                        return `<th class="table-header${notifyClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}>${col.label}${sortIcon}</th>`;
                     }).join('')}
                 </tr>
             </thead>
@@ -1132,11 +1133,12 @@ async function updateStatistics() {
                                 .replace(/&/g, '&amp;')
                                 .replace(/"/g, '&quot;');
                             return `<td class="notify-cell">
-                                <button type="button"
+                                <span role="button" tabindex="0"
                                     class="streamer-notify-toggle ${notifyOn ? 'streamer-notify-on' : 'streamer-notify-off'}"
                                     data-streamer="${safeAttr}"
                                     onclick="toggleStreamerNotify(this)"
-                                    title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</button>
+                                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStreamerNotify(this);}"
+                                    title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</span>
                             </td>`;
                         })() : ''}
                         ${visibleColumns.streamer !== false ? (() => {

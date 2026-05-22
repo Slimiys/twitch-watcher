@@ -1524,27 +1524,52 @@ td.invalid-time span {
     border: 1px solid #adadb8;
 }
 
-/* Переключатель уведомлений по стримеру */
-.notify-cell {
-    width: 44px;
+/* Колонка уведомлений: заголовок и ячейки с одним выравниванием */
+th.notify-header,
+td.notify-cell {
+    width: 36px;
+    min-width: 36px;
+    max-width: 36px;
     text-align: center;
     vertical-align: middle;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+th.notify-header {
+    text-transform: none;
+    font-size: 16px;
 }
 
 .streamer-notify-toggle {
-    background: transparent;
-    border: 1px solid #464649;
-    border-radius: 6px;
+    display: inline-block;
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
     cursor: pointer;
     font-size: 16px;
     line-height: 1;
-    padding: 4px 8px;
-    transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+    padding: 0;
+    margin: 0;
+    vertical-align: middle;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity 0.2s, transform 0.15s;
 }
 
-.streamer-notify-toggle:hover {
-    background: rgba(145, 71, 255, 0.15);
-    border-color: #9147ff;
+.streamer-notify-toggle:hover,
+.streamer-notify-toggle:focus,
+.streamer-notify-toggle:focus-visible,
+.streamer-notify-toggle:active {
+    background: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    transform: scale(1.1);
 }
 
 .streamer-notify-toggle.streamer-notify-off {
