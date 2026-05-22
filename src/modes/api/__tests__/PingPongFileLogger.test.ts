@@ -31,6 +31,22 @@ describe('PingPongFileLogger', () => {
     expect(fs.existsSync(p2)).toBe(false);
   });
 
+  it('удаляет оба файла при clearOnStartup', () => {
+    const logger = createLogger(100);
+    const [p1, p2] = logger.getLogPaths();
+
+    logger.append('old-line');
+    expect(fs.existsSync(p1)).toBe(true);
+
+    logger.clearOnStartup();
+
+    expect(fs.existsSync(p1)).toBe(false);
+    expect(fs.existsSync(p2)).toBe(false);
+
+    logger.append('fresh-line');
+    expect(fs.readFileSync(p1, 'utf8')).toContain('fresh-line');
+  });
+
   it('переключается на второй файл, затем очищает первый (ping-pong)', () => {
     const logger = createLogger(5);
     const [p1, p2] = logger.getLogPaths();

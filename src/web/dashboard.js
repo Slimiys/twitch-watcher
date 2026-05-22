@@ -70,7 +70,6 @@ try {
 } catch (e) {
     streamerNotifyPrefs = {};
 }
-}
 
 // Настройки сортировки таблицы
 let tableSort = {
@@ -972,9 +971,13 @@ async function updateStatistics() {
         return;
     }
 
-    const statusChanges = detectStreamerStatusChanges(stats);
-    if (statusChanges.length > 0) {
-        processStreamStatusNotifications(statusChanges);
+    try {
+        const statusChanges = detectStreamerStatusChanges(stats);
+        if (statusChanges.length > 0) {
+            processStreamStatusNotifications(statusChanges);
+        }
+    } catch (e) {
+        console.warn('Stream status notifications failed:', e);
     }
 
     // Фильтруем офлайн стримеров, если они скрыты
@@ -1125,11 +1128,13 @@ async function updateStatistics() {
                     <tr>
                         ${visibleColumns.notify !== false ? (() => {
                             const notifyOn = isStreamerNotifyEnabled(s.streamerName);
-                            const safeName = escapeHtml(s.streamerName);
+                            const safeAttr = String(s.streamerName)
+                                .replace(/&/g, '&amp;')
+                                .replace(/"/g, '&quot;');
                             return `<td class="notify-cell">
                                 <button type="button"
                                     class="streamer-notify-toggle ${notifyOn ? 'streamer-notify-on' : 'streamer-notify-off'}"
-                                    data-streamer="${safeName}"
+                                    data-streamer="${safeAttr}"
                                     onclick="toggleStreamerNotify(this)"
                                     title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</button>
                             </td>`;

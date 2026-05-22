@@ -40,6 +40,26 @@ export class PingPongFileLogger {
   }
 
   /**
+   * Удаляет оба файла логов (вызывается при старте приложения).
+   */
+  clearOnStartup(): void {
+    for (const filePath of this.paths) {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch {
+        try {
+          fs.truncateSync(filePath, 0);
+        } catch {
+          // игнорируем — запись начнётся с нового файла
+        }
+      }
+    }
+    this.activeIndex = 0;
+  }
+
+  /**
    * Выбирает файл для записи: переключение или очистка по правилу ping-pong.
    */
   private resolveWritablePath(): string {
@@ -77,5 +97,11 @@ export function createPingPongFileLoggerFromEnv(): PingPongFileLogger | null {
   const maxMb = parseInt(process.env.LOG_FILE_MAX_MB || '100', 10);
   const maxBytes = (Number.isFinite(maxMb) && maxMb > 0 ? maxMb : 100) * 1024 * 1024;
 
-  return new PingPongFileLogger(logDir, baseName, maxBytes);
+  const logger = new PingPongFileLogger(logDir, baseName, maxBytes);
+  const clearOnStart = process.env.LOG_CLEAR_ON_START !== 'false'
+    && process.env.LOG_CLEAR_ON_START !== '0';
+  if (clearOnStart) {
+    logger.clearOnStartup();
+  }
+  return logger;
 }
