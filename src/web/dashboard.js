@@ -2256,9 +2256,25 @@ function showStreamToast(isOnline, streamerName) {
 }
 
 /**
- * Показывает системное уведомление браузера
+ * Параметры ОС-уведомления (уникальный tag — иначе Windows заменяет без нового toast)
  */
-function showStreamOsNotification(isOnline, streamerName) {
+function buildOsNotificationOptions(streamerName, isOnline) {
+    const safeName = String(streamerName || 'unknown').toLowerCase();
+    return {
+        body: isOnline
+            ? `${streamerName} начал трансляцию`
+            : `${streamerName} завершил трансляцию`,
+        tag: `tw-${safeName}-${isOnline ? 'up' : 'down'}-${Date.now()}`,
+        renotify: true,
+        silent: false,
+    };
+}
+
+/**
+ * Показывает системное уведомление браузера
+ * @param {number} delayMs задержка (для пачки уведомлений под Windows)
+ */
+function showStreamOsNotification(isOnline, streamerName, delayMs = 0) {
     const settings = loadSettings();
     if (!settings.osNotifications || !('Notification' in window)) {
         return;
@@ -2267,13 +2283,20 @@ function showStreamOsNotification(isOnline, streamerName) {
         return;
     }
     const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
-    const body = isOnline
-        ? `${streamerName} начал трансляцию`
-        : `${streamerName} завершил трансляцию`;
-    try {
-        new Notification(title, { body, tag: `stream-${streamerName}-${isOnline ? 'up' : 'down'}` });
-    } catch (e) {
-        console.warn('OS notification failed:', e);
+    const options = buildOsNotificationOptions(streamerName, isOnline);
+
+    const fire = () => {
+        try {
+            new Notification(title, options);
+        } catch (e) {
+            console.warn('OS notification failed:', e);
+        }
+    };
+
+    if (delayMs > 0) {
+        setTimeout(fire, delayMs);
+    } else {
+        fire();
     }
 }
 
@@ -2293,16 +2316,21 @@ function processStreamStatusNotifications(items) {
         return;
     }
 
-    items.forEach((item) => {
+    items.forEach((item, index) => {
         const streamerName = item.streamer || item.streamerName;
         if (!streamerName || !isStreamerNotifyEnabled(streamerName)) {
             return;
         }
         const isOnline = item.type === 'stream-up';
+        const osDelayMs = index * 400;
         showStreamToast(isOnline, streamerName);
-        showStreamOsNotification(isOnline, streamerName);
+        showStreamOsNotification(isOnline, streamerName, osDelayMs);
         if (settings.soundNotifications) {
-            playNotificationSound(isOnline);
+            if (osDelayMs > 0) {
+                setTimeout(() => playNotificationSound(isOnline), osDelayMs);
+            } else {
+                playNotificationSound(isOnline);
+            }
         }
     });
 }
@@ -3812,10 +3840,7 @@ async function testOsNotification(isOnline) {
         ? `${NOTIFICATION_TEST_STREAMER} начал трансляцию`
         : `${NOTIFICATION_TEST_STREAMER} завершил трансляцию`;
     try {
-        const notification = new Notification(title, {
-            body,
-            tag: `test-stream-${isOnline ? 'up' : 'down'}`,
-        });
+        const notification = new Notification(title, buildOsNotificationOptions(NOTIFICATION_TEST_STREAMER, isOnline));
         if (!notification) {
             throw new Error('Notification constructor returned empty');
         }
