@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
+    "certs:generate": "node scripts/generate-ssl-certs.js",
     "prepare": "husky install",
     "commitlint": "commitlint --edit"
   },

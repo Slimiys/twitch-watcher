@@ -3,4 +3,5 @@
  */
 
 export * from './WebServer';
+export * from './httpsCredentials';
 

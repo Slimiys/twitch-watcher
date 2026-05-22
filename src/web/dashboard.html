@@ -10,7 +10,7 @@
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="dashboard.css?v=3">
-    <script src="dashboard.js?v=7" defer></script>
+    <script src="dashboard.js?v=8" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -254,7 +254,7 @@
                     <h4 class="settings-section-title">Уведомления</h4>
                     <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0 0 16px 0;">
                         Проверка без смены статуса стримера. ОС-уведомления — через браузер на этом ПК.
-                        По HTTP с IP (192.168.x.x) браузер их не покажет; нужен localhost или HTTPS.
+                        По HTTP с IP браузер их не покажет; на сервере: WEB_SERVER_HTTPS=true, затем https://IP:3001.
                     </p>
                     <div class="test-notify-grid">
                         <div class="test-notify-group">

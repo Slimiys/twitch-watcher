@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
 # DNS/HTTPS проверки в entrypoint
-RUN apk add --no-cache bind-tools curl
+RUN apk add --no-cache bind-tools curl openssl
 
 WORKDIR /usr/src/app
 

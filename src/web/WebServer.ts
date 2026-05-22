@@ -3,9 +3,15 @@
  */
 
 import express, { Express, Request, Response } from 'express';
+import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../modes/api/logger';
+import {
+  ensureHttpsCredentials,
+  getWebServerScheme,
+  isWebServerHttpsEnabled,
+} from './httpsCredentials';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -896,19 +902,38 @@ export class WebServer {
       return;
     }
 
-    this.server = this.app.listen(this.port, () => {
-      logger.info(`Web server started on port ${this.port}`);
-      logger.verbose(`Dashboard: http://localhost:${this.port}`);
-      logger.verbose(`API: http://localhost:${this.port}/api`);
-    });
+    const scheme = getWebServerScheme();
+    const onListening = () => {
+      logger.info(`Web server started on port ${this.port} (${scheme.toUpperCase()})`);
+      logger.verbose(`Dashboard: ${scheme}://localhost:${this.port}`);
+      logger.verbose(`API: ${scheme}://localhost:${this.port}/api`);
+      if (isWebServerHttpsEnabled()) {
+        logger.verbose('   При первом открытии в браузере подтвердите самоподписанный сертификат.');
+      }
+    };
 
-    this.server.on('error', (error: NodeJS.ErrnoException) => {
+    const onError = (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
         logger.error(`Port ${this.port} is already in use`);
       } else {
         logger.error('Web server error:', error);
       }
-    });
+    };
+
+    try {
+      if (isWebServerHttpsEnabled()) {
+        const { cert, key } = ensureHttpsCredentials();
+        this.server = https.createServer({ cert, key }, this.app);
+        this.server.listen(this.port, onListening);
+      } else {
+        this.server = this.app.listen(this.port, onListening);
+      }
+      this.server.on('error', onError);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to start web server with HTTPS: ${message}`);
+      throw error;
+    }
   }
 
   /**

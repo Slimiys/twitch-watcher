@@ -2134,7 +2134,8 @@ function getOsNotificationAvailability() {
                 ok: false,
                 reason: 'insecure',
                 message: 'Уведомления ОС недоступны по HTTP с IP-адреса (например http://192.168.x.x). '
-                    + 'Откройте дашборд как http://localhost:3001 с пробросом порта или через HTTPS.',
+                    + 'Включите WEB_SERVER_HTTPS=true в .env на сервере и откройте https://IP:3001, '
+                    + 'или используйте http://localhost:3001 через SSH-туннель.',
             };
         }
     }

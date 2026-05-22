@@ -4,6 +4,7 @@
 
 import * as http from 'http';
 import { logger } from '../modes/api/logger';
+import { getWebServerScheme } from '../web/httpsCredentials';
 
 /**
  * Статус компонента
@@ -123,8 +124,9 @@ export class HealthCheckServer {
         // Редирект на веб-интерфейс (порт 3001)
         const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
         const host = req.headers.host?.split(':')[0] || 'localhost';
+        const webScheme = getWebServerScheme();
         res.writeHead(302, { 
-          'Location': `http://${host}:${webPort}/`,
+          'Location': `${webScheme}://${host}:${webPort}/`,
           'Content-Type': 'text/plain'
         });
         res.end(`Redirecting to web dashboard on port ${webPort}...`);
