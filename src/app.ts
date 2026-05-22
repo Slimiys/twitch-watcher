@@ -138,7 +138,7 @@ async function startAPIMode(): Promise<void> {
     // Запускаем веб-сервер даже без токена, чтобы показать ошибку в интерфейсе
     const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
     const webServer = new WebServer(webPort);
-    webServer.start();
+    await webServer.start();
     console.log(`✅  Web server started on port ${webPort} (watcher disabled - no token)`);
     
     // Не выходим из процесса, чтобы веб-сервер продолжал работать

@@ -1,9 +1,7 @@
 /**
  * Генерация самоподписанного сертификата для HTTPS дашборда.
  * Использование: npm run certs:generate
- * Переменные: SSL_DIR, SSL_CERT_CN, SSL_EXTRA_SANS (через .env или export)
  */
-const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -14,60 +12,47 @@ const certPath = process.env.SSL_CERT_PATH || path.join(dir, 'server.crt');
 const keyPath = process.env.SSL_KEY_PATH || path.join(dir, 'server.key');
 const cn = (process.env.SSL_CERT_CN || 'twitch-watcher').replace(/"/g, '');
 
-function buildSan() {
-  const entries = ['DNS:localhost', 'IP:127.0.0.1'];
+function buildAltNames() {
+  const altNames = [
+    { type: 2, value: 'localhost' },
+    { type: 7, ip: '127.0.0.1' },
+  ];
   const extra = (process.env.SSL_EXTRA_SANS || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   for (const item of extra) {
     if (/^\d{1,3}(\.\d{1,3}){3}$/.test(item)) {
-      entries.push(`IP:${item}`);
+      altNames.push({ type: 7, ip: item });
     } else {
-      entries.push(`DNS:${item}`);
+      altNames.push({ type: 2, value: item });
     }
   }
-  return entries.join(',');
+  return altNames;
 }
 
-fs.mkdirSync(path.dirname(certPath), { recursive: true });
-const san = buildSan();
-const cmd = [
-  'openssl req -x509',
-  '-newkey rsa:2048',
-  '-nodes',
-  `-keyout "${keyPath}"`,
-  `-out "${certPath}"`,
-  '-days 825',
-  `-subj "/CN=${cn}"`,
-  `-addext "subjectAltName=${san}"`,
-].join(' ');
-
-const simpleCmd = [
-  'openssl req -x509',
-  '-newkey rsa:2048',
-  '-nodes',
-  `-keyout "${keyPath}"`,
-  `-out "${certPath}"`,
-  '-days 825',
-  `-subj "/CN=${cn}"`,
-].join(' ');
-
-try {
-  execSync(cmd, { stdio: 'inherit' });
+async function main() {
+  const { generate } = await import('selfsigned');
+  fs.mkdirSync(path.dirname(certPath), { recursive: true });
+  const altNames = buildAltNames();
+  const pems = await generate([{ name: 'commonName', value: cn }], {
+    algorithm: 'sha256',
+    keySize: 2048,
+    extensions: [
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+      { name: 'extKeyUsage', serverAuth: true },
+      { name: 'subjectAltName', altNames },
+    ],
+  });
+  fs.writeFileSync(certPath, pems.cert, 'utf8');
+  fs.writeFileSync(keyPath, pems.private, 'utf8');
   console.log(`\n✅  Certificate: ${certPath}`);
   console.log(`✅  Private key:  ${keyPath}`);
-  console.log(`    SAN: ${san}`);
-} catch (e) {
-  console.warn('⚠️  -addext не сработал, пробуем без SAN...');
-  try {
-    execSync(simpleCmd, { stdio: 'inherit' });
-    console.log(`\n✅  Certificate (no SAN): ${certPath}`);
-    console.log(`✅  Private key:  ${keyPath}`);
-  } catch (e2) {
-    console.error('❌  openssl не найден или команда завершилась с ошибкой.');
-    console.error('    Termux: pkg install openssl');
-    process.exit(1);
-  }
+  console.log('\nВ .env: WEB_SERVER_HTTPS=true');
 }
-console.log('\nВ .env добавьте: WEB_SERVER_HTTPS=true');
+
+main().catch((e) => {
+  console.error('❌', e.message || e);
+  process.exit(1);
+});

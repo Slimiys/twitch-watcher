@@ -221,7 +221,7 @@ export class StreamWatcher {
     
     // Запускаем веб-сервер СРАЗУ, чтобы интерфейс был доступен во время инициализации
     this.updateInitializationStatus('Starting web server...', 10);
-    this.startWebServer();
+    await this.startWebServer();
     
     // Небольшая задержка, чтобы веб-сервер успел запуститься
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -1638,12 +1638,18 @@ export class StreamWatcher {
   /**
    * Запускает веб-сервер для dashboard
    */
-  private startWebServer(): void {
+  private async startWebServer(): Promise<void> {
     const port = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
-    
+
     this.webServer = new WebServer(port);
     this.webServer.setStatisticsProvider(this);
-    this.webServer.start();
+    try {
+      await this.webServer.start();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`❌  Web server failed to start: ${message}`);
+      throw error;
+    }
   }
 
   /**

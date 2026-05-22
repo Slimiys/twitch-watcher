@@ -180,6 +180,21 @@ export class WebServer {
   private setupRoutes(): void {
     // API маршруты - должны быть ДО статических файлов
     // Эндпоинт для проверки статуса инициализации
+    this.app.get('/api/server-info', (_req: Request, res: Response) => {
+      const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      res.json({
+        scheme: getWebServerScheme(),
+        httpsEnabled: isWebServerHttpsEnabled(),
+        port: this.port,
+        webServerHttpsEnv: process.env.WEB_SERVER_HTTPS ?? null,
+        certPath,
+        keyPath,
+        certExists: fs.existsSync(certPath),
+        keyExists: fs.existsSync(keyPath),
+        pid: process.pid,
+      });
+    });
+
     this.app.get('/api/initialization-status', (req: Request, res: Response) => {
       try {
         const status = this.getInitializationStatus();
@@ -897,7 +912,7 @@ export class WebServer {
   /**
    * Запускает веб-сервер
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this.server) {
       logger.warn('Web server is already running');
       return;
@@ -905,6 +920,8 @@ export class WebServer {
 
     const scheme = getWebServerScheme();
     const httpsEnv = process.env.WEB_SERVER_HTTPS ?? '(not set)';
+    console.log(`[WebServer] WEB_SERVER_HTTPS=${httpsEnv} → ${scheme.toUpperCase()} on port ${this.port}`);
+
     if (isWebServerHttpsEnabled()) {
       const { certPath, keyPath } = resolveHttpsCredentialPaths();
       logger.info(`🔐  WEB_SERVER_HTTPS=${httpsEnv} — дашборд только по HTTPS`);
@@ -912,20 +929,25 @@ export class WebServer {
       logger.verbose(`    key:  ${keyPath}`);
     } else if (httpsEnv !== '(not set)' && httpsEnv.trim() !== '') {
       logger.warn(`⚠️  WEB_SERVER_HTTPS=${httpsEnv} не распознан — используется HTTP`);
+      console.log('[WebServer] ⚠️  HTTPS не включён — открывайте http://, не https://');
     }
 
     const onListening = () => {
       logger.info(`Web server started on port ${this.port} (${scheme.toUpperCase()})`);
+      console.log(`[WebServer] ✅  Listening ${scheme}://0.0.0.0:${this.port}`);
       logger.verbose(`Dashboard: ${scheme}://0.0.0.0:${this.port}`);
       logger.verbose(`API: ${scheme}://0.0.0.0:${this.port}/api`);
       if (isWebServerHttpsEnabled()) {
         logger.verbose('   Откройте https://<IP>:3001 (не http). Подтвердите самоподписанный сертификат.');
+      } else {
+        logger.warn('   HTTPS выключен: https:// в браузере даст ERR_SSL_PROTOCOL_ERROR');
       }
     };
 
     const onError = (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${this.port} is already in use`);
+        logger.error(`Port ${this.port} is already in use — остановите старый процесс: fuser -k ${this.port}/tcp`);
+        console.log(`[WebServer] ❌  Порт ${this.port} занят. Termux: fuser -k ${this.port}/tcp`);
       } else {
         logger.error('Web server error:', error);
       }
@@ -933,7 +955,7 @@ export class WebServer {
 
     try {
       if (isWebServerHttpsEnabled()) {
-        const { cert, key } = ensureHttpsCredentials();
+        const { cert, key } = await ensureHttpsCredentials();
         this.server = https.createServer({ cert, key }, this.app);
         this.server.listen(this.port, '0.0.0.0', onListening);
       } else {
@@ -943,6 +965,7 @@ export class WebServer {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to start web server with HTTPS: ${message}`);
+      console.log(`[WebServer] ❌  HTTPS startup failed: ${message}`);
       throw error;
     }
   }
