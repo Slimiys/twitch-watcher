@@ -2159,6 +2159,9 @@ function playNotificationSound(isOnline) {
     }
 }
 
+/** Имя стримера для тестовых уведомлений */
+const NOTIFICATION_TEST_STREAMER = 'TestStreamer';
+
 /**
  * Показывает toast для смены статуса стрима
  */
@@ -3299,6 +3302,11 @@ window.addEventListener('load', () => {
     }
     
     // Обработчик для кнопки настроек
+    const testBtn = document.getElementById('testBtn');
+    if (testBtn) {
+        testBtn.addEventListener('click', showTestModal);
+    }
+
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', showSettingsModal);
@@ -3656,6 +3664,99 @@ function closeConfirmModal() {
 }
 
 /**
+ * Привязывает закрытие модального окна по клику на overlay (один раз)
+ */
+function bindModalOverlayClose(modal, closeFn) {
+    if (!modal || modal.dataset.overlayCloseBound === '1') {
+        return;
+    }
+    modal.dataset.overlayCloseBound = '1';
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeFn();
+        }
+    });
+}
+
+/**
+ * Показывает панель тестирования
+ */
+function showTestModal() {
+    const modal = document.getElementById('testModal');
+    if (!modal) {
+        return;
+    }
+    modal.style.display = 'flex';
+    bindModalOverlayClose(modal, closeTestModal);
+
+    const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeTestModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+}
+
+/**
+ * Закрывает панель тестирования
+ */
+function closeTestModal() {
+    const modal = document.getElementById('testModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * Тест toast-уведомления (без проверки настроек)
+ */
+function testToastNotification(isOnline) {
+    const type = isOnline ? 'stream-up' : 'stream-down';
+    const message = isOnline
+        ? `${NOTIFICATION_TEST_STREAMER} — начал стрим`
+        : `${NOTIFICATION_TEST_STREAMER} — завершил стрим`;
+    showNotification(type, message, 6000);
+}
+
+/**
+ * Тест уведомления ОС (без проверки настроек)
+ */
+async function testOsNotification(isOnline) {
+    if (!('Notification' in window)) {
+        showNotification('warning', 'Браузер не поддерживает уведомления ОС');
+        return;
+    }
+    if (Notification.permission !== 'granted') {
+        const granted = await requestOsNotificationPermission();
+        if (!granted) {
+            showNotification('warning', 'Разрешите уведомления в настройках браузера для этого сайта');
+            return;
+        }
+    }
+    const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
+    const body = isOnline
+        ? `${NOTIFICATION_TEST_STREAMER} начал трансляцию`
+        : `${NOTIFICATION_TEST_STREAMER} завершил трансляцию`;
+    try {
+        new Notification(title, {
+            body,
+            tag: `test-stream-${isOnline ? 'up' : 'down'}`,
+        });
+    } catch (e) {
+        console.warn('Test OS notification failed:', e);
+        showNotification('error', 'Не удалось показать уведомление ОС');
+    }
+}
+
+/**
+ * Тест звукового уведомления (без проверки настроек)
+ */
+function testSoundNotification(isOnline) {
+    playNotificationSound(isOnline);
+}
+
+/**
  * Показывает панель настроек
  */
 function showSettingsModal() {
@@ -3685,14 +3786,8 @@ function showSettingsModal() {
     }
     
     modal.style.display = 'flex';
-    
-    // Закрытие по клику на overlay
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            closeSettingsModal();
-        }
-    });
-    
+    bindModalOverlayClose(modal, closeSettingsModal);
+
     // Закрытие по Escape
     const escapeHandler = (e) => {
         if (e.key === 'Escape') {
@@ -4019,6 +4114,11 @@ window.importSettings = importSettings;
 window.saveSettings = saveSettings;
 window.toggleStreamerNotify = toggleStreamerNotify;
 window.showSettingsModal = showSettingsModal;
+window.showTestModal = showTestModal;
+window.closeTestModal = closeTestModal;
+window.testToastNotification = testToastNotification;
+window.testOsNotification = testOsNotification;
+window.testSoundNotification = testSoundNotification;
 window.handleSettingsImport = handleSettingsImport;
 
 /**

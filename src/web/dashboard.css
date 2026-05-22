@@ -1784,10 +1784,42 @@ th.notify-header {
     border-color: #9147ff;
 }
 
-.settings-modal-content {
+.settings-modal-content,
+.test-modal-content {
     max-width: 600px;
     max-height: 90vh;
     overflow-y: auto;
+}
+
+.test-modal-content {
+    max-width: 520px;
+}
+
+.test-notify-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.test-notify-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.test-notify-label {
+    flex: 0 0 100%;
+    color: #adadb8;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.test-notify-group .modal-btn {
+    flex: 1;
+    min-width: 120px;
 }
 
 .settings-modal-body {

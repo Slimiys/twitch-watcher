@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=2">
-    <script src="dashboard.js?v=5" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=3">
+    <script src="dashboard.js?v=6" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -54,6 +54,10 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+                <button class="settings-btn" id="testBtn" title="Тестирование">
+                    <span>🧪</span>
+                    <span>Tests</span>
+                </button>
                 <button class="settings-btn" id="settingsBtn" title="Settings">
                     <span>⚙️</span>
                     <span>Settings</span>
@@ -234,6 +238,44 @@
             <div class="modal-footer">
                 <button class="modal-btn modal-btn-secondary" onclick="closeConfirmModal()">Отмена</button>
                 <button class="modal-btn modal-btn-primary" id="confirmModalConfirmBtn">Подтвердить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель тестирования -->
+    <div id="testModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content test-modal-content">
+            <div class="modal-header">
+                <h3>Тестирование</h3>
+                <button class="modal-close" onclick="closeTestModal()" title="Закрыть">×</button>
+            </div>
+            <div class="modal-body settings-modal-body">
+                <div class="settings-section" style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">
+                    <h4 class="settings-section-title">Уведомления</h4>
+                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0 0 16px 0;">
+                        Проверка без смены статуса стримера. ОС-уведомления идут через браузер на этом устройстве.
+                    </p>
+                    <div class="test-notify-grid">
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Toast</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testToastNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testToastNotification(false)">Офлайн</button>
+                        </div>
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Уведомления ОС</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testOsNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testOsNotification(false)">Офлайн</button>
+                        </div>
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Звук</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testSoundNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testSoundNotification(false)">Офлайн</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeTestModal()">Закрыть</button>
             </div>
         </div>
     </div>
