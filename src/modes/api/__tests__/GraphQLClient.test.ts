@@ -278,6 +278,46 @@ describe('GraphQLClient', () => {
       expect(result?.availableClaim?.id).toBe('claim123');
     });
 
+    it('должен использовать legacy persisted query при PersistedQueryNotFound', async () => {
+      const mockResponse = {
+        data: {
+          community: {
+            channel: {
+              self: {
+                communityPoints: {
+                  balance: 2500,
+                  availableClaim: null,
+                },
+              },
+            },
+          },
+        },
+      };
+
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            errors: [{ message: 'PersistedQueryNotFound' }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
+
+      const result = await client.getChannelPoints('testuser');
+
+      expect(result?.balance).toBe(2500);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      const secondBody = JSON.parse((global.fetch as any).mock.calls[1][1].body);
+      expect(secondBody.extensions.persistedQuery.sha256Hash).toBe(
+        '9988086babc615a918a1e9a722ff41d98847acac822645209ac7379eecb27152'
+      );
+    });
+
     it('должен вернуть null при ошибке', async () => {
       (global.fetch as any).mockResolvedValueOnce({
         ok: false,

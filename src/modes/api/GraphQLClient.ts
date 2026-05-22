@@ -3,7 +3,7 @@
  */
 
 import { GraphQLOperation, GraphQLResponse } from './types';
-import { GQL_URL, CLIENT_ID } from './constants';
+import { GQL_URL, CLIENT_ID, GQL_OPERATIONS } from './constants';
 import { logger } from './logger';
 import { retryWithExponentialBackoff, RetryConfig } from './retry';
 import { CircuitBreaker } from './CircuitBreaker';
@@ -622,6 +622,53 @@ export class GraphQLClient {
   }
 
   /**
+   * Извлекает баланс и доступный бонус из ответа ChannelPointsContext
+   */
+  private static parseChannelPointsData(
+    data: Record<string, unknown> | undefined
+  ): { balance: number; availableClaim: { id: string } | null } | null {
+    if (!data) {
+      return null;
+    }
+
+    const communityPoints = (data as any).community?.channel?.self?.communityPoints;
+    if (communityPoints != null && typeof communityPoints.balance === 'number') {
+      return {
+        balance: communityPoints.balance,
+        availableClaim: communityPoints.availableClaim ?? null,
+      };
+    }
+
+    const userChannelPoints =
+      (data as any).user?.channel?.self?.communityPoints ??
+      (data as any).user?.self?.communityPoints;
+    if (userChannelPoints != null && typeof userChannelPoints.balance === 'number') {
+      return {
+        balance: userChannelPoints.balance,
+        availableClaim: userChannelPoints.availableClaim ?? null,
+      };
+    }
+
+    const currentUserPoints = (data as any).currentUser?.communityPoints;
+    if (currentUserPoints != null && typeof currentUserPoints.balance === 'number') {
+      return {
+        balance: currentUserPoints.balance,
+        availableClaim: currentUserPoints.availableClaim ?? null,
+      };
+    }
+
+    return null;
+  }
+
+  private static hasPersistedQueryNotFound(response: GraphQLResponse): boolean {
+    return Boolean(
+      response.errors?.some(
+        (e: { message?: string }) => e.message?.includes('PersistedQueryNotFound')
+      )
+    );
+  }
+
+  /**
    * Получает информацию о баллах канала
    * @param username Имя пользователя (channelLogin)
    * @returns Информация о баллах или null
@@ -630,88 +677,63 @@ export class GraphQLClient {
     balance: number;
     availableClaim: { id: string } | null;
   } | null> {
-    // Сначала пробуем с persisted query
-    const operation = {
-      operationName: 'ChannelPointsContext',
-      variables: { channelLogin: username },
-      extensions: {
-        persistedQuery: {
-          version: 1,
-          sha256Hash: '9988086babc615a918a1e9a722ff41d98847acac822645209ac7379eecb27152',
-        },
-      },
-    };
+    const persistedVariants = [
+      GQL_OPERATIONS.ChannelPointsContext,
+      GQL_OPERATIONS.ChannelPointsContextLegacy,
+    ];
 
-    let response = await this.postRequest(operation);
-    
-    // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
-    if (response.errors && response.errors.length > 0) {
-      const hasPersistedQueryError = response.errors.some((e: any) => 
-        e.message && e.message.includes('PersistedQueryNotFound')
-      );
-      
-      if (hasPersistedQueryError) {
-        // Пробуем отправить полный GraphQL запрос без persisted query
-        logger.verbose(`⚠️  PersistedQueryNotFound for ChannelPointsContext, trying full query`);
-        const fullOperation = {
-          operationName: 'ChannelPointsContext',
-          variables: { channelLogin: username },
-          query: `query ChannelPointsContext($channelLogin: String!) {
-            community {
-              channel(login: $channelLogin) {
-                self {
-                  communityPoints {
-                    balance
-                    availableClaim {
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-        };
-        
-        response = await this.postRequest(fullOperation);
+    let lastResponse: GraphQLResponse | null = null;
+
+    for (const template of persistedVariants) {
+      const response = await this.postRequest({
+        operationName: template.operationName,
+        variables: { channelLogin: username },
+        extensions: template.extensions,
+      });
+      lastResponse = response;
+
+      if (response.data && (response.data as any).community === null) {
+        return null;
       }
+
+      const parsed = GraphQLClient.parseChannelPointsData(
+        response.data as Record<string, unknown> | undefined
+      );
+      if (parsed) {
+        return parsed;
+      }
+
+      if (!GraphQLClient.hasPersistedQueryNotFound(response)) {
+        break;
+      }
+
+      logger.verbose(
+        `⚠️  PersistedQueryNotFound for ChannelPointsContext, trying legacy persisted query`
+      );
     }
-    
-    // Пробуем стандартный путь: community.channel.self.communityPoints
-    if (response.data?.community?.channel?.self?.communityPoints) {
-      const points = response.data.community.channel.self.communityPoints;
-      return {
-        balance: points.balance || 0,
-        availableClaim: points.availableClaim || null,
-      };
+
+    const response = lastResponse;
+    if (!response) {
+      return null;
     }
-    
-    // Пробуем альтернативный путь: currentUser.communityPoints (для некоторых случаев)
-    if (response.data?.currentUser?.communityPoints) {
-      const points = response.data.currentUser.communityPoints;
-      return {
-        balance: points.balance || 0,
-        availableClaim: points.availableClaim || null,
-      };
-    }
-    
-    // Логируем, если структура ответа неожиданная (только в verbose, так как баллы обновляются через WebSocket)
+
     if (response.data) {
-      logger.verbose(`⚠️  Unexpected response structure for getChannelPoints(${username}):`, JSON.stringify(response.data).substring(0, 200));
+      logger.verbose(
+        `⚠️  Unexpected response structure for getChannelPoints(${username}):`,
+        JSON.stringify(response.data).substring(0, 200)
+      );
     } else if (response.errors && response.errors.length > 0) {
-      // Не логируем ошибки для getChannelPoints - это опциональная операция
-      // Баллы обновляются через WebSocket в реальном времени
-      const hasPersistedQueryError = response.errors.some((e: any) => 
-        e.message && e.message.includes('PersistedQueryNotFound')
+      const onlyPersistedNotFound = response.errors.every((e: any) =>
+        e.message?.includes('PersistedQueryNotFound')
       );
-      const hasCannotQueryFieldError = response.errors.some((e: any) => 
-        e.message && e.message.includes('Cannot query field')
-      );
-      // Логируем только в verbose режиме для некритичных ошибок
-      if (!hasPersistedQueryError && !hasCannotQueryFieldError) {
-        logger.verbose(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+      if (!onlyPersistedNotFound) {
+        logger.verbose(
+          `⚠️  GraphQL errors for getChannelPoints(${username}):`,
+          response.errors.map((e: any) => e.message).join(', ')
+        );
       }
     }
-    
+
     return null;
   }
 
