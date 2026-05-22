@@ -50,10 +50,26 @@ let availableEventTags = new Set(); // Доступные теги из собы
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
 } catch (e) {
-    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
+    visibleColumns = {notify: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
+}
+
+// Предыдущий статус стримеров (для уведомлений online/offline)
+let previousStreamerStatus = {};
+let streamStatusTrackingReady = false;
+
+// Уведомления по стримерам: true = включено (по умолчанию)
+let streamerNotifyPrefs = {};
+try {
+    const prefs = safeGetLocalStorage('streamerNotifyPrefs');
+    if (prefs) {
+        streamerNotifyPrefs = JSON.parse(prefs);
+    }
+} catch (e) {
+    streamerNotifyPrefs = {};
+}
 }
 
 // Настройки сортировки таблицы
@@ -910,7 +926,14 @@ async function updateStatistics() {
         } else {
             table.innerHTML = emptyMessage;
         }
+        streamStatusTrackingReady = false;
+        previousStreamerStatus = {};
         return;
+    }
+
+    const statusChanges = detectStreamerStatusChanges(stats);
+    if (statusChanges.length > 0) {
+        processStreamStatusNotifications(statusChanges);
     }
 
     // Фильтруем офлайн стримеров, если они скрыты
@@ -1023,6 +1046,7 @@ async function updateStatistics() {
 
     // Определяем колонки с их видимостью
     const columns = [
+        { key: 'notify', label: '🔔', visible: visibleColumns.notify !== false },
         { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
         { key: 'status', label: 'Status', visible: visibleColumns.status !== false },
         { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
@@ -1058,6 +1082,17 @@ async function updateStatistics() {
             <tbody>
                 ${sortedStats.map(s => `
                     <tr>
+                        ${visibleColumns.notify !== false ? (() => {
+                            const notifyOn = isStreamerNotifyEnabled(s.streamerName);
+                            const safeName = escapeHtml(s.streamerName);
+                            return `<td class="notify-cell">
+                                <button type="button"
+                                    class="streamer-notify-toggle ${notifyOn ? 'streamer-notify-on' : 'streamer-notify-off'}"
+                                    data-streamer="${safeName}"
+                                    onclick="toggleStreamerNotify(this)"
+                                    title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</button>
+                            </td>`;
+                        })() : ''}
                         ${visibleColumns.streamer !== false ? (() => {
                             const streamerColor = colorizeStreamerNames ? generateColorFromString(s.streamerName) : null;
                             const colorStyle = streamerColor ? `style="color: ${streamerColor};"` : '';
@@ -1785,8 +1820,12 @@ const defaultSettings = {
     saveChartZoom: false,
     autoUpdateChart: true,
     showToastNotifications: true,
+    osNotifications: false,
     soundNotifications: false
 };
+
+/** @type {AudioContext | null} */
+let notificationAudioContext = null;
 
 /**
  * Загружает настройки из localStorage
@@ -1955,10 +1994,227 @@ function toggleEventTag(tag) {
  */
 function isImportantEvent(event) {
     const importantTypes = [
-        'token-expired', 'token-invalid', 'stream-up', 'claim-success',
+        'token-expired', 'token-invalid', 'stream-up', 'stream-down', 'claim-success',
         'raid-joined', 'points-earned', 'claim-earned'
     ];
     return importantTypes.includes(event.type);
+}
+
+/**
+ * Экранирование HTML
+ */
+function escapeHtml(text) {
+    if (text == null) {
+        return '';
+    }
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+/**
+ * Включены ли уведомления для стримера (online/offline)
+ */
+function isStreamerNotifyEnabled(streamerName) {
+    if (!streamerName) {
+        return true;
+    }
+    const key = streamerName.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(streamerNotifyPrefs, key)) {
+        return streamerNotifyPrefs[key] !== false;
+    }
+    return true;
+}
+
+/**
+ * Сохраняет настройку уведомлений для стримера
+ */
+function setStreamerNotifyEnabled(streamerName, enabled) {
+    const key = streamerName.toLowerCase();
+    streamerNotifyPrefs[key] = enabled;
+    safeSetLocalStorage('streamerNotifyPrefs', JSON.stringify(streamerNotifyPrefs));
+}
+
+/**
+ * Переключает уведомления для стримера (кнопка в таблице)
+ */
+function toggleStreamerNotify(buttonEl) {
+    const streamerName = buttonEl?.dataset?.streamer;
+    if (!streamerName) {
+        return;
+    }
+    const next = !isStreamerNotifyEnabled(streamerName);
+    setStreamerNotifyEnabled(streamerName, next);
+    updateStreamerNotifyButton(buttonEl, next);
+}
+
+/**
+ * Обновляет вид кнопки уведомлений в таблице
+ */
+function updateStreamerNotifyButton(buttonEl, enabled) {
+    if (!buttonEl) {
+        return;
+    }
+    buttonEl.classList.toggle('streamer-notify-off', !enabled);
+    buttonEl.classList.toggle('streamer-notify-on', enabled);
+    buttonEl.textContent = enabled ? '🔔' : '🔕';
+    buttonEl.title = enabled
+        ? 'Уведомления при старте/остановке стрима включены'
+        : 'Уведомления при старте/остановке стрима выключены';
+}
+
+/**
+ * Запрашивает разрешение на уведомления ОС
+ */
+async function requestOsNotificationPermission() {
+    if (!('Notification' in window)) {
+        return false;
+    }
+    if (Notification.permission === 'granted') {
+        return true;
+    }
+    if (Notification.permission === 'denied') {
+        return false;
+    }
+    const result = await Notification.requestPermission();
+    return result === 'granted';
+}
+
+/**
+ * Воспроизводит короткий звук уведомления
+ */
+function playNotificationSound(isOnline) {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+            return;
+        }
+        if (!notificationAudioContext) {
+            notificationAudioContext = new AudioCtx();
+        }
+        const ctx = notificationAudioContext;
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = isOnline ? 880 : 440;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.2);
+    } catch (e) {
+        console.warn('Notification sound failed:', e);
+    }
+}
+
+/**
+ * Показывает toast для смены статуса стрима
+ */
+function showStreamToast(isOnline, streamerName) {
+    const settings = loadSettings();
+    if (!settings.showToastNotifications) {
+        return;
+    }
+    const type = isOnline ? 'stream-up' : 'stream-down';
+    const message = isOnline
+        ? `${streamerName} — начал стрим`
+        : `${streamerName} — завершил стрим`;
+    showNotification(type, message, 6000);
+}
+
+/**
+ * Показывает системное уведомление браузера
+ */
+function showStreamOsNotification(isOnline, streamerName) {
+    const settings = loadSettings();
+    if (!settings.osNotifications || !('Notification' in window)) {
+        return;
+    }
+    if (Notification.permission !== 'granted') {
+        return;
+    }
+    const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
+    const body = isOnline
+        ? `${streamerName} начал трансляцию`
+        : `${streamerName} завершил трансляцию`;
+    try {
+        new Notification(title, { body, tag: `stream-${streamerName}-${isOnline ? 'up' : 'down'}` });
+    } catch (e) {
+        console.warn('OS notification failed:', e);
+    }
+}
+
+/**
+ * Обрабатывает уведомления о смене статуса стрима
+ * @param {Array<{streamer: string, type: string}>} items
+ */
+function processStreamStatusNotifications(items) {
+    if (!items || items.length === 0) {
+        return;
+    }
+    const settings = loadSettings();
+    const anyChannelEnabled = settings.showToastNotifications
+        || settings.osNotifications
+        || settings.soundNotifications;
+    if (!anyChannelEnabled) {
+        return;
+    }
+
+    items.forEach((item) => {
+        const streamerName = item.streamer || item.streamerName;
+        if (!streamerName || !isStreamerNotifyEnabled(streamerName)) {
+            return;
+        }
+        const isOnline = item.type === 'stream-up';
+        showStreamToast(isOnline, streamerName);
+        showStreamOsNotification(isOnline, streamerName);
+        if (settings.soundNotifications) {
+            playNotificationSound(isOnline);
+        }
+    });
+}
+
+/**
+ * Сравнивает статистику и возвращает смены ONLINE/OFFLINE
+ */
+function detectStreamerStatusChanges(stats) {
+    const changes = [];
+    if (!stats || !Array.isArray(stats)) {
+        return changes;
+    }
+
+    if (!streamStatusTrackingReady) {
+        stats.forEach((s) => {
+            if (s.streamerName) {
+                previousStreamerStatus[s.streamerName] = s.status;
+            }
+        });
+        streamStatusTrackingReady = true;
+        return changes;
+    }
+
+    stats.forEach((s) => {
+        const name = s.streamerName;
+        if (!name) {
+            return;
+        }
+        const prev = previousStreamerStatus[name];
+        const current = s.status;
+        if (prev && prev !== current) {
+            if (current === 'ONLINE') {
+                changes.push({ streamer: name, type: 'stream-up' });
+            } else if (current === 'OFFLINE') {
+                changes.push({ streamer: name, type: 'stream-down' });
+            }
+        }
+        previousStreamerStatus[name] = current;
+    });
+
+    return changes;
 }
 
 /**
@@ -2367,6 +2623,15 @@ async function updateEvents(reset = false, loadMore = false) {
                 const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
                 return !existingEventsMap.has(key);
             });
+
+            const streamEvents = trulyNewEvents.filter(
+                (e) => e.type === 'stream-up' || e.type === 'stream-down'
+            );
+            if (streamEvents.length > 0) {
+                processStreamStatusNotifications(
+                    streamEvents.map((e) => ({ streamer: e.streamer, type: e.type }))
+                );
+            }
             
             // Объединяем: новые события в начале, затем уже загруженные
             allLoadedEvents = [...trulyNewEvents, ...allLoadedEvents];
@@ -3353,7 +3618,17 @@ function showSettingsModal() {
     document.getElementById('saveChartZoomSetting').checked = settings.saveChartZoom;
     document.getElementById('autoUpdateChartSetting').checked = settings.autoUpdateChart;
     document.getElementById('showToastNotificationsSetting').checked = settings.showToastNotifications;
+    document.getElementById('osNotificationsSetting').checked = settings.osNotifications;
     document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
+
+    const osHint = document.getElementById('osNotificationsHint');
+    if (osHint) {
+        const denied = 'Notification' in window && Notification.permission === 'denied';
+        osHint.style.display = denied ? 'block' : 'none';
+        osHint.textContent = denied
+            ? 'Уведомления ОС заблокированы в браузере. Разрешите их в настройках сайта.'
+            : 'Разрешите уведомления в браузере при сохранении настроек.';
+    }
     
     modal.style.display = 'flex';
     
@@ -3387,7 +3662,7 @@ function closeSettingsModal() {
 /**
  * Сохраняет настройки
  */
-function saveSettings() {
+async function saveSettings() {
     const settings = {
         fontSize: document.getElementById('fontSizeSetting').value,
         density: document.getElementById('densitySetting').value,
@@ -3396,8 +3671,18 @@ function saveSettings() {
         saveChartZoom: document.getElementById('saveChartZoomSetting').checked,
         autoUpdateChart: document.getElementById('autoUpdateChartSetting').checked,
         showToastNotifications: document.getElementById('showToastNotificationsSetting').checked,
+        osNotifications: document.getElementById('osNotificationsSetting').checked,
         soundNotifications: document.getElementById('soundNotificationsSetting').checked
     };
+
+    if (settings.osNotifications) {
+        const granted = await requestOsNotificationPermission();
+        if (!granted) {
+            settings.osNotifications = false;
+            document.getElementById('osNotificationsSetting').checked = false;
+            showNotification('warning', 'Разрешение на уведомления ОС не получено');
+        }
+    }
     
     saveSettingsToStorage(settings);
     applySettings(settings);
@@ -3462,6 +3747,7 @@ function handleSettingsImport(event) {
             document.getElementById('saveChartZoomSetting').checked = validSettings.saveChartZoom;
             document.getElementById('autoUpdateChartSetting').checked = validSettings.autoUpdateChart;
             document.getElementById('showToastNotificationsSetting').checked = validSettings.showToastNotifications;
+            document.getElementById('osNotificationsSetting').checked = validSettings.osNotifications;
             document.getElementById('soundNotificationsSetting').checked = validSettings.soundNotifications;
             
             showNotification('success', 'Настройки импортированы');
@@ -3515,7 +3801,9 @@ const notificationIcons = {
     success: '✅',
     error: '❌',
     info: 'ℹ️',
-    warning: '⚠️'
+    warning: '⚠️',
+    'stream-up': '📺',
+    'stream-down': '📴'
 };
 
 /**
@@ -3618,10 +3906,11 @@ function showNotification(type, message, duration = 5000) {
     notification.className = `toast-notification ${type}`;
     
     const icon = notificationIcons[type] || notificationIcons.info;
+    const safeMessage = escapeHtml(message).replace(/\n/g, '<br>');
     
     notification.innerHTML = `
         <span class="toast-icon">${icon}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message">${safeMessage}</span>
         <button class="toast-close" onclick="this.parentElement.remove()" title="Закрыть">×</button>
     `;
     
@@ -3674,6 +3963,7 @@ window.closeSettingsModal = closeSettingsModal;
 window.exportSettings = exportSettings;
 window.importSettings = importSettings;
 window.saveSettings = saveSettings;
+window.toggleStreamerNotify = toggleStreamerNotify;
 window.showSettingsModal = showSettingsModal;
 window.handleSettingsImport = handleSettingsImport;
 

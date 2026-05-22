@@ -1515,6 +1515,46 @@ td.invalid-time span {
     background: #f59e0b;
 }
 
+.toast-notification.stream-up {
+    background: linear-gradient(135deg, #9147ff 0%, #00d166 100%);
+}
+
+.toast-notification.stream-down {
+    background: #464649;
+    border: 1px solid #adadb8;
+}
+
+/* Переключатель уведомлений по стримеру */
+.notify-cell {
+    width: 44px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.streamer-notify-toggle {
+    background: transparent;
+    border: 1px solid #464649;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 4px 8px;
+    transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+}
+
+.streamer-notify-toggle:hover {
+    background: rgba(145, 71, 255, 0.15);
+    border-color: #9147ff;
+}
+
+.streamer-notify-toggle.streamer-notify-off {
+    opacity: 0.45;
+}
+
+.streamer-notify-toggle.streamer-notify-on {
+    opacity: 1;
+}
+
 .toast-icon {
     font-size: 20px;
     flex-shrink: 0;

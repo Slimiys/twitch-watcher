@@ -146,6 +146,10 @@
                                 <div class="column-settings-dropdown" id="columnSettingsDropdown">
                                     <div class="column-settings-header">Visible Columns</div>
                                     <label class="column-settings-item">
+                                        <input type="checkbox" data-column="notify" checked>
+                                        <span>Уведомления</span>
+                                    </label>
+                                    <label class="column-settings-item">
                                         <input type="checkbox" data-column="streamer" checked>
                                         <span>Streamer</span>
                                     </label>
@@ -306,10 +310,19 @@
                     </div>
                     <div class="settings-item">
                         <label class="settings-checkbox-label">
+                            <input type="checkbox" id="osNotificationsSetting" class="settings-checkbox">
+                            <span>Уведомления ОС (браузер)</span>
+                        </label>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
                             <input type="checkbox" id="soundNotificationsSetting" class="settings-checkbox">
                             <span>Звуковые уведомления</span>
                         </label>
                     </div>
+                    <p class="settings-hint" id="osNotificationsHint" style="display: none; color: #adadb8; font-size: 12px; margin: 0;">
+                        Разрешите уведомления в браузере при сохранении настроек.
+                    </p>
                 </div>
                 
                 <div class="settings-section">
