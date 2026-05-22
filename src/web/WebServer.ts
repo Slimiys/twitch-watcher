@@ -852,17 +852,22 @@ export class WebServer {
     const streamWatcher = this.statisticsProvider as any;
     if (streamWatcher && typeof streamWatcher.getInitializationStatus === 'function') {
       const status = streamWatcher.getInitializationStatus();
-      // Если статус не определен, возвращаем дефолтный
       if (status && typeof status === 'object') {
+        if (status.isInitialized || status.progress >= 100) {
+          return {
+            isInitialized: true,
+            currentAction: status.currentAction || 'Application ready',
+            progress: Math.max(status.progress || 0, 100),
+          };
+        }
         return status;
       }
     }
 
-    // Если метод не доступен или вернул неверные данные, 
-    // проверяем, запущен ли watcher (если есть статистика, значит готов)
+    // Watcher уже отдаёт статистику — считаем готовым (дашборд не зависает на 0%)
     try {
-      const stats = this.statisticsProvider.getStatistics();
-      if (Array.isArray(stats)) {
+      const stats = this.statisticsProvider.getStatistics(true);
+      if (Array.isArray(stats) && stats.length > 0) {
         // Если можем получить статистику, значит приложение готово
         return {
           isInitialized: true,

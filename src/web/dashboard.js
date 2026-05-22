@@ -661,6 +661,42 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
     }
 }
 
+let initializationPollCount = 0;
+
+/**
+ * Скрывает экран загрузки и показывает дашборд
+ */
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loadingScreen');
+    const mainContainer = document.getElementById('mainContainer');
+    if (!loadingScreen || !mainContainer) {
+        return;
+    }
+    loadingScreen.classList.add('hidden');
+    mainContainer.style.display = 'block';
+    setTimeout(() => {
+        if (loadingScreen.parentNode) {
+            loadingScreen.remove();
+        }
+    }, 500);
+}
+
+/**
+ * Проверяет, отвечает ли API статистикой (приложение уже работает)
+ */
+async function isApplicationReadyViaStats() {
+    try {
+        const response = await fetch(`${API_BASE}/statistics?includeOffline=true`);
+        if (!response.ok) {
+            return false;
+        }
+        const stats = await response.json();
+        return Array.isArray(stats) && stats.length > 0;
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Проверяет статус инициализации приложения
  */
@@ -674,46 +710,51 @@ async function checkInitializationStatus() {
     if (!loadingScreen || !mainContainer || !statusText || !progressBar || !progressText) {
         return;
     }
+
+    initializationPollCount += 1;
     
     try {
-        const response = await fetch('/api/initialization-status');
+        const response = await fetch(`${API_BASE}/initialization-status`);
         if (!response.ok) {
-            // Если API недоступен (404 или другая ошибка), показываем сообщение и продолжаем проверку
             if (response.status === 404) {
                 statusText.textContent = 'Waiting for server to start...';
             } else {
                 statusText.textContent = 'Waiting for server...';
+            }
+            if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
+                hideLoadingScreen();
+                return;
             }
             setTimeout(checkInitializationStatus, 1000);
             return;
         }
         
         const status = await response.json();
+        const progress = Number(status.progress) || 0;
+        const isReady = status.isInitialized === true || progress >= 100;
         
-        // Обновляем статус
         statusText.textContent = status.currentAction || 'Initializing...';
-        progressBar.style.width = `${status.progress}%`;
-        progressText.textContent = `${Math.round(status.progress)}%`;
+        progressBar.style.width = `${Math.min(100, progress)}%`;
+        progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
         
-        // Если инициализация завершена, скрываем экран загрузки
-        // Проверяем либо isInitialized, либо progress >= 100 (на случай если isInitialized не установлен)
-        if ((status.isInitialized || status.progress >= 100) && status.progress >= 100) {
-            setTimeout(() => {
-                loadingScreen.classList.add('hidden');
-                mainContainer.style.display = 'block';
-                // Удаляем экран загрузки из DOM после анимации
-                setTimeout(() => {
-                    if (loadingScreen && loadingScreen.parentNode) {
-                        loadingScreen.remove();
-                    }
-                }, 500);
-            }, 500);
-        } else {
-            // Продолжаем проверку
-            setTimeout(checkInitializationStatus, 500);
+        if (isReady) {
+            setTimeout(hideLoadingScreen, 300);
+            return;
         }
+
+        // Fallback: бэкенд уже отдаёт стримеров, но progress не обновился
+        if (initializationPollCount >= 3 && await isApplicationReadyViaStats()) {
+            hideLoadingScreen();
+            return;
+        }
+
+        setTimeout(checkInitializationStatus, 500);
     } catch (error) {
         statusText.textContent = 'Connecting to server...';
+        if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
+            hideLoadingScreen();
+            return;
+        }
         setTimeout(checkInitializationStatus, 1000);
     }
 }

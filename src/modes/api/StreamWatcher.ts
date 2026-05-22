@@ -887,7 +887,12 @@ export class StreamWatcher {
     for (let i = 0; i < total; i += concurrency) {
       const batch = this.priorityChannels.slice(i, i + concurrency);
       await Promise.all(batch.map(initOne));
-      logger.info(`📋  Прогресс инициализации: ${Math.min(i + concurrency, total)}/${total}`);
+      const done = Math.min(i + concurrency, total);
+      logger.info(`📋  Прогресс инициализации: ${done}/${total}`);
+      if (total > 0) {
+        const initProgress = 55 + Math.round((done / total) * 30);
+        this.updateInitializationStatus(`Loading streamers (${done}/${total})...`, initProgress);
+      }
     }
 
     const onlineCount = Array.from(this.streamers.values()).filter(s => s.isOnline).length;
@@ -1880,6 +1885,9 @@ export class StreamWatcher {
   private updateInitializationStatus(currentAction: string, progress: number): void {
     this.initializationStatus.currentAction = currentAction;
     this.initializationStatus.progress = Math.min(100, Math.max(0, progress));
+    if (this.initializationStatus.progress >= 100) {
+      this.initializationStatus.isInitialized = true;
+    }
   }
 
   /**
