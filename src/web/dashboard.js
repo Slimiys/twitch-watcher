@@ -2111,21 +2111,98 @@ function updateStreamerNotifyButton(buttonEl, enabled) {
         : 'Уведомления при старте/остановке стрима выключены';
 }
 
+/** Время последнего предупреждения о разрешении ОС (чтобы не дублировать toast) */
+let lastOsPermissionWarningAt = 0;
+
+/**
+ * Проверяет, доступны ли Web Notifications в текущем контексте страницы
+ * @returns {{ ok: boolean, reason?: string, message?: string }}
+ */
+function getOsNotificationAvailability() {
+    if (!('Notification' in window)) {
+        return {
+            ok: false,
+            reason: 'unsupported',
+            message: 'Браузер не поддерживает уведомления ОС',
+        };
+    }
+    if (!window.isSecureContext) {
+        const host = window.location.hostname;
+        const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+        if (!isLocalHost) {
+            return {
+                ok: false,
+                reason: 'insecure',
+                message: 'Уведомления ОС недоступны по HTTP с IP-адреса (например http://192.168.x.x). '
+                    + 'Откройте дашборд как http://localhost:3001 с пробросом порта или через HTTPS.',
+            };
+        }
+    }
+    return { ok: true, permission: Notification.permission };
+}
+
+/**
+ * Показывает предупреждение о разрешении ОС без дублей подряд
+ */
+function showOsPermissionWarning(message) {
+    const now = Date.now();
+    if (now - lastOsPermissionWarningAt < 2500) {
+        return;
+    }
+    lastOsPermissionWarningAt = now;
+    showNotification('warning', message);
+}
+
 /**
  * Запрашивает разрешение на уведомления ОС
+ * @returns {Promise<{ ok: boolean, message?: string }>}
+ */
+async function ensureOsNotificationPermission() {
+    const availability = getOsNotificationAvailability();
+    if (!availability.ok) {
+        return { ok: false, message: availability.message };
+    }
+
+    if (Notification.permission === 'granted') {
+        return { ok: true };
+    }
+
+    if (Notification.permission === 'denied') {
+        return {
+            ok: false,
+            message: 'Уведомления для этого сайта заблокированы. '
+                + 'Замок слева от адреса → Уведомления → «Разрешить», затем обновите страницу (F5).',
+        };
+    }
+
+    try {
+        const result = await Notification.requestPermission();
+        if (result === 'granted' || Notification.permission === 'granted') {
+            return { ok: true };
+        }
+    } catch (e) {
+        console.warn('Notification.requestPermission failed:', e);
+    }
+
+    if (Notification.permission === 'denied') {
+        return {
+            ok: false,
+            message: 'Уведомления заблокированы. Разрешите их в настройках сайта и обновите страницу (F5).',
+        };
+    }
+
+    return {
+        ok: false,
+        message: 'Разрешите уведомления во всплывающем запросе браузера или в настройках сайта (замок в адресной строке).',
+    };
+}
+
+/**
+ * Запрашивает разрешение на уведомления ОС (совместимость)
  */
 async function requestOsNotificationPermission() {
-    if (!('Notification' in window)) {
-        return false;
-    }
-    if (Notification.permission === 'granted') {
-        return true;
-    }
-    if (Notification.permission === 'denied') {
-        return false;
-    }
-    const result = await Notification.requestPermission();
-    return result === 'granted';
+    const result = await ensureOsNotificationPermission();
+    return result.ok;
 }
 
 /**
@@ -3723,29 +3800,32 @@ function testToastNotification(isOnline) {
  * Тест уведомления ОС (без проверки настроек)
  */
 async function testOsNotification(isOnline) {
-    if (!('Notification' in window)) {
-        showNotification('warning', 'Браузер не поддерживает уведомления ОС');
+    const permission = await ensureOsNotificationPermission();
+    if (!permission.ok) {
+        showOsPermissionWarning(permission.message || 'Не удалось получить разрешение на уведомления');
         return;
     }
-    if (Notification.permission !== 'granted') {
-        const granted = await requestOsNotificationPermission();
-        if (!granted) {
-            showNotification('warning', 'Разрешите уведомления в настройках браузера для этого сайта');
-            return;
-        }
-    }
+
     const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
     const body = isOnline
         ? `${NOTIFICATION_TEST_STREAMER} начал трансляцию`
         : `${NOTIFICATION_TEST_STREAMER} завершил трансляцию`;
     try {
-        new Notification(title, {
+        const notification = new Notification(title, {
             body,
             tag: `test-stream-${isOnline ? 'up' : 'down'}`,
         });
+        if (!notification) {
+            throw new Error('Notification constructor returned empty');
+        }
     } catch (e) {
         console.warn('Test OS notification failed:', e);
-        showNotification('error', 'Не удалось показать уведомление ОС');
+        const availability = getOsNotificationAvailability();
+        if (!availability.ok && availability.message) {
+            showOsPermissionWarning(availability.message);
+        } else {
+            showNotification('error', 'Не удалось показать уведомление ОС. Обновите страницу и проверьте настройки сайта.');
+        }
     }
 }
 
@@ -3778,11 +3858,17 @@ function showSettingsModal() {
 
     const osHint = document.getElementById('osNotificationsHint');
     if (osHint) {
-        const denied = 'Notification' in window && Notification.permission === 'denied';
-        osHint.style.display = denied ? 'block' : 'none';
-        osHint.textContent = denied
-            ? 'Уведомления ОС заблокированы в браузере. Разрешите их в настройках сайта.'
-            : 'Разрешите уведомления в браузере при сохранении настроек.';
+        const availability = getOsNotificationAvailability();
+        const denied = availability.ok && Notification.permission === 'denied';
+        const showHint = !availability.ok || denied;
+        osHint.style.display = showHint ? 'block' : 'none';
+        if (!availability.ok) {
+            osHint.textContent = availability.message || '';
+        } else if (denied) {
+            osHint.textContent = 'Уведомления ОС заблокированы. Разрешите в настройках сайта (замок в адресной строке) и обновите страницу.';
+        } else {
+            osHint.textContent = 'Разрешите уведомления в браузере при сохранении настроек.';
+        }
     }
     
     modal.style.display = 'flex';
@@ -3825,11 +3911,11 @@ async function saveSettings() {
     };
 
     if (settings.osNotifications) {
-        const granted = await requestOsNotificationPermission();
-        if (!granted) {
+        const permission = await ensureOsNotificationPermission();
+        if (!permission.ok) {
             settings.osNotifications = false;
             document.getElementById('osNotificationsSetting').checked = false;
-            showNotification('warning', 'Разрешение на уведомления ОС не получено');
+            showOsPermissionWarning(permission.message || 'Разрешение на уведомления ОС не получено');
         }
     }
     
