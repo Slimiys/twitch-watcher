@@ -2,11 +2,16 @@ import { setupNetwork } from './setupNetwork';
 
 setupNetwork();
 
+import { registerProcessGuards } from './processGuards';
+
+registerProcessGuards();
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { askLogin } from './input';
 import { CookieData, LoginInput, AppConfig } from './types';
 import { logger } from './modes/api/logger';
+import { writeCrashReport } from './processGuards';
 
 // ========================================== CONFIG SECTION =================================================================
 const configPath = './config.json';
@@ -117,6 +122,7 @@ async function readLoginData(): Promise<CookieData[]> {
  * Корректное завершение работы приложения
  */
 async function shutDown(): Promise<void> {
+  writeCrashReport('gracefulShutdown', { signal: 'SIGINT/SIGTERM' });
   console.log('\n👋Bye Bye👋');
   const watcher = (global as any).watcher as { stop?: () => void } | undefined;
   if (watcher?.stop) {
@@ -128,26 +134,6 @@ async function shutDown(): Promise<void> {
     }
   }
   process.exit(0);
-}
-
-/**
- * Глобальные обработчики: логируем, но не завершаем процесс из-за сетевых/async-сбоев
- */
-function registerProcessGuards(): void {
-  process.on('unhandledRejection', (reason: unknown) => {
-    const message = reason instanceof Error ? reason.message : String(reason);
-    logger.error(`❌  Unhandled promise rejection (process continues): ${message}`);
-    if (reason instanceof Error && reason.stack) {
-      logger.verbose(reason.stack);
-    }
-  });
-
-  process.on('uncaughtException', (error: Error) => {
-    logger.error(`❌  Uncaught exception (process continues): ${error.message}`);
-    if (error.stack) {
-      logger.verbose(error.stack);
-    }
-  });
 }
 
 /**
@@ -193,7 +179,6 @@ async function startAPIMode(): Promise<void> {
  * Главная функция приложения
  */
 async function main(): Promise<void> {
-  registerProcessGuards();
   console.clear();
   console.log("=========================");
   
@@ -217,6 +202,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+
+  writeCrashReport('startupFatal', {
+    errorMessage: message,
+    stack,
+  });
+
   console.error('Fatal error during startup:', error);
   if (!(global as any).watcher) {
     process.exit(1);

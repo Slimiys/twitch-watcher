@@ -25,6 +25,7 @@ import {
   shouldAutoExitOnInvalidToken,
   shouldAutoExitOnUnhealthy,
 } from './runtimeEnv';
+import { logFatalExit } from '../../processGuards';
 
 /**
  * Менеджер просмотра стримов
@@ -167,6 +168,7 @@ export class StreamWatcher {
             if (shouldAutoExitOnInvalidToken()) {
               logger.warn('⚠️  Auto-exit on invalid token is enabled. Shutting down in 2 seconds...');
               setTimeout(() => {
+                logFatalExit('TokenManager', 'Shutting down due to invalid token');
                 logger.error('🛑  Shutting down due to invalid token');
                 this.stop();
                 process.exit(1);
@@ -766,6 +768,13 @@ export class StreamWatcher {
         runSafeAsync('ws-reinit-failed-retry', () => this.reinitializeWebSocket());
       }, 5 * 60 * 1000);
     }
+  }
+
+  /**
+   * Возвращает true, если watcher активен (для crash-диагностики)
+   */
+  isWatcherRunning(): boolean {
+    return this.isRunning;
   }
 
   /**
@@ -1629,6 +1638,7 @@ export class StreamWatcher {
           logger.warn(`⚠️  Health check returned status ${response.status} (unhealthy count: ${consecutiveUnhealthyCount})`);
           
           if (!inStartupGrace && consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logFatalExit('HealthCheckMonitor', `Health check HTTP status ${response.status}`);
             logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
             this.stop();
             process.exit(1);
@@ -1642,6 +1652,7 @@ export class StreamWatcher {
           logger.warn(`⚠️  Health check report shows unhealthy status (unhealthy count: ${consecutiveUnhealthyCount})`);
           
           if (!inStartupGrace && consecutiveUnhealthyCount >= maxUnhealthyCount) {
+            logFatalExit('HealthCheckMonitor', 'Health check report status unhealthy');
             logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
             this.stop();
             process.exit(1);
@@ -1662,6 +1673,7 @@ export class StreamWatcher {
         logger.warn(`⚠️  Health check monitoring error: ${error.message || error} (unhealthy count: ${consecutiveUnhealthyCount})`);
         
         if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
+          logFatalExit('HealthCheckMonitor', `Health check monitoring error: ${error.message || error}`);
           logger.error('🛑  Health check server is unavailable. Shutting down...');
           this.stop();
           process.exit(1);

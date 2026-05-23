@@ -4,6 +4,7 @@
 
 import { MinuteWatchedPayload } from './types';
 import { logger } from './logger';
+import { writeCrashReport } from '../../processGuards';
 
 /**
  * Запускает async-задачу с перехватом ошибок (не роняет процесс)
@@ -11,7 +12,18 @@ import { logger } from './logger';
 export function runSafeAsync(label: string, callback: () => void | Promise<void>): void {
   Promise.resolve(callback()).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    writeCrashReport('asyncTaskError', {
+      task: label,
+      errorMessage: message,
+      stack,
+    });
+
     logger.warn(`⚠️  [${label}] ${message}`);
+    if (stack) {
+      logger.verbose(stack);
+    }
   });
 }
 
