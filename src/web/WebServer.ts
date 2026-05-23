@@ -3,6 +3,7 @@
  */
 
 import express, { Express, Request, Response } from 'express';
+import * as http from 'http';
 import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -910,10 +911,33 @@ export class WebServer {
   }
 
   /**
-   * Запускает веб-сервер
+   * Проверяет, слушает ли веб-сервер порт
+   */
+  isRunning(): boolean {
+    return this.server != null && this.server.listening === true;
+  }
+
+  /**
+   * Освобождает ссылку на сервер после неудачного listen
+   */
+  private cleanupFailedStart(): void {
+    if (!this.server) {
+      return;
+    }
+    this.server.removeAllListeners();
+    try {
+      this.server.close();
+    } catch {
+      // Сервер мог не успеть перейти в состояние listening
+    }
+    this.server = null;
+  }
+
+  /**
+   * Запускает веб-сервер (Promise отклоняется при EADDRINUSE и других ошибках listen)
    */
   async start(): Promise<void> {
-    if (this.server) {
+    if (this.isRunning()) {
       logger.warn('Web server is already running');
       return;
     }
@@ -932,7 +956,7 @@ export class WebServer {
       console.log('[WebServer] ⚠️  HTTPS не включён — открывайте http://, не https://');
     }
 
-    const onListening = () => {
+    const logListening = () => {
       logger.info(`Web server started on port ${this.port} (${scheme.toUpperCase()})`);
       console.log(`[WebServer] ✅  Listening ${scheme}://0.0.0.0:${this.port}`);
       logger.verbose(`Dashboard: ${scheme}://0.0.0.0:${this.port}`);
@@ -944,29 +968,123 @@ export class WebServer {
       }
     };
 
-    const onError = (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${this.port} is already in use — остановите старый процесс: fuser -k ${this.port}/tcp`);
-        console.log(`[WebServer] ❌  Порт ${this.port} занят. Termux: fuser -k ${this.port}/tcp`);
-      } else {
-        logger.error('Web server error:', error);
-      }
+    const logPortInUse = () => {
+      logger.error(`Port ${this.port} is already in use — остановите старый процесс: fuser -k ${this.port}/tcp`);
+      console.log(`[WebServer] ❌  Порт ${this.port} занят. Termux: fuser -k ${this.port}/tcp`);
     };
 
-    try {
-      if (isWebServerHttpsEnabled()) {
-        const { cert, key } = await ensureHttpsCredentials();
-        this.server = https.createServer({ cert, key }, this.app);
-        this.server.listen(this.port, '0.0.0.0', onListening);
-      } else {
-        this.server = this.app.listen(this.port, '0.0.0.0', onListening);
+    return new Promise<void>((resolve, reject) => {
+      const onListening = () => {
+        logListening();
+        resolve();
+      };
+
+      const onError = (error: NodeJS.ErrnoException) => {
+        this.cleanupFailedStart();
+        if (error.code === 'EADDRINUSE') {
+          logPortInUse();
+        } else {
+          logger.error('Web server error:', error);
+        }
+        reject(error);
+      };
+
+      const bindServer = () => {
+        this.server!.once('error', onError);
+        this.server!.once('listening', onListening);
+        this.server!.listen(this.port, '0.0.0.0');
+      };
+
+      try {
+        if (isWebServerHttpsEnabled()) {
+          ensureHttpsCredentials()
+            .then(({ cert, key }) => {
+              this.server = https.createServer({ cert, key }, this.app);
+              bindServer();
+            })
+            .catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Failed to start web server with HTTPS: ${message}`);
+              console.log(`[WebServer] ❌  HTTPS startup failed: ${message}`);
+              reject(error instanceof Error ? error : new Error(message));
+            });
+        } else {
+          this.server = http.createServer(this.app);
+          bindServer();
+        }
+      } catch (error: unknown) {
+        this.cleanupFailedStart();
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to start web server: ${message}`);
+        reject(error instanceof Error ? error : new Error(message));
       }
-      this.server.on('error', onError);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to start web server with HTTPS: ${message}`);
-      console.log(`[WebServer] ❌  HTTPS startup failed: ${message}`);
-      throw error;
+    });
+  }
+
+  /**
+   * Запускает веб-сервер с повторными попытками при занятом порте
+   * @param options Максимум попыток и пауза между ними (переопределяют env)
+   * @returns true если сервер успешно запущен
+   */
+  async startWithRetry(options?: { maxAttempts?: number; retryDelayMs?: number }): Promise<boolean> {
+    const maxAttempts = options?.maxAttempts
+      ?? parseInt(process.env.WEB_SERVER_START_MAX_ATTEMPTS || '12', 10);
+    const retryDelayMs = options?.retryDelayMs
+      ?? parseInt(process.env.WEB_SERVER_START_RETRY_DELAY_MS || '5000', 10);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.start();
+        return true;
+      } catch (error: unknown) {
+        const err = error as NodeJS.ErrnoException;
+        const isPortInUse = err.code === 'EADDRINUSE';
+        const isLastAttempt = attempt >= maxAttempts;
+
+        if (!isPortInUse) {
+          const message = err.message || String(error);
+          logger.error(`❌  Web server failed to start: ${message}`);
+          return false;
+        }
+
+        if (isLastAttempt) {
+          logger.error(
+            `❌  Web server: port ${this.port} still in use after ${maxAttempts} attempts`
+          );
+          return false;
+        }
+
+        logger.warn(
+          `⚠️  Port ${this.port} busy (attempt ${attempt}/${maxAttempts}), retry in ${retryDelayMs / 1000}s...`
+        );
+        logger.verbose(`   Подсказка: fuser -k ${this.port}/tcp`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Повторяет запуск до успеха (для режима только dashboard без watcher)
+   */
+  async startUntilSuccess(): Promise<void> {
+    const backgroundDelayMs = parseInt(
+      process.env.WEB_SERVER_BACKGROUND_RETRY_DELAY_MS || '30000',
+      10
+    );
+    let cycle = 0;
+
+    while (true) {
+      cycle++;
+      const started = await this.startWithRetry();
+      if (started) {
+        return;
+      }
+      logger.warn(
+        `⚠️  Dashboard недоступен — повторный цикл запуска (#${cycle}) через ${backgroundDelayMs / 1000}s`
+      );
+      await new Promise((resolve) => setTimeout(resolve, backgroundDelayMs));
     }
   }
 

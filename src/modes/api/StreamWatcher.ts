@@ -46,6 +46,7 @@ export class StreamWatcher {
   private maxSimultaneousChannels: number;
   private healthCheckServer: HealthCheckServer | null = null;
   private webServer: WebServer | null = null;
+  private webServerRetryTimer: NodeJS.Timeout | null = null;
   private eventsHistory: Array<{
     timestamp: number;
     type: string;
@@ -834,6 +835,11 @@ export class StreamWatcher {
     if (this.tokenManager) {
       this.tokenManager.stop();
       this.tokenManager = null;
+    }
+
+    if (this.webServerRetryTimer) {
+      clearTimeout(this.webServerRetryTimer);
+      this.webServerRetryTimer = null;
     }
 
     // Сохраняем текущее состояние баллов при остановке
@@ -1669,20 +1675,57 @@ export class StreamWatcher {
   }
 
   /**
-   * Запускает веб-сервер для dashboard
+   * Запускает веб-сервер для dashboard (с retry при занятом порте)
    */
   private async startWebServer(): Promise<void> {
     const port = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
 
-    this.webServer = new WebServer(port);
-    this.webServer.setStatisticsProvider(this);
-    try {
-      await this.webServer.start();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`❌  Web server failed to start: ${message}`);
-      throw error;
+    if (!this.webServer) {
+      this.webServer = new WebServer(port);
+      this.webServer.setStatisticsProvider(this);
     }
+
+    const started = await this.webServer.startWithRetry();
+    if (started) {
+      if (this.webServerRetryTimer) {
+        clearTimeout(this.webServerRetryTimer);
+        this.webServerRetryTimer = null;
+      }
+      return;
+    }
+
+    this.scheduleWebServerRetry();
+  }
+
+  /**
+   * Планирует фоновый повтор запуска веб-сервера, если порт был занят
+   */
+  private scheduleWebServerRetry(): void {
+    if (this.webServerRetryTimer || !this.isRunning) {
+      return;
+    }
+
+    const delayMs = parseInt(process.env.WEB_SERVER_BACKGROUND_RETRY_DELAY_MS || '30000', 10);
+    logger.warn(
+      `⚠️  Dashboard недоступен — watcher продолжит работу, повтор запуска веб-сервера через ${delayMs / 1000}s`
+    );
+
+    this.webServerRetryTimer = setTimeout(() => {
+      this.webServerRetryTimer = null;
+      runSafeAsync('web-server-retry', async () => {
+        if (!this.isRunning || !this.webServer || this.webServer.isRunning()) {
+          return;
+        }
+
+        const started = await this.webServer.startWithRetry({ maxAttempts: 3 });
+        if (started) {
+          logger.info('✅  Web server started after background retry');
+          return;
+        }
+
+        this.scheduleWebServerRetry();
+      });
+    }, delayMs);
   }
 
   /**
