@@ -183,11 +183,11 @@ export class HealthCheckServer {
         }
       } catch (error: any) {
         components.websocket = {
-          status: ComponentStatus.UNHEALTHY,
+          status: ComponentStatus.UNKNOWN,
           message: error.message || 'Check failed',
-          lastCheck: Date.now()
+          lastCheck: Date.now(),
         };
-        hasUnhealthy = true;
+        hasDegraded = true;
       }
     }
 
@@ -202,11 +202,11 @@ export class HealthCheckServer {
         }
       } catch (error: any) {
         components.api = {
-          status: ComponentStatus.UNHEALTHY,
+          status: ComponentStatus.UNKNOWN,
           message: error.message || 'Check failed',
-          lastCheck: Date.now()
+          lastCheck: Date.now(),
         };
-        hasUnhealthy = true;
+        hasDegraded = true;
       }
     }
 

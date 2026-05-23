@@ -20,6 +20,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AppConfig } from '../../types';
 import { isNetworkError } from './errorUtils';
+import {
+  isTransientNetworkErrorCode,
+  shouldAutoExitOnInvalidToken,
+  shouldAutoExitOnUnhealthy,
+} from './runtimeEnv';
 
 /**
  * Менеджер просмотра стримов
@@ -156,16 +161,17 @@ export class StreamWatcher {
             this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
             
             // Если включено автоматическое завершение при невалидном токене, завершаем процесс
-            const autoExitOnInvalidToken = process.env.AUTO_EXIT_ON_INVALID_TOKEN !== 'false';
-            if (autoExitOnInvalidToken) {
+            if (shouldAutoExitOnInvalidToken()) {
               logger.warn('⚠️  Auto-exit on invalid token is enabled. Shutting down in 2 seconds...');
-              // Даем время на сохранение данных и логирование (уменьшено до 2 секунд для быстрого перезапуска)
               setTimeout(() => {
-                logger.error('🛑  Shutting down due to invalid token (will be restarted by Docker)');
+                logger.error('🛑  Shutting down due to invalid token');
                 this.stop();
-                // Завершаем процесс с кодом ошибки, чтобы Docker перезапустил контейнер
                 process.exit(1);
               }, 2000);
+            } else {
+              logger.warn(
+                '⚠️  Токен невалиден — процесс продолжает работу (AUTO_EXIT_ON_INVALID_TOKEN=false или не-Docker)'
+              );
             }
           },
         }
@@ -1337,39 +1343,47 @@ export class StreamWatcher {
         const lastCriticalError = this.wsManager.getLastCriticalError();
         const criticalErrors = this.wsManager.getCriticalErrors();
 
-        // Если есть критические ошибки (DNS и т.д.), помечаем как unhealthy
-        // даже если соединение установлено, так как это может быть временное соединение
-        // которое скоро упадет из-за DNS проблем
+        // DNS/сеть — degraded (UNKNOWN), не unhealthy: процесс не должен завершаться из-за кратковременного офлайна
         if (hasCriticalErrors && lastCriticalError) {
+          const isTransient =
+            isTransientNetworkErrorCode(lastCriticalError.code) ||
+            lastCriticalError.code === 'MAX_RECONNECT_ATTEMPTS';
+
           return {
-            status: ComponentStatus.UNHEALTHY,
-            message: `Критическая ошибка: ${lastCriticalError.error} (код: ${lastCriticalError.code})`,
+            status: isTransient ? ComponentStatus.UNKNOWN : ComponentStatus.UNHEALTHY,
+            message: isTransient
+              ? `Временная проблема WebSocket: ${lastCriticalError.error}`
+              : `Критическая ошибка WebSocket: ${lastCriticalError.error} (код: ${lastCriticalError.code})`,
             lastCheck: Date.now(),
             details: {
               state,
               isConnected,
               hasCriticalErrors: true,
+              transient: isTransient,
               lastCriticalError: {
                 timestamp: lastCriticalError.timestamp,
                 error: lastCriticalError.error,
-                code: lastCriticalError.code
+                code: lastCriticalError.code,
               },
-              criticalErrorsCount: criticalErrors.length
-            }
+              criticalErrorsCount: criticalErrors.length,
+            },
           };
         }
 
-        // Если не подключен и нет критических ошибок, это может быть временная проблема
         if (!isConnected) {
+          const wsActive = this.wsManager.isActive();
           return {
-            status: ComponentStatus.UNHEALTHY,
-            message: `WebSocket не подключен (state: ${state})`,
+            status: ComponentStatus.UNKNOWN,
+            message: wsActive
+              ? `WebSocket переподключается (state: ${state})`
+              : `WebSocket не подключен (state: ${state})`,
             lastCheck: Date.now(),
             details: {
               state,
               isConnected,
-              hasCriticalErrors: false
-            }
+              wsActive,
+              hasCriticalErrors: false,
+            },
           };
         }
 
@@ -1550,11 +1564,14 @@ export class StreamWatcher {
    * Запускает мониторинг healthcheck статуса и завершает процесс при unhealthy
    */
   private startHealthCheckMonitoring(): void {
-    const autoExitOnUnhealthy = process.env.AUTO_EXIT_ON_UNHEALTHY !== 'false';
-    if (!autoExitOnUnhealthy) {
-      logger.verbose(`ℹ️  Health check auto-restart disabled (AUTO_EXIT_ON_UNHEALTHY=false)`);
+    if (!shouldAutoExitOnUnhealthy()) {
+      logger.info(
+        'ℹ️  Авто-завершение при unhealthy отключено (Termux/локальный запуск или AUTO_EXIT_ON_UNHEALTHY=false)'
+      );
       return;
     }
+
+    logger.verbose('ℹ️  Health check auto-exit enabled (Docker or AUTO_EXIT_ON_UNHEALTHY=true)');
 
     const checkInterval = 10000; // Проверяем каждые 10 секунд
     const monitoringStartDelayMs = 20000; // Даём health-серверу подняться до первой проверки
@@ -1585,7 +1602,7 @@ export class StreamWatcher {
           logger.warn(`⚠️  Health check returned status ${response.status} (unhealthy count: ${consecutiveUnhealthyCount})`);
           
           if (!inStartupGrace && consecutiveUnhealthyCount >= maxUnhealthyCount) {
-            logger.error('🛑  Health check is unhealthy for too long. Shutting down (Docker will restart)...');
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
             this.stop();
             process.exit(1);
           }
@@ -1598,7 +1615,7 @@ export class StreamWatcher {
           logger.warn(`⚠️  Health check report shows unhealthy status (unhealthy count: ${consecutiveUnhealthyCount})`);
           
           if (!inStartupGrace && consecutiveUnhealthyCount >= maxUnhealthyCount) {
-            logger.error('🛑  Health check is unhealthy for too long. Shutting down (Docker will restart)...');
+            logger.error('🛑  Health check is unhealthy for too long. Shutting down...');
             this.stop();
             process.exit(1);
           }
@@ -1618,7 +1635,7 @@ export class StreamWatcher {
         logger.warn(`⚠️  Health check monitoring error: ${error.message || error} (unhealthy count: ${consecutiveUnhealthyCount})`);
         
         if (consecutiveUnhealthyCount >= maxUnhealthyCount) {
-          logger.error('🛑  Health check server is unavailable. Shutting down (Docker will restart)...');
+          logger.error('🛑  Health check server is unavailable. Shutting down...');
           this.stop();
           process.exit(1);
         }

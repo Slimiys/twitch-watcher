@@ -60,6 +60,13 @@ export class WebSocketManager {
   }
 
   /**
+   * Активен ли менеджер (ожидает или восстанавливает соединение)
+   */
+  isActive(): boolean {
+    return this.isRunning;
+  }
+
+  /**
    * Получает состояние WebSocket соединения
    * @returns Состояние соединения (OPEN, CONNECTING, CLOSING, CLOSED)
    */
