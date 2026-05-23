@@ -2295,10 +2295,6 @@ export class StreamWatcher {
   }
 
   /**
-   * Загружает данные стримера из базы данных и применяет их
-   * @param streamerInfo Информация о стримере
-   */
-  /**
    * Сохраняет категорию стрима в базу данных при изменении
    * @param streamerInfo Информация о стримере
    * @param previousGame Предыдущая категория (для проверки изменения)
@@ -2314,6 +2310,10 @@ export class StreamWatcher {
     }
   }
 
+  /**
+   * Загружает данные стримера из базы данных и применяет их
+   * @param streamerInfo Информация о стримере
+   */
   private loadStreamerDataFromDatabase(streamerInfo: StreamerInfo): void {
     if (!this.databaseStorage || !this.databaseStorage.isReady()) {
       return;
