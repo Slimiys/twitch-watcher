@@ -180,6 +180,8 @@ export interface RetryConfig {
     maxReconnectAttempts: number;
     initialDelayMs: number;
     maxDelayMs: number;
+    /** Пауза перед новым циклом reconnect после исчерпания попыток (мс) */
+    reconnectCyclePauseMs?: number;
   };
 }
 

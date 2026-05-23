@@ -3,6 +3,28 @@
  */
 
 import { MinuteWatchedPayload } from './types';
+import { logger } from './logger';
+
+/**
+ * Запускает async-задачу с перехватом ошибок (не роняет процесс)
+ */
+export function runSafeAsync(label: string, callback: () => void | Promise<void>): void {
+  Promise.resolve(callback()).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`⚠️  [${label}] ${message}`);
+  });
+}
+
+/**
+ * setInterval для async-колбэков с перехватом необработанных ошибок
+ */
+export function setSafeAsyncInterval(
+  label: string,
+  callback: () => void | Promise<void>,
+  ms: number
+): NodeJS.Timeout {
+  return setInterval(() => runSafeAsync(label, callback), ms);
+}
 
 /**
  * Кодирование payload в Base64 для отправки на Spade URL

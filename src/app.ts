@@ -117,8 +117,37 @@ async function readLoginData(): Promise<CookieData[]> {
  * Корректное завершение работы приложения
  */
 async function shutDown(): Promise<void> {
-  console.log("\n👋Bye Bye👋");
+  console.log('\n👋Bye Bye👋');
+  const watcher = (global as any).watcher as { stop?: () => void } | undefined;
+  if (watcher?.stop) {
+    try {
+      watcher.stop();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`⚠️  Error during watcher shutdown: ${message}`);
+    }
+  }
   process.exit(0);
+}
+
+/**
+ * Глобальные обработчики: логируем, но не завершаем процесс из-за сетевых/async-сбоев
+ */
+function registerProcessGuards(): void {
+  process.on('unhandledRejection', (reason: unknown) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    logger.error(`❌  Unhandled promise rejection (process continues): ${message}`);
+    if (reason instanceof Error && reason.stack) {
+      logger.verbose(reason.stack);
+    }
+  });
+
+  process.on('uncaughtException', (error: Error) => {
+    logger.error(`❌  Uncaught exception (process continues): ${error.message}`);
+    if (error.stack) {
+      logger.verbose(error.stack);
+    }
+  });
 }
 
 /**
@@ -165,6 +194,7 @@ async function startAPIMode(): Promise<void> {
  * Главная функция приложения
  */
 async function main(): Promise<void> {
+  registerProcessGuards();
   console.clear();
   console.log("=========================");
   
@@ -188,8 +218,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
+  console.error('Fatal error during startup:', error);
+  if (!(global as any).watcher) {
+    process.exit(1);
+  }
+  logger.warn('⚠️  Startup error after partial init — watcher/web may still be running');
 });
 
 process.on("SIGINT", shutDown);

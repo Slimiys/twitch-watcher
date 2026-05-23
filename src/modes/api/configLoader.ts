@@ -41,6 +41,7 @@ export function loadRetryConfig(): RetryConfig {
       maxReconnectAttempts: 10,
       initialDelayMs: 1000,
       maxDelayMs: 60000,
+      reconnectCyclePauseMs: 120000,
     },
   };
 }

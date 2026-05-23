@@ -35,6 +35,8 @@ export class WebSocketManager {
   private maxReconnectAttempts: number;
   private initialReconnectDelay: number;
   private maxReconnectDelay: number;
+  /** Пауза перед новым циклом reconnect (мс) */
+  private reconnectCyclePauseMs: number;
   private reconnectMultiplier: number;
   private isRunning = false;
   private subscribedTopics: Set<string> = new Set(); // Отслеживание подписанных топиков
@@ -138,6 +140,7 @@ export class WebSocketManager {
     this.maxReconnectAttempts = wsConfig.maxReconnectAttempts;
     this.initialReconnectDelay = wsConfig.initialDelayMs;
     this.maxReconnectDelay = wsConfig.maxDelayMs;
+    this.reconnectCyclePauseMs = wsConfig.reconnectCyclePauseMs ?? 120000;
     this.reconnectMultiplier = 2; // Экспоненциальный множитель
   }
   
@@ -328,20 +331,29 @@ export class WebSocketManager {
             setTimeout(() => this.connect(), delay);
           } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             const errorMessage = `Достигнуто максимальное количество попыток переподключения (${this.maxReconnectAttempts})`;
-            logger.error(`❌  ${errorMessage}`);
-            this.isRunning = false;
-            
-            // Сохраняем критическую ошибку
+            logger.warn(
+              `⚠️  ${errorMessage} — пауза ${Math.round(this.reconnectCyclePauseMs / 1000)}с, затем новый цикл`
+            );
+
             this.criticalErrors.push({
               timestamp: Date.now(),
               error: errorMessage,
-              code: 'MAX_RECONNECT_ATTEMPTS'
+              code: 'MAX_RECONNECT_ATTEMPTS',
             });
-            
-            // Ограничиваем размер истории ошибок
             if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
               this.criticalErrors.shift();
             }
+
+            this.reconnectAttempts = 0;
+            setTimeout(() => {
+              if (!this.isRunning) {
+                return;
+              }
+              logger.info('🔄  WebSocket: новый цикл переподключения после паузы');
+              this.connect().catch(() => {
+                /* ошибки обрабатываются в ws.on('error') */
+              });
+            }, this.reconnectCyclePauseMs);
           }
         });
       } catch (error: any) {

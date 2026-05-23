@@ -6,7 +6,7 @@ import { TwitchAPI } from './TwitchAPI';
 import { WebSocketManager, WebSocketEventHandler } from './WebSocketManager';
 import { StreamerInfo, WatchStatistics } from './types';
 import { GraphQLClient } from './GraphQLClient';
-import { formatElapsedTime } from './utils';
+import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync } from './utils';
 import { logger } from './logger';
 import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
@@ -37,6 +37,8 @@ export class StreamWatcher {
   private isRunning = false;
   private watchInterval: NodeJS.Timeout | null = null;
   private statsInterval: NodeJS.Timeout | null = null;
+  private statusCheckInterval: NodeJS.Timeout | null = null;
+  private wsHealthCheckInterval: NodeJS.Timeout | null = null;
   private healthCheckMonitorInterval: NodeJS.Timeout | null = null;
   private authToken: string;
   private userAgent: string;
@@ -506,8 +508,8 @@ export class StreamWatcher {
       this.updateInitializationStatus('WebSocket initialization failed, continuing...', 30);
       
       // Пытаемся переинициализировать WebSocket через 30 секунд
-      setTimeout(async () => {
-        await this.reinitializeWebSocket();
+      setTimeout(() => {
+        runSafeAsync('ws-init-retry', () => this.reinitializeWebSocket());
       }, 30000);
     }
 
@@ -559,10 +561,14 @@ export class StreamWatcher {
    * Используется для восстановления соединения после ошибки инициализации
    */
   private async reinitializeWebSocket(): Promise<void> {
-    // Если WebSocket уже инициализирован, не делаем ничего
-    if (this.wsManager) {
-      logger.verbose('ℹ️  WebSocket already initialized, skipping reinitialization');
+    if (this.wsManager?.isConnected()) {
+      logger.verbose('ℹ️  WebSocket already connected, skipping reinitialization');
       return;
+    }
+
+    if (this.wsManager) {
+      this.wsManager.stop();
+      this.wsManager = null;
     }
 
     logger.info('🔄  Attempting to reinitialize WebSocket connection...');
@@ -573,8 +579,8 @@ export class StreamWatcher {
       if (!tokenValidation.isValid || !tokenValidation.tokenInfo?.user_id) {
         if (tokenValidation.errorType === 'network') {
           logger.warn('⚠️  Сетевая ошибка при реинициализации WebSocket — повтор через 5 минут');
-          setTimeout(async () => {
-            await this.reinitializeWebSocket();
+          setTimeout(() => {
+            runSafeAsync('ws-reinit-network-retry', () => this.reinitializeWebSocket());
           }, 5 * 60 * 1000);
           return;
         }
@@ -582,9 +588,9 @@ export class StreamWatcher {
         logger.error(`   Token valid: ${tokenValidation.isValid}`);
         logger.error(`   Token info: ${JSON.stringify(tokenValidation.tokenInfo || {})}`);
         logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
-        setTimeout(async () => {
-          await this.reinitializeWebSocket();
-        }, 5 * 60 * 1000); // 5 минут
+        setTimeout(() => {
+          runSafeAsync('ws-reinit-token-retry', () => this.reinitializeWebSocket());
+        }, 5 * 60 * 1000);
         return;
       }
       
@@ -755,8 +761,8 @@ export class StreamWatcher {
       logger.warn('⚠️  Will retry WebSocket reinitialization in 5 minutes...');
       
       // Повторная попытка через 5 минут
-      setTimeout(async () => {
-        await this.reinitializeWebSocket();
+      setTimeout(() => {
+        runSafeAsync('ws-reinit-failed-retry', () => this.reinitializeWebSocket());
       }, 5 * 60 * 1000);
     }
   }
@@ -775,6 +781,16 @@ export class StreamWatcher {
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
+    }
+
+    if (this.statusCheckInterval) {
+      clearInterval(this.statusCheckInterval);
+      this.statusCheckInterval = null;
+    }
+
+    if (this.wsHealthCheckInterval) {
+      clearInterval(this.wsHealthCheckInterval);
+      this.wsHealthCheckInterval = null;
     }
 
     // Завершаем все активные сессии как прерванные
@@ -933,12 +949,8 @@ export class StreamWatcher {
    */
   private startWatching(): void {
     // Отправляем события каждую минуту
-    this.watchInterval = setInterval(async () => {
-      await this.sendWatchEvents();
-    }, 60000); // 60 секунд
-
-    // Отправляем сразу
-    this.sendWatchEvents();
+    this.watchInterval = setSafeAsyncInterval('minute-watched', () => this.sendWatchEvents(), 60000);
+    runSafeAsync('minute-watched-initial', () => this.sendWatchEvents());
   }
 
   /**
@@ -1055,12 +1067,8 @@ export class StreamWatcher {
    */
   private startStatistics(): void {
     // Выводим статистику каждые 30 секунд
-    this.statsInterval = setInterval(async () => {
-      await this.printStatistics();
-    }, 30000);
-
-    // Выводим сразу
-    this.printStatistics();
+    this.statsInterval = setSafeAsyncInterval('statistics', () => this.printStatistics(), 30000);
+    runSafeAsync('statistics-initial', () => this.printStatistics());
   }
 
   /**
@@ -1210,39 +1218,47 @@ export class StreamWatcher {
     // Проверяем статус каждые 2 минуты как fallback для WebSocket событий
     // WebSocket события stream-up/stream-down являются основным источником статуса
     // GraphQL проверка нужна для случаев, когда WebSocket события не приходят
-    setInterval(async () => {
-      await this.checkStreamersStatus();
-    }, 120000); // Каждые 2 минуты
+    this.statusCheckInterval = setSafeAsyncInterval(
+      'streamers-status',
+      () => this.checkStreamersStatus(),
+      120000
+    );
   }
 
   /**
    * Периодически проверяет статус WebSocket и пытается переинициализировать, если он не инициализирован
    */
   private startWebSocketHealthCheck(): void {
-    // Проверяем статус WebSocket каждые 5 минут
-    setInterval(async () => {
-      if (!this.wsManager) {
-        logger.warn('⚠️  WebSocket manager not initialized, attempting to reinitialize...');
-        await this.reinitializeWebSocket();
-      } else if (!this.wsManager.isConnected()) {
-        const state = this.wsManager.getConnectionState();
-        logger.warn(`⚠️  WebSocket not connected (state: ${state}), checking for reconnection...`);
-        
-        // Если WebSocket не подключен, но менеджер существует, возможно он пытается переподключиться
-        // Проверяем наличие критических ошибок
-        if (this.wsManager.hasCriticalErrors()) {
-          const lastError = this.wsManager.getLastCriticalError();
-          logger.warn(`⚠️  WebSocket has critical errors: ${lastError?.error || 'unknown'}`);
-          logger.warn('⚠️  Attempting to reinitialize WebSocket...');
-          // Останавливаем текущий менеджер и переинициализируем
-          this.wsManager.stop();
-          this.wsManager = null;
+    // Интервал проверки WebSocket — по умолчанию 2 мин (WS_HEALTH_CHECK_INTERVAL_MS)
+    const wsHealthIntervalMs = parseInt(process.env.WS_HEALTH_CHECK_INTERVAL_MS || '120000', 10);
+
+    this.wsHealthCheckInterval = setSafeAsyncInterval(
+      'websocket-health',
+      async () => {
+        if (!this.wsManager) {
+          logger.warn('⚠️  WebSocket manager not initialized, attempting to reinitialize...');
           await this.reinitializeWebSocket();
+          return;
         }
-      } else {
-        logger.verbose('✅  WebSocket is connected and healthy');
-      }
-    }, 5 * 60 * 1000); // Каждые 5 минут
+
+        if (this.wsManager.isConnected()) {
+          logger.verbose('✅  WebSocket is connected and healthy');
+          return;
+        }
+
+        const state = this.wsManager.getConnectionState();
+        if (this.wsManager.isActive()) {
+          logger.verbose(`ℹ️  WebSocket переподключается (state: ${state})`);
+          return;
+        }
+
+        logger.warn(`⚠️  WebSocket не активен (state: ${state}), переинициализация...`);
+        this.wsManager.stop();
+        this.wsManager = null;
+        await this.reinitializeWebSocket();
+      },
+      wsHealthIntervalMs
+    );
   }
 
   /**
