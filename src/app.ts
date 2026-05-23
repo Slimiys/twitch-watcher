@@ -182,7 +182,6 @@ async function startAPIMode(): Promise<void> {
   
   try {
     await watcher.start();
-    watcher.startStatusCheck();
   } catch (error: any) {
     console.error('❌ Error starting API mode:', error.message || error);
     // Не выходим из процесса, чтобы веб-сервер продолжал работать

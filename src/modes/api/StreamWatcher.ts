@@ -278,12 +278,12 @@ export class StreamWatcher {
         if (lastValidation.errorType === 'network') {
           logger.error('❌  Не удалось подключиться к Twitch (id.twitch.tv). Проверьте DNS Docker или прокси.');
           logger.error('   На хосте: curl.exe validate. В .env: TWITCH_USER_ID=ваш_user_id, proxy=host.docker.internal:ПОРТ');
-          throw new Error('Network error: could not reach Twitch to validate token. Check DNS and connectivity.');
+        } else {
+          logger.error('❌  Token validation failed or user_id not found');
+          logger.error(`   Token valid: ${lastValidation.isValid}`);
+          logger.error(`   Token info: ${JSON.stringify(lastValidation.tokenInfo || {})}`);
         }
-        logger.error('❌  Token validation failed or user_id not found');
-        logger.error(`   Token valid: ${lastValidation.isValid}`);
-        logger.error(`   Token info: ${JSON.stringify(lastValidation.tokenInfo || {})}`);
-        throw new Error('Token is invalid or user_id not found in token validation');
+        throw new Error('WebSocket startup deferred — user ID unavailable, will retry');
       }
 
       this.validatedUserId = userId;
@@ -1221,6 +1221,11 @@ export class StreamWatcher {
    * GraphQL проверка используется только как fallback для стримеров, которые были офлайн
    */
   startStatusCheck(): void {
+    if (this.statusCheckInterval) {
+      logger.verbose('ℹ️  Status check already running, skipping duplicate start');
+      return;
+    }
+
     // Проверяем статус каждые 2 минуты как fallback для WebSocket событий
     // WebSocket события stream-up/stream-down являются основным источником статуса
     // GraphQL проверка нужна для случаев, когда WebSocket события не приходят
@@ -1665,8 +1670,8 @@ export class StreamWatcher {
     };
 
     setTimeout(() => {
-      runCheck();
-      this.healthCheckMonitorInterval = setInterval(runCheck, checkInterval);
+      runSafeAsync('health-check-monitor', () => runCheck());
+      this.healthCheckMonitorInterval = setSafeAsyncInterval('health-check-monitor', () => runCheck(), checkInterval);
     }, monitoringStartDelayMs);
 
     logger.verbose(

@@ -42,8 +42,10 @@ export class WebSocketManager {
   private subscribedTopics: Set<string> = new Set(); // Отслеживание подписанных топиков
   private isFirstConnection = true; // Флаг первого подключения
   private processedResponses?: Set<string>; // Отслеживание обработанных ответов по nonce
+  private maxProcessedResponses = 500; // Лимит nonce в памяти при долгой работе
   private criticalErrors: Array<{ timestamp: number; error: string; code?: string }> = []; // Отслеживание критических ошибок
   private maxCriticalErrorsHistory = 10; // Максимальное количество сохраняемых критических ошибок
+  private pingInterval: NodeJS.Timeout | null = null;
   
   /**
    * Получает валидированный user_id
@@ -239,6 +241,10 @@ export class WebSocketManager {
    */
   stop(): void {
     this.isRunning = false;
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -250,42 +256,111 @@ export class WebSocketManager {
    */
   private async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let hasOpened = false;
+
+      const settleOnce = (action: 'resolve' | 'reject', error?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(connectionTimeoutId);
+        if (action === 'resolve') {
+          resolve();
+        } else {
+          reject(error ?? new Error('WebSocket connection failed'));
+        }
+      };
+
+      const scheduleReconnect = () => {
+        if (!this.isRunning) {
+          return;
+        }
+
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          const delay = this.calculateReconnectDelay(this.reconnectAttempts);
+          logger.info(
+            `🔄  Reconnecting WebSocket (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}) через ${Math.floor(delay)}ms...`
+          );
+          setTimeout(() => {
+            this.connect().catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              logger.verbose(`⚠️  WebSocket reconnect attempt failed: ${message}`);
+            });
+          }, delay);
+          return;
+        }
+
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          const errorMessage = `Достигнуто максимальное количество попыток переподключения (${this.maxReconnectAttempts})`;
+          logger.warn(
+            `⚠️  ${errorMessage} — пауза ${Math.round(this.reconnectCyclePauseMs / 1000)}с, затем новый цикл`
+          );
+
+          this.criticalErrors.push({
+            timestamp: Date.now(),
+            error: errorMessage,
+            code: 'MAX_RECONNECT_ATTEMPTS',
+          });
+          if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
+            this.criticalErrors.shift();
+          }
+
+          this.reconnectAttempts = 0;
+          setTimeout(() => {
+            if (!this.isRunning) {
+              return;
+            }
+            logger.info('🔄  WebSocket: новый цикл переподключения после паузы');
+            this.connect().catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              logger.verbose(`⚠️  WebSocket reconnect cycle failed: ${message}`);
+            });
+          }, this.reconnectCyclePauseMs);
+        }
+      };
+
+      const connectionTimeoutMs = parseInt(process.env.WS_CONNECT_TIMEOUT_MS || '45000', 10);
+      const connectionTimeoutId = setTimeout(() => {
+        logger.warn(`⚠️  WebSocket connect timeout (${connectionTimeoutMs}ms)`);
+        try {
+          this.ws?.terminate();
+        } catch {
+          // ignore
+        }
+        this.ws = null;
+        settleOnce('reject', new Error(`WebSocket connection timeout after ${connectionTimeoutMs}ms`));
+      }, connectionTimeoutMs);
+
       try {
-        // В библиотеке 'ws' заголовки передаются через options.headers
-        // Попробуем добавить заголовок авторизации, хотя для Twitch PubSub это может не работать
-        // так как авторизация обычно происходит через auth_token в LISTEN сообщении
         const wsOptions: any = {
           headers: {
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            // Не добавляем Authorization заголовок, так как Twitch PubSub использует auth_token в LISTEN
-          }
+          },
         };
-        
+
         this.ws = new WebSocket(WEBSOCKET_URL, wsOptions);
 
         this.ws.on('open', () => {
+          hasOpened = true;
           logger.info('🔌  WebSocket connected');
           this.reconnectAttempts = 0;
-          // Сбрасываем старые DNS-ошибки — соединение восстановлено
           this.criticalErrors = [];
-          
+
           if (this.isFirstConnection) {
-            // При первом подключении просто подписываемся на user топик
-            // Стримеры будут добавлены позже через addStreamer()
             this.isFirstConnection = false;
-            this.processedResponses = new Set<string>(); // Инициализируем при первом подключении
+            this.processedResponses = new Set<string>();
             this.subscribe();
           } else {
-            // При переподключении очищаем список подписок и переподписываемся
             this.subscribedTopics.clear();
-            this.processedResponses = new Set<string>(); // Очищаем при переподключении
+            this.processedResponses = new Set<string>();
             this.subscribe();
-            // Переподписываемся на всех стримеров (принудительно)
             for (const streamerInfo of this.streamers.values()) {
               this.addStreamer(streamerInfo, true);
             }
           }
-          resolve();
+          settleOnce('resolve');
         });
 
         this.ws.on('message', (data: WebSocket.Data) => {
@@ -293,7 +368,6 @@ export class WebSocketManager {
         });
 
         this.ws.on('error', (error: any) => {
-          // Специальная обработка DNS ошибок
           if (error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND' || error.syscall === 'getaddrinfo') {
             const errorMessage = `DNS ошибка: не удается разрешить домен ${error.hostname || 'pubsub-edge.twitch.tv'}`;
             logger.error(`❌  ${errorMessage}`);
@@ -303,15 +377,13 @@ export class WebSocketManager {
             logger.error(`   - Проблемы с интернет-соединением`);
             logger.error(`   - Блокировка доступа к Twitch`);
             logger.error(`   Решение: проверьте DNS настройки (в Docker используйте dns: [8.8.8.8, 8.8.4.4])`);
-            
-            // Сохраняем критическую ошибку
+
             this.criticalErrors.push({
               timestamp: Date.now(),
               error: errorMessage,
-              code: error.code || 'UNKNOWN'
+              code: error.code || 'UNKNOWN',
             });
-            
-            // Ограничиваем размер истории ошибок
+
             if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
               this.criticalErrors.shift();
             }
@@ -322,44 +394,41 @@ export class WebSocketManager {
 
         this.ws.on('close', () => {
           logger.verbose('🔌  WebSocket closed');
+          const wasOpened = hasOpened;
           this.ws = null;
-          
-          if (this.isRunning && this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            const delay = this.calculateReconnectDelay(this.reconnectAttempts);
-            logger.info(`🔄  Reconnecting WebSocket (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}) через ${Math.floor(delay)}ms...`);
-            setTimeout(() => this.connect(), delay);
-          } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            const errorMessage = `Достигнуто максимальное количество попыток переподключения (${this.maxReconnectAttempts})`;
-            logger.warn(
-              `⚠️  ${errorMessage} — пауза ${Math.round(this.reconnectCyclePauseMs / 1000)}с, затем новый цикл`
-            );
 
-            this.criticalErrors.push({
-              timestamp: Date.now(),
-              error: errorMessage,
-              code: 'MAX_RECONNECT_ATTEMPTS',
-            });
-            if (this.criticalErrors.length > this.maxCriticalErrorsHistory) {
-              this.criticalErrors.shift();
-            }
-
-            this.reconnectAttempts = 0;
-            setTimeout(() => {
-              if (!this.isRunning) {
-                return;
-              }
-              logger.info('🔄  WebSocket: новый цикл переподключения после паузы');
-              this.connect().catch(() => {
-                /* ошибки обрабатываются в ws.on('error') */
-              });
-            }, this.reconnectCyclePauseMs);
+          if (!wasOpened) {
+            settleOnce('reject', new Error('WebSocket closed before connection established'));
           }
+
+          scheduleReconnect();
         });
-      } catch (error: any) {
-        reject(error);
+      } catch (error: unknown) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        settleOnce('reject', err);
       }
     });
+  }
+
+  /**
+   * Запоминает nonce ответа подписки (с ограничением размера Set)
+   */
+  private rememberProcessedResponse(nonce: string): boolean {
+    if (!this.processedResponses) {
+      this.processedResponses = new Set<string>();
+    }
+    if (this.processedResponses.has(nonce)) {
+      return false;
+    }
+    this.processedResponses.add(nonce);
+    while (this.processedResponses.size > this.maxProcessedResponses) {
+      const oldest = this.processedResponses.values().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.processedResponses.delete(oldest);
+    }
+    return true;
   }
 
   /**
@@ -532,13 +601,7 @@ export class WebSocketManager {
         } else {
           // Успешная подписка - логируем с информацией о nonce, если доступен
           const nonce = data.nonce || 'unknown';
-          // Логируем только один раз, чтобы избежать дублирования
-          // (Twitch может отправлять несколько RESPONSE для одного LISTEN)
-          if (!this.processedResponses || !this.processedResponses.has(nonce)) {
-            if (!this.processedResponses) {
-              this.processedResponses = new Set<string>();
-            }
-            this.processedResponses.add(nonce);
+          if (this.rememberProcessedResponse(nonce)) {
             logger.verbose(`✅  WebSocket subscription successful (nonce: ${nonce.substring(0, 8)}...)`);
           }
         }
@@ -754,11 +817,21 @@ export class WebSocketManager {
    * Отправляет PING для поддержания соединения
    */
   startPingInterval(): void {
-    setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'PING' }));
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+
+    this.pingInterval = setInterval(() => {
+      try {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'PING' }));
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.verbose(`⚠️  WebSocket ping failed: ${message}`);
       }
-    }, 240000); // Каждые 4 минуты (240 секунд)
+    }, 240000);
   }
 }
 

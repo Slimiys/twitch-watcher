@@ -5,6 +5,7 @@
 import { TokenValidationResult } from './types';
 import { logger } from './logger';
 import { TwitchAPI } from './TwitchAPI';
+import { runSafeAsync } from './utils';
 
 /**
  * Обработчик событий токена
@@ -81,11 +82,11 @@ export class TokenManager {
     this.isRunning = true;
     
     // Выполняем первую проверку сразу
-    this.checkToken();
+    runSafeAsync('token-check-initial', () => this.checkToken());
 
     // Настраиваем периодическую проверку
     this.checkInterval = setInterval(() => {
-      this.checkToken();
+      runSafeAsync('token-check', () => this.checkToken());
     }, this.config.checkIntervalMs);
 
     logger.info(`✅  TokenManager started (check interval: ${this.config.checkIntervalMs / 1000 / 60} minutes)`);
