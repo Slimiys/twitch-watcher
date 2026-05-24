@@ -718,6 +718,10 @@ export class WebSocketManager {
         logger.info(`💰  [${streamerInfo.username}] Initial balance set from WebSocket: ${initialBalance} (current: ${balance}, earned: ${earned})`);
       }
 
+      if (streamerInfo.initialChannelPoints !== null) {
+        streamerInfo.streamPointsEarned = balance - streamerInfo.initialChannelPoints;
+      }
+
       // Логируем обновление баланса (включая первое установление)
       if (oldBalance !== balance || wasInitialNull) {
         logger.info(`📊  [${streamerInfo.username}] Balance updated: ${oldBalance} → ${balance} (earned: ${earned}, reason: ${reason})`);

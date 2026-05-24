@@ -453,9 +453,11 @@ export class TwitchAPI {
               logger.verbose(`💰  [${streamerInfo.username}] Initial points set via GraphQL: ${pointsInfo.balance}`);
             } else {
               // Обновляем текущие баллы для актуальности данных
-              // Это важно, если WebSocket события не приходят регулярно
               streamerInfo.channelPoints = pointsInfo.balance;
               streamerInfo.lastChannelPoints = pointsInfo.balance;
+              if (streamerInfo.initialChannelPoints !== null) {
+                streamerInfo.streamPointsEarned = pointsInfo.balance - streamerInfo.initialChannelPoints;
+              }
             }
           }
         } catch (e: any) {
@@ -666,6 +668,7 @@ export class TwitchAPI {
         startTime: 0,
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       // Если онлайн, пробуем получить метаданные (опционально)

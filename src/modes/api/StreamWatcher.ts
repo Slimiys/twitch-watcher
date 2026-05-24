@@ -93,6 +93,7 @@ export class StreamWatcher {
     channelPoints: number;
     initialChannelPoints: number | null;
     lastChannelPoints: number | null;
+    streamPointsEarned: number;
     isOnline: boolean;
     updatedAt: number;
   }> = {};
@@ -383,6 +384,7 @@ export class StreamWatcher {
         },
         onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+          this.resetStreamSessionPoints(streamerInfo);
           const streamStartTime = Date.now();
           streamerInfo.startTime = streamStartTime;
           
@@ -425,6 +427,7 @@ export class StreamWatcher {
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
           
           // Сохраняем время завершения стрима в базу данных
@@ -673,6 +676,7 @@ export class StreamWatcher {
         },
         onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+          this.resetStreamSessionPoints(streamerInfo);
           streamerInfo.startTime = Date.now();
           this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
@@ -701,6 +705,7 @@ export class StreamWatcher {
         },
         onStreamDown: (streamerInfo) => {
           logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+          this.syncStreamPointsEarned(streamerInfo);
           this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
           
           const sessionId = this.activeSessions.get(streamerInfo.username);
@@ -956,7 +961,28 @@ export class StreamWatcher {
       startTime: 0,
       initialChannelPoints: null,
       lastChannelPoints: null,
+      streamPointsEarned: 0,
     };
+  }
+
+  /**
+   * Сбрасывает счётчик баллов за стрим при переходе в онлайн
+   */
+  private resetStreamSessionPoints(streamerInfo: StreamerInfo): void {
+    streamerInfo.streamPointsEarned = 0;
+    streamerInfo.initialChannelPoints = null;
+  }
+
+  /**
+   * Обновляет заработанные за текущий стрим баллы по балансу и начальной точке
+   */
+  private syncStreamPointsEarned(streamerInfo: StreamerInfo): void {
+    if (streamerInfo.initialChannelPoints === null) {
+      return;
+    }
+
+    const balance = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints ?? 0;
+    streamerInfo.streamPointsEarned = balance - streamerInfo.initialChannelPoints;
   }
 
   /**
@@ -1137,37 +1163,20 @@ export class StreamWatcher {
         continue;
       }
 
-      // Для офлайн стримеров используем 0 для elapsedTime и pointsEarned
+      // Для офлайн стримеров используем 0 для elapsedTime
       const elapsed = streamerInfo.isOnline && streamerInfo.startTime > 0 
         ? Date.now() - streamerInfo.startTime 
         : 0;
       
-      let pointsEarned = 0;
       let currentPoints = streamerInfo.channelPoints ?? 0;
       
-      // Используем channelPoints (текущий баланс) вместо lastChannelPoints
-      // чтобы учитывать все начисленные баллы, включая те, что получены через просмотр
-      // даже если не пришло событие points-earned через WebSocket
       if (streamerInfo.isOnline) {
         // Если channelPoints не установлен, пробуем использовать lastChannelPoints
         if (currentPoints === 0 && streamerInfo.lastChannelPoints !== null) {
           currentPoints = streamerInfo.lastChannelPoints;
         }
-        
-        // Вычисляем заработанные баллы
-        if (streamerInfo.initialChannelPoints !== null) {
-          // Если начальные баллы установлены, вычисляем разницу
-          pointsEarned = currentPoints - streamerInfo.initialChannelPoints;
-        } else if (currentPoints > 0) {
-          // Если начальные баллы не установлены, но есть текущие баллы,
-          // устанавливаем начальные баллы равными текущим (для первого обновления)
-          // и pointsEarned будет 0, пока не установятся начальные баллы
-          // Это предотвратит неправильное отображение заработанных баллов
-          pointsEarned = 0;
-        }
       } else {
         // Для офлайн стримеров используем lastChannelPoints, если channelPoints равен 0
-        // Это позволяет отображать последнее известное значение баланса
         if (currentPoints === 0 && streamerInfo.lastChannelPoints !== null) {
           currentPoints = streamerInfo.lastChannelPoints;
         }
@@ -1177,11 +1186,13 @@ export class StreamWatcher {
           const saved = this.pointsState[streamerInfo.username];
           if (saved && Number.isFinite(saved.channelPoints) && saved.channelPoints > 0) {
             currentPoints = saved.channelPoints;
-            // Обновляем lastChannelPoints для будущих обновлений
             streamerInfo.lastChannelPoints = saved.channelPoints;
           }
         }
       }
+
+      this.syncStreamPointsEarned(streamerInfo);
+      const pointsEarned = streamerInfo.streamPointsEarned ?? 0;
 
       const status = streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE';
       
@@ -1297,6 +1308,7 @@ export class StreamWatcher {
         if (!wasOnline && streamerInfo.isOnline) {
           // Стример перешел из офлайн в онлайн
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
+          this.resetStreamSessionPoints(streamerInfo);
           const streamStartTime = Date.now();
           streamerInfo.startTime = streamStartTime;
           
@@ -1330,6 +1342,7 @@ export class StreamWatcher {
         } else if (wasOnline && !streamerInfo.isOnline) {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+          this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
           
           // Сохраняем время завершения стрима в базу данных
@@ -2400,6 +2413,9 @@ export class StreamWatcher {
     if (Number.isFinite(saved.initialChannelPoints)) {
       streamerInfo.initialChannelPoints = saved.initialChannelPoints;
     }
+    if (Number.isFinite(saved.streamPointsEarned)) {
+      streamerInfo.streamPointsEarned = saved.streamPointsEarned;
+    }
   }
 
   /**
@@ -2448,6 +2464,7 @@ export class StreamWatcher {
             channelPoints: Math.floor(Math.random() * 100000) + 1000,
             initialChannelPoints: Math.floor(Math.random() * 100000) + 1000,
             lastChannelPoints: null,
+            streamPointsEarned: Math.floor(Math.random() * 500),
             startTime: isOnline ? now - Math.floor(Math.random() * 3600000) : 0,
             game: ['Just Chatting', 'Minecraft', 'Fortnite', 'Valorant', 'League of Legends'][Math.floor(Math.random() * 5)],
             title: `Test stream ${username}`,
@@ -2566,6 +2583,7 @@ export class StreamWatcher {
           channelPoints: info.channelPoints ?? 0,
           initialChannelPoints: info.initialChannelPoints,
           lastChannelPoints: info.lastChannelPoints,
+          streamPointsEarned: info.streamPointsEarned ?? 0,
           isOnline: info.isOnline,
           updatedAt: now,
         };
