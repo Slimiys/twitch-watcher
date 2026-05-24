@@ -108,6 +108,7 @@ describe('Points Earned', () => {
         startTime: Date.now() - 60000, // 1 минута назад
         initialChannelPoints: 1000, // Начальные баллы
         lastChannelPoints: 1500,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -134,6 +135,7 @@ describe('Points Earned', () => {
         startTime: Date.now() - 60000,
         initialChannelPoints: null, // Не установлен
         lastChannelPoints: 1500,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -158,6 +160,7 @@ describe('Points Earned', () => {
         startTime: Date.now() - 60000,
         initialChannelPoints: 1000,
         lastChannelPoints: 1200, // Используется как fallback
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -182,6 +185,7 @@ describe('Points Earned', () => {
         startTime: Date.now() - 60000,
         initialChannelPoints: 1000,
         lastChannelPoints: 800,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -206,6 +210,7 @@ describe('Points Earned', () => {
         startTime: 0,
         initialChannelPoints: 1000,
         lastChannelPoints: 1500,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -257,6 +262,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -309,6 +315,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -349,6 +356,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -389,6 +397,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: null, // Не установлен
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -431,6 +440,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000, // Установлен
         lastChannelPoints: 1500,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -485,6 +495,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -516,6 +527,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: null, // Не установлен
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);
@@ -551,6 +563,7 @@ describe('Points Earned', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       (streamWatcher as any).streamers.set('testuser', streamerInfo);

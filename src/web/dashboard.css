@@ -1541,6 +1541,15 @@ th.notify-header {
     font-size: 16px;
 }
 
+th.notify-header-clickable:hover {
+    opacity: 0.85;
+    transform: scale(1.08);
+}
+
+th.notify-header-clickable:active {
+    transform: scale(1);
+}
+
 .streamer-notify-toggle {
     display: inline-block;
     background: none;

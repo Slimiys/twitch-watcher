@@ -62,6 +62,8 @@ let streamStatusTrackingReady = false;
 
 // Уведомления по стримерам: true = включено (по умолчанию)
 let streamerNotifyPrefs = {};
+/** Имена всех стримеров из последнего ответа /statistics (для массового переключения уведомлений) */
+let lastAllStreamerNames = [];
 try {
     const prefs = safeGetLocalStorage('streamerNotifyPrefs');
     if (prefs) {
@@ -960,6 +962,7 @@ async function updateStatistics() {
     }
 
     if (stats.length === 0) {
+        lastAllStreamerNames = [];
         const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
@@ -970,6 +973,8 @@ async function updateStatistics() {
         previousStreamerStatus = {};
         return;
     }
+
+    lastAllStreamerNames = stats.map((s) => s.streamerName).filter(Boolean);
 
     try {
         const statusChanges = detectStreamerStatusChanges(stats);
@@ -1089,8 +1094,12 @@ async function updateStatistics() {
     }
 
     // Определяем колонки с их видимостью
+    const allNotifyOn = areAllStreamerNotificationsEnabled(lastAllStreamerNames);
+    const notifyHeaderTitle = allNotifyOn
+        ? 'Выключить оповещения у всех стримеров'
+        : 'Включить оповещения у всех стримеров';
     const columns = [
-        { key: 'notify', label: '🔔', visible: visibleColumns.notify !== false },
+        { key: 'notify', label: allNotifyOn ? '🔔' : '🔕', visible: visibleColumns.notify !== false },
         { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
         { key: 'status', label: 'Status', visible: visibleColumns.status !== false },
         { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
@@ -1116,11 +1125,16 @@ async function updateStatistics() {
                             ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
                             : (isSortable ? ' ↕' : '');
                         const sortClass = isSorted ? ` sort-${tableSort.direction}` : '';
-                        const clickHandler = isSortable ? ` onclick="handleTableSort('${col.key}')"` : '';
-                        const cursorStyle = isSortable ? ' style="cursor: pointer; user-select: none;"' : '';
-                        const notifyClass = col.key === 'notify' ? ' notify-header' : '';
+                        const clickHandler = col.key === 'notify'
+                            ? ' onclick="toggleAllStreamerNotifications()"'
+                            : (isSortable ? ` onclick="handleTableSort('${col.key}')"` : '');
+                        const cursorStyle = (col.key === 'notify' || isSortable)
+                            ? ' style="cursor: pointer; user-select: none;"'
+                            : '';
+                        const notifyClass = col.key === 'notify' ? ' notify-header notify-header-clickable' : '';
+                        const notifyTitle = col.key === 'notify' ? ` title="${notifyHeaderTitle}"` : '';
                         
-                        return `<th class="table-header${notifyClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}>${col.label}${sortIcon}</th>`;
+                        return `<th class="table-header${notifyClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${notifyTitle}>${col.label}${sortIcon}</th>`;
                     }).join('')}
                 </tr>
             </thead>
@@ -2081,6 +2095,29 @@ function setStreamerNotifyEnabled(streamerName, enabled) {
     const key = streamerName.toLowerCase();
     streamerNotifyPrefs[key] = enabled;
     safeSetLocalStorage('streamerNotifyPrefs', JSON.stringify(streamerNotifyPrefs));
+}
+
+/**
+ * Проверяет, включены ли уведомления у всех указанных стримеров
+ */
+function areAllStreamerNotificationsEnabled(streamerNames) {
+    if (!streamerNames?.length) {
+        return true;
+    }
+    return streamerNames.every((name) => isStreamerNotifyEnabled(name));
+}
+
+/**
+ * Включает или выключает уведомления у всех стримеров (клик по заголовку колонки)
+ */
+function toggleAllStreamerNotifications() {
+    if (!lastAllStreamerNames.length) {
+        return;
+    }
+
+    const enableAll = !areAllStreamerNotificationsEnabled(lastAllStreamerNames);
+    lastAllStreamerNames.forEach((name) => setStreamerNotifyEnabled(name, enableAll));
+    updateStatistics();
 }
 
 /**
@@ -4225,6 +4262,7 @@ window.exportSettings = exportSettings;
 window.importSettings = importSettings;
 window.saveSettings = saveSettings;
 window.toggleStreamerNotify = toggleStreamerNotify;
+window.toggleAllStreamerNotifications = toggleAllStreamerNotifications;
 window.showSettingsModal = showSettingsModal;
 window.showTestModal = showTestModal;
 window.closeTestModal = closeTestModal;

@@ -89,6 +89,7 @@ describe('TwitchAPI', () => {
         startTime: 0,
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       const result = await twitchAPI.updateStreamerInfo(streamerInfo);
@@ -117,6 +118,7 @@ describe('TwitchAPI', () => {
         startTime: Date.now(),
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       const result = await twitchAPI.updateStreamerInfo(streamerInfo);
@@ -148,6 +150,7 @@ describe('TwitchAPI', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       // Мокаем createMinuteWatchedPayload
@@ -182,6 +185,7 @@ describe('TwitchAPI', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
 
       const result = await twitchAPI.sendMinuteWatched(streamerInfo);

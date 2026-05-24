@@ -128,6 +128,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -166,6 +167,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: null, // Не установлен
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -207,6 +209,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -249,6 +252,7 @@ describe('WebSocketManager', () => {
         startTime: 0,
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -277,6 +281,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);

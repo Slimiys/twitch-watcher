@@ -118,6 +118,7 @@ describe('StreamWatcher', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       });
       mockTwitchAPI.validateToken = vi.fn().mockResolvedValue(true);
       mockTwitchAPI.validateTokenWithInfo = vi.fn().mockResolvedValue({
