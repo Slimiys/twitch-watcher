@@ -332,30 +332,40 @@ describe('GraphQLClient', () => {
   });
 
   describe('claimBonus', () => {
+    const mockIntegrityResponse = {
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'integrity-token', expiration: Math.floor(Date.now() / 1000) + 3600 }),
+    };
+
     it('должен успешно собрать бонус', async () => {
       const mockResponse = {
         data: {
           claimCommunityPoints: {
             error: null,
+            status: 'SUCCESS',
           },
         },
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockResponse,
-      });
+      (global.fetch as any)
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
 
       const result = await client.claimBonus('channel123', 'claim123');
 
       expect(result).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('должен вернуть false при ошибке сбора бонуса', async () => {
+    it('должен вернуть false при ошибке integrity', async () => {
       const mockResponse = {
         data: {
-          claimCommunityPoints: null, // null означает, что бонус уже собран или недоступен
+          claimCommunityPoints: null,
         },
         errors: [
           {
@@ -364,15 +374,24 @@ describe('GraphQLClient', () => {
         ],
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockResponse,
-      });
+      (global.fetch as any)
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        })
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
 
       const result = await client.claimBonus('channel123', 'claim123');
 
       expect(result).toBe(false);
+      expect(global.fetch).toHaveBeenCalledTimes(4);
     });
   });
 

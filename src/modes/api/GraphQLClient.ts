@@ -9,6 +9,7 @@ import { retryWithExponentialBackoff, RetryConfig } from './retry';
 import { CircuitBreaker } from './CircuitBreaker';
 import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
+import { TwitchIntegrityProvider } from './TwitchIntegrity';
 
 /**
  * Клиент для выполнения GraphQL запросов к Twitch
@@ -18,6 +19,7 @@ export class GraphQLClient {
   private userAgent: string;
   private circuitBreaker: CircuitBreaker;
   private retryConfig: RetryConfig;
+  private integrityProvider: TwitchIntegrityProvider;
   /** Время последней сетевой ошибки (для защиты от ложного OFFLINE) */
   private lastNetworkFailureAt = 0;
   /** Некритичные операции — баллы/статус дублируются через WebSocket */
@@ -49,6 +51,7 @@ export class GraphQLClient {
       halfOpenMaxAttempts: 1,
     };
     this.circuitBreaker = new CircuitBreaker('GraphQL', cbConfig);
+    this.integrityProvider = new TwitchIntegrityProvider(authToken, userAgent);
   }
 
   /**
@@ -135,27 +138,35 @@ export class GraphQLClient {
    * @param operation GraphQL операция
    * @returns Ответ от сервера
    */
-  async postRequest(operation: GraphQLOperation): Promise<GraphQLResponse> {
+  async postRequest(
+    operation: GraphQLOperation,
+    options?: { requireIntegrity?: boolean }
+  ): Promise<GraphQLResponse> {
     // Используем Circuit Breaker для защиты от каскадных сбоев
     return this.circuitBreaker.execute(async () => {
       // Используем retry с экспоненциальной задержкой
       return retryWithExponentialBackoff(
         async () => {
           const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
-          const response = await fetch(
-            GQL_URL,
-            {
-              method: 'POST',
-              headers: {
-                'Authorization': `OAuth ${this.authToken}`,
-                'Client-Id': CLIENT_ID,
-                'User-Agent': this.userAgent,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(operation),
-              signal: AbortSignal.timeout(fetchTimeoutMs),
-            }
-          );
+          const headers: Record<string, string> = {
+            Authorization: `OAuth ${this.authToken}`,
+            'Client-Id': CLIENT_ID,
+            'User-Agent': this.userAgent,
+            'Content-Type': 'application/json',
+          };
+
+          if (options?.requireIntegrity) {
+            const integrityToken = await this.integrityProvider.getToken();
+            headers['Client-Integrity'] = integrityToken;
+            headers['X-Device-Id'] = this.integrityProvider.getDeviceId();
+          }
+
+          const response = await fetch(GQL_URL, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(operation),
+            signal: AbortSignal.timeout(fetchTimeoutMs),
+          });
 
           // Проверяем статус ответа
           if (!response.ok) {
@@ -760,37 +771,53 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    // Проверяем, что запрос выполнен успешно
-    // Если есть ошибка "failed integrity check", это означает, что бонус уже собран или недоступен
-    if (response.errors && response.errors.length > 0) {
-      const hasIntegrityError = response.errors.some((e: any) => e.message === 'failed integrity check');
-      if (hasIntegrityError) {
-        // Бонус уже собран или недоступен - это нормально
-        // API может показывать availableClaim, но бонус уже был собран между проверкой и попыткой
-        return false;
-      }
+    let response = await this.postRequest(operation, { requireIntegrity: true });
+
+    if (GraphQLClient.hasIntegrityError(response)) {
+      logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
+      this.integrityProvider.invalidate();
+      response = await this.postRequest(operation, { requireIntegrity: true });
     }
-    
-    // Проверяем результат операции
-    const claimResult = response.data?.claimCommunityPoints;
-    
-    // Если claimResult не null и не undefined, значит операция выполнена
-    // В Channel Points Miner они просто отправляют запрос и не проверяют результат
-    // Но мы проверяем, чтобы знать, успешно ли собрали
+
+    return GraphQLClient.parseClaimBonusResult(response);
+  }
+
+  private static hasIntegrityError(response: GraphQLResponse): boolean {
+    return Boolean(
+      response.errors?.some((e: { message?: string }) => e.message === 'failed integrity check')
+    );
+  }
+
+  private static parseClaimBonusResult(response: GraphQLResponse): boolean {
+    if (GraphQLClient.hasIntegrityError(response)) {
+      logger.verbose('⚠️  ClaimCommunityPoints: failed integrity check (need valid Client-Integrity)');
+      return false;
+    }
+
+    const claimResult = (response.data as any)?.claimCommunityPoints;
+    const claimError = claimResult?.error;
+
+    if (claimError?.code) {
+      logger.verbose(`⚠️  ClaimCommunityPoints error: ${claimError.code}`);
+      return false;
+    }
+
+    if (claimResult?.status === 'SUCCESS') {
+      return true;
+    }
+
     if (claimResult !== null && claimResult !== undefined) {
-      // Если есть поле status, проверяем его
-      if (claimResult.status === 'SUCCESS') {
-        return true;
-      }
-      // Если это объект с данными (не null), считаем успехом
       if (typeof claimResult === 'object' && Object.keys(claimResult).length > 0) {
         return true;
       }
     }
-    
-    // Если claimResult === null, значит операция не выполнена (бонус уже собран или недоступен)
+
+    if (response.errors?.length) {
+      logger.verbose(
+        `⚠️  ClaimCommunityPoints gql errors: ${response.errors.map((e: any) => e.message).join(', ')}`
+      );
+    }
+
     return false;
   }
 
@@ -815,22 +842,20 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    // Проверяем успешность операции
-    // В Channel Points Miner они просто отправляют запрос без проверки результата
-    // Но мы проверяем, чтобы знать, успешно ли присоединились
+    let response = await this.postRequest(operation, { requireIntegrity: true });
+
+    if (GraphQLClient.hasIntegrityError(response)) {
+      this.integrityProvider.invalidate();
+      response = await this.postRequest(operation, { requireIntegrity: true });
+    }
+
     if (response.errors && response.errors.length > 0) {
-      // Если есть ошибки, логируем их, но не считаем критичными
-      const hasIntegrityError = response.errors.some((e: any) => e.message === 'failed integrity check');
-      if (!hasIntegrityError) {
-        // Для других ошибок логируем
+      if (!GraphQLClient.hasIntegrityError(response)) {
         logger.error(`❌  Error joining raid ${raidId}:`, response.errors[0].message);
       }
       return false;
     }
-    
-    // Если нет ошибок, считаем успехом
+
     return true;
   }
 }

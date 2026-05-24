@@ -913,7 +913,7 @@ export class StreamWatcher {
       return;
     }
 
-    logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус (возможно, уже собран)`);
+    logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус (integrity/FORBIDDEN или уже собран)`);
     this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
   }
 
@@ -1058,6 +1058,11 @@ export class StreamWatcher {
 
       if (success) {
         logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+        if (this.graphqlClient) {
+          runSafeAsync(`claim-after-watch-${streamerInfo.username}`, () =>
+            this.tryClaimBonusForStreamer(streamerInfo)
+          );
+        }
       } else if (!streamerInfo.isOnline) {
         logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
       } else {
@@ -1134,6 +1139,37 @@ export class StreamWatcher {
       `🔄  Rotating channels (${allOnlineStreamers.length} online, showing ${this.maxSimultaneousChannels}): ${onlineStreamers.map((s) => s.username).join(', ')}`
     );
     return onlineStreamers;
+  }
+
+  /**
+   * Проверяет и собирает бонус после успешного minute-watched
+   */
+  private async tryClaimBonusForStreamer(streamerInfo: StreamerInfo): Promise<void> {
+    const graphqlClient = this.graphqlClient;
+    if (!graphqlClient || !streamerInfo.isOnline || !streamerInfo.channelId) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastAttempt = this.recentClaimAttempts.get(streamerInfo.username);
+    if (lastAttempt && now - lastAttempt < this.claimAttemptCooldownMs) {
+      return;
+    }
+
+    try {
+      const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+      const claimId = pointsInfo?.availableClaim?.id;
+      if (!claimId) {
+        return;
+      }
+
+      this.recentClaimAttempts.set(streamerInfo.username, now);
+      await this.handleClaimAvailable(streamerInfo, claimId, graphqlClient);
+    } catch (error: any) {
+      logger.verbose(
+        `⚠️  [${streamerInfo.username}] Claim check after watch failed: ${error.message || error}`
+      );
+    }
   }
 
   /**
