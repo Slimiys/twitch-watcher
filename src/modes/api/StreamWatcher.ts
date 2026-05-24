@@ -82,6 +82,13 @@ export class StreamWatcher {
   private recentClaimAttempts = new Map<string, number>();
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
+  private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
+  private watchMode: 'per-channel' | 'batch' =
+    process.env.WATCH_MODE === 'batch' ? 'batch' : 'per-channel';
+  private watchAllOnlineChannels = process.env.WATCH_ALL_ONLINE_CHANNELS !== 'false';
+  private watchCycleLoopActive = false;
+  private channelWatchActive = new Set<string>();
+  private channelWatchInProgress = new Set<string>();
   private claimCheckIntervalMs = parseInt(process.env.CLAIM_CHECK_INTERVAL_MS || '120000', 10);
   private claimAttemptCooldownMs = 60000;
   private configPath: string = './config.json'; // Путь к файлу конфигурации
@@ -136,6 +143,15 @@ export class StreamWatcher {
     }
     
     logger.verbose(`📊  Max simultaneous channels: ${this.maxSimultaneousChannels}`);
+    logger.verbose(
+      `📊  Watch mode: ${
+        this.watchMode === 'per-channel'
+          ? `per-channel timers (${this.watchCycleIntervalMs}ms)`
+          : this.watchAllOnlineChannels
+            ? 'batch — all online channels'
+            : `batch rotation (max ${this.maxSimultaneousChannels})`
+      }`
+    );
     
     // Инициализируем TokenManager для отслеживания истечения токена
     try {
@@ -462,6 +478,7 @@ export class StreamWatcher {
    */
   stop(): void {
     this.isRunning = false;
+    this.stopAllChannelWatchTimers();
 
     if (this.watchInterval) {
       clearInterval(this.watchInterval);
@@ -702,9 +719,11 @@ export class StreamWatcher {
         const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
         this.addPointsHistory(streamerInfo.username, 0, totalPoints);
         this.savePointsState();
+        this.startChannelWatchTimer(streamerInfo.username);
       },
       onStreamDown: (streamerInfo) => {
         logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+        this.stopChannelWatchTimer(streamerInfo.username);
         this.syncStreamPointsEarned(streamerInfo);
         this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
 
@@ -902,9 +921,219 @@ export class StreamWatcher {
    * Запускает отправку событий просмотра и периодическую проверку бонусов
    */
   private startWatching(): void {
-    this.watchInterval = setSafeAsyncInterval('minute-watched', () => this.sendWatchEvents(), 60000);
-    runSafeAsync('minute-watched-initial', () => this.sendWatchEvents());
+    if (this.watchMode === 'per-channel') {
+      this.syncChannelWatchTimers();
+    } else {
+      this.startWatchCycleLoop();
+    }
     this.startClaimPolling();
+  }
+
+  /**
+   * Запускает таймеры minute-watched для всех текущих онлайн-каналов
+   */
+  private syncChannelWatchTimers(): void {
+    for (const streamerInfo of this.streamers.values()) {
+      if (streamerInfo.isOnline) {
+        this.startChannelWatchTimer(streamerInfo.username);
+      }
+    }
+  }
+
+  /**
+   * Запускает per-channel цикл minute-watched (идempotent)
+   */
+  private startChannelWatchTimer(username: string): void {
+    if (this.watchMode !== 'per-channel') {
+      return;
+    }
+    if (this.channelWatchActive.has(username)) {
+      return;
+    }
+
+    this.channelWatchActive.add(username);
+    logger.verbose(
+      `⏱️  [${username}] Таймер minute-watched запущен (интервал ${this.watchCycleIntervalMs}ms)`
+    );
+    runSafeAsync(`minute-watched-${username}`, () => this.runChannelWatchLoop(username));
+  }
+
+  /**
+   * Останавливает per-channel цикл minute-watched
+   */
+  private stopChannelWatchTimer(username: string): void {
+    if (this.channelWatchActive.delete(username)) {
+      logger.verbose(`⏱️  [${username}] Таймер minute-watched остановлен`);
+    }
+  }
+
+  /**
+   * Останавливает все per-channel таймеры
+   */
+  private stopAllChannelWatchTimers(): void {
+    for (const username of [...this.channelWatchActive]) {
+      this.stopChannelWatchTimer(username);
+    }
+  }
+
+  /**
+   * Per-channel цикл: отправка minute-watched с паузой после завершения тика
+   */
+  private async runChannelWatchLoop(username: string): Promise<void> {
+    while (this.isRunning && this.channelWatchActive.has(username)) {
+      const streamerInfo = this.streamers.get(username);
+      if (!streamerInfo?.isOnline) {
+        this.channelWatchActive.delete(username);
+        break;
+      }
+
+      const tickStart = Date.now();
+      await this.sendMinuteWatchedForStreamer(streamerInfo);
+
+      if (!this.isRunning || !this.channelWatchActive.has(username)) {
+        break;
+      }
+
+      const streamerStillOnline = this.streamers.get(username);
+      if (!streamerStillOnline?.isOnline) {
+        this.channelWatchActive.delete(username);
+        break;
+      }
+
+      const elapsed = Date.now() - tickStart;
+      const waitMs = Math.max(0, this.watchCycleIntervalMs - elapsed);
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
+
+    this.channelWatchActive.delete(username);
+  }
+
+  /**
+   * Отправляет minute-watched для одного стримера
+   */
+  private async sendMinuteWatchedForStreamer(streamerInfo: StreamerInfo): Promise<void> {
+    if (this.channelWatchInProgress.has(streamerInfo.username)) {
+      logger.verbose(
+        `⏭️  [${streamerInfo.username}] minute-watched: предыдущая отправка ещё выполняется`
+      );
+      return;
+    }
+
+    this.channelWatchInProgress.add(streamerInfo.username);
+    const tickStart = Date.now();
+
+    try {
+      if (!streamerInfo.isOnline) {
+        return;
+      }
+
+      try {
+        await this.prepareStreamerForWatch(streamerInfo);
+      } catch (error: any) {
+        logger.warn(
+          `⚠️  [${streamerInfo.username}] Failed to prepare for watch: ${error.message || error}`
+        );
+        logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known data`);
+      }
+
+      if (!streamerInfo.isOnline) {
+        logger.verbose(
+          `ℹ️  [${streamerInfo.username}] Стример ушел офлайн, пропускаем отправку события`
+        );
+        return;
+      }
+
+      if (!streamerInfo.spadeUrl) {
+        logger.warn(`⚠️  [${streamerInfo.username}] Spade URL not available, skipping event`);
+        return;
+      }
+
+      const success = await withTimeout(
+        () => this.twitchAPI.sendMinuteWatched(streamerInfo),
+        this.watchOpTimeoutMs,
+        `sendMinuteWatched:${streamerInfo.username}`
+      );
+
+      if (success) {
+        logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+      } else if (!streamerInfo.isOnline) {
+        logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
+      } else {
+        streamerInfo.spadeUrl = null;
+        logger.verbose(
+          `🔄  [${streamerInfo.username}] minute-watched не отправлен, spade_url будет обновлён на следующем цикле`
+        );
+      }
+    } catch (error: any) {
+      logger.error(
+        `❌  [${streamerInfo.username}] Error sending minute watched event: ${error.message || error}`
+      );
+    } finally {
+      const tickMs = Date.now() - tickStart;
+      if (tickMs > this.watchCycleIntervalMs - 5000) {
+        logger.warn(
+          `⚠️  [${streamerInfo.username}] minute-watched tick took ${tickMs}ms (interval ${this.watchCycleIntervalMs}ms)`
+        );
+      } else {
+        logger.verbose(`ℹ️  [${streamerInfo.username}] minute-watched tick took ${tickMs}ms`);
+      }
+      this.channelWatchInProgress.delete(streamerInfo.username);
+    }
+  }
+
+  /**
+   * Цикл minute-watched: после завершения ждёт интервал и запускает снова (batch-режим)
+   */
+  private startWatchCycleLoop(): void {
+    if (this.watchCycleLoopActive) {
+      return;
+    }
+    this.watchCycleLoopActive = true;
+
+    runSafeAsync('minute-watched-loop', async () => {
+      while (this.isRunning) {
+        const cycleStart = Date.now();
+        await this.sendWatchEvents();
+        if (!this.isRunning) {
+          break;
+        }
+        const elapsed = Date.now() - cycleStart;
+        const waitMs = Math.max(0, this.watchCycleIntervalMs - elapsed);
+        if (waitMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+      }
+      this.watchCycleLoopActive = false;
+    });
+  }
+
+  /**
+   * Выбирает стримеров для текущего цикла minute-watched
+   */
+  private selectStreamersForWatchCycle(allOnlineStreamers: StreamerInfo[]): StreamerInfo[] {
+    if (allOnlineStreamers.length === 0) {
+      return [];
+    }
+
+    if (this.watchAllOnlineChannels) {
+      return allOnlineStreamers;
+    }
+
+    if (allOnlineStreamers.length <= this.maxSimultaneousChannels) {
+      return allOnlineStreamers;
+    }
+
+    const rotationIndex = Math.floor(Date.now() / 60000) % allOnlineStreamers.length;
+    const onlineStreamers: StreamerInfo[] = [];
+    for (let i = 0; i < this.maxSimultaneousChannels; i++) {
+      onlineStreamers.push(allOnlineStreamers[(rotationIndex + i) % allOnlineStreamers.length]);
+    }
+    logger.verbose(
+      `🔄  Rotating channels (${allOnlineStreamers.length} online, showing ${this.maxSimultaneousChannels}): ${onlineStreamers.map((s) => s.username).join(', ')}`
+    );
+    return onlineStreamers;
   }
 
   /**
@@ -1024,87 +1253,21 @@ export class StreamWatcher {
         return;
       }
 
-      let onlineStreamers: StreamerInfo[];
-
-      if (allOnlineStreamers.length <= this.maxSimultaneousChannels) {
-        onlineStreamers = allOnlineStreamers;
-      } else {
-        const rotationIndex = Math.floor(Date.now() / 60000) % allOnlineStreamers.length;
-        onlineStreamers = [];
-        for (let i = 0; i < this.maxSimultaneousChannels; i++) {
-          onlineStreamers.push(
-            allOnlineStreamers[(rotationIndex + i) % allOnlineStreamers.length]
-          );
-        }
-        logger.verbose(
-          `🔄  Rotating channels (${allOnlineStreamers.length} online, showing ${this.maxSimultaneousChannels}): ${onlineStreamers.map((s) => s.username).join(', ')}`
-        );
-      }
+      const onlineStreamers = this.selectStreamersForWatchCycle(allOnlineStreamers);
 
       logger.verbose(
         `📺  Sending minute-watched events for ${onlineStreamers.length} streamer(s): ${onlineStreamers.map((s) => s.username).join(', ')}`
       );
 
-      for (const streamerInfo of onlineStreamers) {
-        try {
-          await this.prepareStreamerForWatch(streamerInfo);
-        } catch (error: any) {
-          logger.warn(
-            `⚠️  [${streamerInfo.username}] Failed to prepare for watch: ${error.message || error}`
-          );
-          logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known data`);
-        }
-      }
-
-      const totalInterval = 60000;
-      const interval = Math.floor(totalInterval / onlineStreamers.length);
-      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-      for (let i = 0; i < onlineStreamers.length; i++) {
-        if (i > 0) {
-          await delay(interval);
-        }
-
-        const streamerInfo = onlineStreamers[i];
-
-        if (!streamerInfo.isOnline) {
-          logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, пропускаем отправку события`);
-          continue;
-        }
-
-        if (!streamerInfo.spadeUrl) {
-          logger.warn(`⚠️  [${streamerInfo.username}] Spade URL not available, skipping event`);
-          continue;
-        }
-
-        try {
-          const success = await withTimeout(
-            () => this.twitchAPI.sendMinuteWatched(streamerInfo),
-            this.watchOpTimeoutMs,
-            `sendMinuteWatched:${streamerInfo.username}`
-          );
-
-          if (success) {
-            logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
-          } else if (!streamerInfo.isOnline) {
-            logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
-          } else {
-            streamerInfo.spadeUrl = null;
-            logger.verbose(
-              `🔄  [${streamerInfo.username}] minute-watched не отправлен, spade_url будет обновлён на следующем цикле`
-            );
-          }
-        } catch (error: any) {
-          logger.error(
-            `❌  [${streamerInfo.username}] Error sending minute watched event: ${error.message || error}`
-          );
-          logger.verbose(`ℹ️  [${streamerInfo.username}] Isolated due to error, continuing with other streamers`);
-        }
-      }
+      await Promise.allSettled(
+        onlineStreamers.map((streamerInfo) => this.sendMinuteWatchedForStreamer(streamerInfo))
+      );
     } finally {
       const cycleMs = Date.now() - cycleStart;
-      if (cycleMs > 55000) {
-        logger.warn(`⚠️  minute-watched cycle took ${cycleMs}ms (may delay next tick)`);
+      if (cycleMs > this.watchCycleIntervalMs - 5000) {
+        logger.warn(
+          `⚠️  minute-watched cycle took ${cycleMs}ms (interval ${this.watchCycleIntervalMs}ms)`
+        );
       } else {
         logger.verbose(`ℹ️  minute-watched cycle took ${cycleMs}ms`);
       }
@@ -1348,9 +1511,12 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+          this.startChannelWatchTimer(streamerInfo.username);
         } else if (wasOnline && !streamerInfo.isOnline) {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
+          this.stopChannelWatchTimer(streamerInfo.username);
+          streamerInfo.startTime = 0;
           this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
           
@@ -2194,6 +2360,7 @@ export class StreamWatcher {
           );
           this.activeSessions.set(streamerInfo.username, sessionId);
         }
+        this.startChannelWatchTimer(streamerInfo.username);
       } else {
         logger.info(`😴  [${normalizedUsername}] Added - OFFLINE`);
       }
@@ -2226,6 +2393,8 @@ export class StreamWatcher {
     try {
       logger.info(`➖  Removing streamer: ${normalizedUsername}`);
       
+      this.stopChannelWatchTimer(normalizedUsername);
+
       const streamerInfo = this.streamers.get(normalizedUsername);
       
       // Завершаем активную сессию, если есть
