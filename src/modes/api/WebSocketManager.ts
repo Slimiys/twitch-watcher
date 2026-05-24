@@ -733,20 +733,36 @@ export class WebSocketManager {
     } else if (messageData.type === 'claim-available') {
       const claimMessage = messageData as ClaimAvailableMessage;
       const claimId = claimMessage.data.claim.id;
+      const channelIdRaw = claimMessage.data.claim.channel_id;
+      const channelId = channelIdRaw != null ? String(channelIdRaw) : null;
 
-      // claim-available приходит для пользователя, но бонус может быть доступен для любого канала
-      // Проверяем бонус для всех онлайн стримеров (только один раз для каждого)
-      // WebSocket отправляет событие только когда бонус становится доступным
-      const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline);
-      
-      if (onlineStreamers.length > 0 && this.eventHandlers.onClaimAvailable) {
-        // Отправляем событие только для первого онлайн стримера
-        // Если бонус не для него, он просто не соберется, и мы попробуем для следующего при следующем событии
-        // Или можно проверить все, но это может привести к множественным попыткам
-        // Лучше проверить все онлайн стримеров, но только один раз
-        for (const streamerInfo of onlineStreamers) {
+      logger.verbose(
+        `🎁  WebSocket: claim-available - claimId=${claimId}, channel_id=${channelId || 'unknown'}`
+      );
+
+      if (!this.eventHandlers.onClaimAvailable) {
+        return;
+      }
+
+      if (channelId) {
+        const streamerInfo = Array.from(this.streamers.values()).find(
+          (s) => String(s.channelId) === channelId
+        );
+
+        if (streamerInfo?.isOnline) {
           this.eventHandlers.onClaimAvailable(streamerInfo, claimId);
+        } else if (streamerInfo) {
+          logger.verbose(`ℹ️  claim-available для ${streamerInfo.username}, но стример офлайн`);
+        } else {
+          logger.verbose(`ℹ️  claim-available для неотслеживаемого channel_id: ${channelId}`);
         }
+        return;
+      }
+
+      // Fallback: channel_id не указан — проверяем всех онлайн стримеров
+      const onlineStreamers = Array.from(this.streamers.values()).filter((s) => s.isOnline);
+      for (const streamerInfo of onlineStreamers) {
+        this.eventHandlers.onClaimAvailable(streamerInfo, claimId);
       }
     }
   }

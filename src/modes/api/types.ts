@@ -71,6 +71,7 @@ export interface ClaimAvailableMessage {
   data: {
     claim: {
       id: string;
+      channel_id?: string | number;
     };
   };
 }

@@ -350,38 +350,8 @@ export class StreamWatcher {
           this.addPointsHistory(streamerInfo.username, points, totalPoints);
         this.savePointsState();
         },
-        onClaimAvailable: async (streamerInfo, claimId) => {
-          // Проверяем, доступен ли бонус для этого стримера перед попыткой собрать
-          // Это предотвращает попытки собрать бонус для всех стримеров, когда он доступен только для одного
-          try {
-            const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
-            if (pointsInfo?.availableClaim?.id === claimId) {
-              // Бонус действительно доступен для этого стримера
-              logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
-              const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
-              if (success) {
-                logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
-                this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
-              } else {
-                logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket (возможно, уже собран)`);
-                this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
-              }
-            } else {
-              // Бонус не доступен для этого стримера - это нормально, просто пропускаем
-              logger.verbose(`ℹ️  [${streamerInfo.username}] Бонус ${claimId} не доступен для этого стримера (доступен: ${pointsInfo?.availableClaim?.id || 'none'})`);
-            }
-          } catch (error: any) {
-            // При ошибке проверки пробуем собрать бонус (fallback поведение)
-            logger.verbose(`⚠️  [${streamerInfo.username}] Ошибка проверки доступности бонуса, пробуем собрать: ${error.message || error}`);
-            const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
-            if (success) {
-              logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
-              this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
-            } else {
-              logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
-            }
-          }
-        },
+        onClaimAvailable: (streamerInfo, claimId) =>
+          this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
         onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
           this.resetStreamSessionPoints(streamerInfo);
@@ -647,33 +617,8 @@ export class StreamWatcher {
           this.addPointsHistory(streamerInfo.username, points, totalPoints);
           this.savePointsState();
         },
-        onClaimAvailable: async (streamerInfo, claimId) => {
-          try {
-            const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
-            if (pointsInfo?.availableClaim?.id === claimId) {
-              logger.info(`🎁  [${streamerInfo.username}] Получено уведомление о доступном бонусе через WebSocket`);
-              const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
-              if (success) {
-                logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
-                this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
-              } else {
-                logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket (возможно, уже собран)`);
-                this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
-              }
-            } else {
-              logger.verbose(`ℹ️  [${streamerInfo.username}] Бонус ${claimId} не доступен для этого стримера (доступен: ${pointsInfo?.availableClaim?.id || 'none'})`);
-            }
-          } catch (error: any) {
-            logger.verbose(`⚠️  [${streamerInfo.username}] Ошибка проверки доступности бонуса, пробуем собрать: ${error.message || error}`);
-            const success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
-            if (success) {
-              logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран через WebSocket!`);
-              this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
-            } else {
-              logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус через WebSocket`);
-            }
-          }
-        },
+        onClaimAvailable: (streamerInfo, claimId) =>
+          this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
         onStreamUp: async (streamerInfo) => {
           logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
           this.resetStreamSessionPoints(streamerInfo);
@@ -983,6 +928,45 @@ export class StreamWatcher {
 
     const balance = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints ?? 0;
     streamerInfo.streamPointsEarned = balance - streamerInfo.initialChannelPoints;
+  }
+
+  /**
+   * Собирает бонусный сундук по событию claim-available из WebSocket
+   */
+  private async handleClaimAvailable(
+    streamerInfo: StreamerInfo,
+    claimId: string,
+    graphqlClient: GraphQLClient
+  ): Promise<void> {
+    logger.info(`🎁  [${streamerInfo.username}] Доступен бонус ${claimId}, собираем...`);
+
+    let success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+
+    if (!success) {
+      try {
+        const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+        const fallbackClaimId = pointsInfo?.availableClaim?.id;
+        if (fallbackClaimId && fallbackClaimId !== claimId) {
+          logger.verbose(
+            `ℹ️  [${streamerInfo.username}] Повтор с ID из GraphQL: ${fallbackClaimId}`
+          );
+          success = await graphqlClient.claimBonus(streamerInfo.channelId, fallbackClaimId);
+        }
+      } catch (error: any) {
+        logger.verbose(
+          `⚠️  [${streamerInfo.username}] Не удалось получить fallback claim: ${error.message || error}`
+        );
+      }
+    }
+
+    if (success) {
+      logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран!`);
+      this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
+      return;
+    }
+
+    logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус (возможно, уже собран)`);
+    this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
   }
 
   /**
