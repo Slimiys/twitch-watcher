@@ -370,6 +370,17 @@
                 </div>
                 
                 <div class="settings-section">
+                    <h4 class="settings-section-title">API</h4>
+                    <div class="settings-item">
+                        <label class="settings-label" for="dashboardApiKeySetting">API-ключ (WEB_DASHBOARD_API_KEY):</label>
+                        <input type="password" id="dashboardApiKeySetting" class="settings-select" style="width: 100%;" autocomplete="off" placeholder="Оставьте пустым, если защита отключена">
+                    </div>
+                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0;">
+                        Ключ передаётся в заголовке X-API-Key. Хранится только в браузере (localStorage).
+                    </p>
+                </div>
+
+                <div class="settings-section">
                     <h4 class="settings-section-title">Управление настройками</h4>
                     <div class="settings-item" style="display: flex; gap: 10px;">
                         <button class="modal-btn modal-btn-secondary" onclick="exportSettings()">Экспорт настроек</button>

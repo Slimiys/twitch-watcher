@@ -14,6 +14,7 @@ import {
   isWebServerHttpsEnabled,
   resolveHttpsCredentialPaths,
 } from './httpsCredentials';
+import { createDashboardApiKeyMiddleware } from './apiAuth';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -161,7 +162,7 @@ export class WebServer {
     this.app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
       
       if (req.method === 'OPTIONS') {
         res.status(200).end();
@@ -173,6 +174,9 @@ export class WebServer {
 
     // Парсинг JSON
     this.app.use(express.json());
+
+    // API-ключ для /api/* (если задан WEB_DASHBOARD_API_KEY)
+    this.app.use(createDashboardApiKeyMiddleware());
   }
 
   /**

@@ -39,6 +39,31 @@ export function setSafeAsyncInterval(
 }
 
 /**
+ * Выполняет async-операцию с таймаутом
+ */
+export async function withTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+  context: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Timeout after ${timeoutMs}ms [${context}]`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fn(), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+/**
  * Кодирование payload в Base64 для отправки на Spade URL
  * @param payload Payload для кодирования
  * @returns Закодированный payload в формате { data: "base64_string" }

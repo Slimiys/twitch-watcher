@@ -675,9 +675,8 @@ export class TwitchAPI {
       // WebSocket события stream-up/stream-down более надежны для определения статуса
       if (streamerInfo.isOnline) {
         await this.updateStreamerInfo(streamerInfo);
-        streamerInfo.startTime = Date.now();
-        
-        // Пробуем получить начальные баллы (опционально)
+
+        // startTime задаётся в StreamWatcher.restoreWatchSessionAfterRestart()
         try {
           const pointsInfo = await this.graphqlClient.getChannelPoints(username);
           if (pointsInfo) {

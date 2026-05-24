@@ -6,7 +6,7 @@ import { TwitchAPI } from './TwitchAPI';
 import { WebSocketManager, WebSocketEventHandler } from './WebSocketManager';
 import { StreamerInfo, WatchStatistics } from './types';
 import { GraphQLClient } from './GraphQLClient';
-import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync } from './utils';
+import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
 import dayjs from 'dayjs';
 import { HealthCheckServer, ComponentStatus, ComponentHealth, HealthCheckProviders } from '../../health';
@@ -76,6 +76,14 @@ export class StreamWatcher {
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
+  private watchEventsInProgress = false;
+  private claimCheckInterval: NodeJS.Timeout | null = null;
+  private graphqlClient: GraphQLClient | null = null;
+  private recentClaimAttempts = new Map<string, number>();
+  private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
+  private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
+  private claimCheckIntervalMs = parseInt(process.env.CLAIM_CHECK_INTERVAL_MS || '120000', 10);
+  private claimAttemptCooldownMs = 60000;
   private configPath: string = './config.json'; // Путь к файлу конфигурации
   // Персистентное состояние баллов между рестартами
   private pointsStatePath: string | null = null;
@@ -95,6 +103,8 @@ export class StreamWatcher {
     lastChannelPoints: number | null;
     streamPointsEarned: number;
     isOnline: boolean;
+    startTime: number;
+    broadcastId: string | null;
     updatedAt: number;
   }> = {};
   private lastPointsStateSave = 0;
@@ -294,175 +304,8 @@ export class StreamWatcher {
       logger.info(`✅  User ID for watcher: ${userId}`);
       
       const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
-      
-      const eventHandlers: WebSocketEventHandler = {
-        onPointsEarned: (streamerInfo, points, reason) => {
-          logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
-          
-          // Используем разные типы событий в зависимости от причины
-          // CLAIM → claim-earned, WATCH_STREAK → streak-earned, остальные → points-earned
-          let eventType: string;
-          if (reason === 'CLAIM') {
-            eventType = 'claim-earned';
-          } else if (reason === 'WATCH_STREAK') {
-            eventType = 'streak-earned';
-          } else {
-            eventType = 'points-earned';
-          }
-          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
-          
-          // Если сессия еще не создана, но initialChannelPoints установлен через WebSocket, создаем сессию
-          // Это важно для случаев, когда GraphQL запрос не удался при инициализации
-          if (!this.activeSessions.has(streamerInfo.username) && 
-              streamerInfo.initialChannelPoints !== null && 
-              streamerInfo.isOnline &&
-              this.statisticsStorage) {
-            // Создаем сессию с начальными баллами, которые были установлены через WebSocket
-            const sessionId = this.statisticsStorage.createSession(
-              streamerInfo.username,
-              streamerInfo.initialChannelPoints,
-              streamerInfo.game,
-              streamerInfo.title
-            );
-            this.activeSessions.set(streamerInfo.username, sessionId);
-            logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
-          }
-          
-          // Обновляем активную сессию
-          const sessionId = this.activeSessions.get(streamerInfo.username);
-          if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
-            this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
-          }
-          
-          // Сохраняем в базу данных
-          if (this.databaseStorage) {
-            // Добавляем баллы за день
-            this.databaseStorage.addDailyPoints(streamerInfo.username, points);
-            // Обновляем общее количество баллов
-            this.databaseStorage.addTotalPoints(streamerInfo.username, points);
-            // Сохраняем текущий баланс
-            this.databaseStorage.updateLastBalance(streamerInfo.username, streamerInfo.channelPoints);
-          }
-          
-          // Добавляем в историю баллов
-          const stats = this.getStatistics();
-          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-          this.addPointsHistory(streamerInfo.username, points, totalPoints);
-        this.savePointsState();
-        },
-        onClaimAvailable: (streamerInfo, claimId) =>
-          this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
-        onStreamUp: async (streamerInfo) => {
-          logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
-          this.resetStreamSessionPoints(streamerInfo);
-          const streamStartTime = Date.now();
-          streamerInfo.startTime = streamStartTime;
-          
-          // Сохраняем время запуска стрима в базу данных
-          if (this.databaseStorage && this.databaseStorage.isReady()) {
-            this.databaseStorage.updateLastStreamStart(streamerInfo.username, streamStartTime);
-          }
-          
-          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
-          
-          // Обновляем информацию о стримере
-          try {
-            const previousGame = streamerInfo.game;
-            await this.twitchAPI.updateStreamerInfo(streamerInfo);
-            // Сохраняем категорию в БД при изменении
-            this.saveGameToDatabaseIfChanged(streamerInfo, previousGame);
-          } catch (error: any) {
-            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
-          }
-          
-          // Получаем начальные баллы
-          await this.updateInitialPoints(streamerInfo);
-          
-          // Создаем сессию просмотра для статистики
-          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
-            const sessionId = this.statisticsStorage.createSession(
-              streamerInfo.username,
-              streamerInfo.initialChannelPoints,
-              streamerInfo.game,
-              streamerInfo.title
-            );
-            this.activeSessions.set(streamerInfo.username, sessionId);
-          }
-          
-          // Добавляем начальную точку в историю баллов
-          const stats = this.getStatistics();
-          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
-          this.savePointsState();
-        },
-        onStreamDown: (streamerInfo) => {
-          logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
-          this.syncStreamPointsEarned(streamerInfo);
-          const streamEndTime = Date.now();
-          
-          // Сохраняем время завершения стрима в базу данных
-          if (this.databaseStorage && this.databaseStorage.isReady()) {
-            this.databaseStorage.updateLastStreamEnd(streamerInfo.username, streamEndTime);
-          }
-          
-          this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
-          
-          // Завершаем сессию просмотра
-          const sessionId = this.activeSessions.get(streamerInfo.username);
-          if (this.statisticsStorage && sessionId) {
-            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
-            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
-            
-            // Сохраняем время просмотра в базу данных
-            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
-            
-            this.activeSessions.delete(streamerInfo.username);
-          }
-          
-          // Сохраняем последний известный баланс в базу данных
-          if (this.databaseStorage && this.databaseStorage.isReady()) {
-            const finalBalance = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
-            if (finalBalance > 0) {
-              this.databaseStorage.updateLastBalance(streamerInfo.username, finalBalance);
-            }
-          }
-          
-          this.savePointsState();
-        },
-        onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
-          const now = Date.now();
-          const lastAttempt = this.processedRaids.get(raidId);
-          
-          // Проверяем, не пытались ли мы уже присоединиться к этому рейду недавно
-          if (lastAttempt && (now - lastAttempt) < this.raidCooldownMs) {
-            logger.verbose(`⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`);
-            return;
-          }
-          
-          // Отмечаем, что мы обрабатываем этот рейд
-          this.processedRaids.set(raidId, now);
-          
-          // Очищаем старые записи (старше 5 минут)
-          const fiveMinutesAgo = now - 5 * 60 * 1000;
-          for (const [id, timestamp] of this.processedRaids.entries()) {
-            if (timestamp < fiveMinutesAgo) {
-              this.processedRaids.delete(id);
-            }
-          }
-          
-          logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
-          const success = await graphqlClient.joinRaid(raidId);
-          if (success) {
-            logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
-            this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
-            // После успешного присоединения не нужно больше пытаться
-          } else {
-            logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
-            // Не добавляем событие raid-failed для каждого неудачного запроса, чтобы не засорять лог
-            // this.addEvent('raid-failed', streamerInfo.username, `Failed to join raid to ${targetLogin}`);
-          }
-        },
-      };
+      this.graphqlClient = graphqlClient;
+      const eventHandlers = this.createWebSocketEventHandlers(graphqlClient);
 
       this.wsManager = new WebSocketManager(this.authToken, userId, graphqlClient, eventHandlers);
       await this.wsManager.start();
@@ -478,6 +321,9 @@ export class StreamWatcher {
     } catch (error: any) {
       logger.error('❌  Failed to initialize WebSocket:', error.message || error);
       logger.error(`   Error details: ${error.stack || JSON.stringify(error)}`);
+      if (!this.graphqlClient) {
+        this.graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
+      }
       logger.warn('⚠️  Continuing without WebSocket - events will be sent via API only');
       logger.warn('⚠️  Channel points events will not be received in real-time');
       logger.warn('⚠️  Attempting to reinitialize WebSocket in 30 seconds...');
@@ -574,125 +420,9 @@ export class StreamWatcher {
       this.twitchAPI.setValidatedUserId(userId);
       logger.info(`✅  User ID obtained from token validation: ${userId}`);
       
-      const graphqlClient = new GraphQLClient(this.authToken, this.userAgent);
-      
-      // Используем те же обработчики событий, что и при первоначальной инициализации
-      const eventHandlers: WebSocketEventHandler = {
-        onPointsEarned: (streamerInfo, points, reason) => {
-          logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
-          
-          // Используем разные типы событий в зависимости от причины
-          // CLAIM → claim-earned, WATCH_STREAK → streak-earned, остальные → points-earned
-          let eventType: string;
-          if (reason === 'CLAIM') {
-            eventType = 'claim-earned';
-          } else if (reason === 'WATCH_STREAK') {
-            eventType = 'streak-earned';
-          } else {
-            eventType = 'points-earned';
-          }
-          this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
-          
-          if (!this.activeSessions.has(streamerInfo.username) && 
-              streamerInfo.initialChannelPoints !== null && 
-              streamerInfo.isOnline &&
-              this.statisticsStorage) {
-            const sessionId = this.statisticsStorage.createSession(
-              streamerInfo.username,
-              streamerInfo.initialChannelPoints,
-              streamerInfo.game,
-              streamerInfo.title
-            );
-            this.activeSessions.set(streamerInfo.username, sessionId);
-            logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
-          }
-          
-          const sessionId = this.activeSessions.get(streamerInfo.username);
-          if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
-            this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
-          }
-          
-          const stats = this.getStatistics();
-          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-          this.addPointsHistory(streamerInfo.username, points, totalPoints);
-          this.savePointsState();
-        },
-        onClaimAvailable: (streamerInfo, claimId) =>
-          this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
-        onStreamUp: async (streamerInfo) => {
-          logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
-          this.resetStreamSessionPoints(streamerInfo);
-          streamerInfo.startTime = Date.now();
-          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
-          
-          try {
-            await this.twitchAPI.updateStreamerInfo(streamerInfo);
-          } catch (error: any) {
-            logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`);
-          }
-          
-          await this.updateInitialPoints(streamerInfo);
-          
-          if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
-            const sessionId = this.statisticsStorage.createSession(
-              streamerInfo.username,
-              streamerInfo.initialChannelPoints,
-              streamerInfo.game,
-              streamerInfo.title
-            );
-            this.activeSessions.set(streamerInfo.username, sessionId);
-          }
-          
-          const stats = this.getStatistics();
-          const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-          this.addPointsHistory(streamerInfo.username, 0, totalPoints);
-          this.savePointsState();
-        },
-        onStreamDown: (streamerInfo) => {
-          logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
-          this.syncStreamPointsEarned(streamerInfo);
-          this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
-          
-          const sessionId = this.activeSessions.get(streamerInfo.username);
-          if (this.statisticsStorage && sessionId) {
-            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
-            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
-            
-            // Сохраняем время просмотра в базу данных
-            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
-            
-            this.activeSessions.delete(streamerInfo.username);
-          }
-          this.savePointsState();
-        },
-        onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
-          const now = Date.now();
-          const lastAttempt = this.processedRaids.get(raidId);
-          
-          if (lastAttempt && (now - lastAttempt) < this.raidCooldownMs) {
-            logger.verbose(`⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`);
-            return;
-          }
-          
-          this.processedRaids.set(raidId, now);
-          
-          const fiveMinutesAgo = now - 5 * 60 * 1000;
-          for (const [id, timestamp] of this.processedRaids.entries()) {
-            if (timestamp < fiveMinutesAgo) {
-              this.processedRaids.delete(id);
-            }
-          }
-          
-          logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
-          const success = await graphqlClient.joinRaid(raidId);
-          if (success) {
-            logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
-            this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
-          } else {
-            logger.verbose(`ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`);
-          }
-        },
-      };
+      const graphqlClient = this.graphqlClient ?? new GraphQLClient(this.authToken, this.userAgent);
+      this.graphqlClient = graphqlClient;
+      const eventHandlers = this.createWebSocketEventHandlers(graphqlClient);
 
       this.wsManager = new WebSocketManager(this.authToken, userId, graphqlClient, eventHandlers);
       await this.wsManager.start();
@@ -736,6 +466,11 @@ export class StreamWatcher {
     if (this.watchInterval) {
       clearInterval(this.watchInterval);
       this.watchInterval = null;
+    }
+
+    if (this.claimCheckInterval) {
+      clearInterval(this.claimCheckInterval);
+      this.claimCheckInterval = null;
     }
 
     if (this.statsInterval) {
@@ -838,6 +573,7 @@ export class StreamWatcher {
         if (streamerInfo) {
           this.loadStreamerDataFromDatabase(streamerInfo);
           this.applyPersistedPoints(streamerInfo);
+          this.restoreWatchSessionAfterRestart(streamerInfo);
           this.streamers.set(username, streamerInfo);
 
           if (this.wsManager) {
@@ -867,6 +603,7 @@ export class StreamWatcher {
         logger.warn(`⚠️  [${username}] ${error.message || error} — fallback, повтор позже`);
         const fallback = this.createFallbackStreamerInfo(username);
         this.applyPersistedPoints(fallback);
+        this.restoreWatchSessionAfterRestart(fallback);
         this.streamers.set(username, fallback);
       }
     };
@@ -887,6 +624,198 @@ export class StreamWatcher {
 
     // Сохраняем актуальное состояние после инициализации
     this.savePointsState(true);
+  }
+
+  /**
+   * Обработчики событий WebSocket (единая точка для старта и переинициализации)
+   */
+  private createWebSocketEventHandlers(graphqlClient: GraphQLClient): WebSocketEventHandler {
+    return {
+      onPointsEarned: (streamerInfo, points, reason) => {
+        logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+
+        let eventType: string;
+        if (reason === 'CLAIM') {
+          eventType = 'claim-earned';
+        } else if (reason === 'WATCH_STREAK') {
+          eventType = 'streak-earned';
+        } else {
+          eventType = 'points-earned';
+        }
+        this.addEvent(eventType, streamerInfo.username, `Earned ${points} points (${reason})`);
+
+        if (
+          !this.activeSessions.has(streamerInfo.username) &&
+          streamerInfo.initialChannelPoints !== null &&
+          streamerInfo.isOnline &&
+          this.statisticsStorage
+        ) {
+          const sessionId = this.statisticsStorage.createSession(
+            streamerInfo.username,
+            streamerInfo.initialChannelPoints,
+            streamerInfo.game,
+            streamerInfo.title
+          );
+          this.activeSessions.set(streamerInfo.username, sessionId);
+          logger.verbose(`📊  [${streamerInfo.username}] Session created from WebSocket points update`);
+        }
+
+        const sessionId = this.activeSessions.get(streamerInfo.username);
+        if (this.statisticsStorage && sessionId && streamerInfo.channelPoints !== null) {
+          this.statisticsStorage.updateSession(sessionId, streamerInfo.channelPoints);
+        }
+
+        const stats = this.getStatistics();
+        const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+        this.addPointsHistory(streamerInfo.username, points, totalPoints);
+        this.savePointsState();
+      },
+      onClaimAvailable: (streamerInfo, claimId) =>
+        this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
+      onStreamUp: async (streamerInfo) => {
+        logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+        this.resetStreamSessionPoints(streamerInfo);
+        streamerInfo.startTime = Date.now();
+        this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
+
+        try {
+          await this.twitchAPI.updateStreamerInfo(streamerInfo);
+        } catch (error: any) {
+          logger.verbose(
+            `⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`
+          );
+        }
+
+        await this.updateInitialPoints(streamerInfo);
+
+        if (this.statisticsStorage && streamerInfo.initialChannelPoints !== null) {
+          const sessionId = this.statisticsStorage.createSession(
+            streamerInfo.username,
+            streamerInfo.initialChannelPoints,
+            streamerInfo.game,
+            streamerInfo.title
+          );
+          this.activeSessions.set(streamerInfo.username, sessionId);
+        }
+
+        const stats = this.getStatistics();
+        const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
+        this.addPointsHistory(streamerInfo.username, 0, totalPoints);
+        this.savePointsState();
+      },
+      onStreamDown: (streamerInfo) => {
+        logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+        this.syncStreamPointsEarned(streamerInfo);
+        this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
+
+        const sessionId = this.activeSessions.get(streamerInfo.username);
+        if (this.statisticsStorage && sessionId) {
+          const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+          this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+          this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
+          this.activeSessions.delete(streamerInfo.username);
+        }
+        this.savePointsState();
+      },
+      onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
+        const now = Date.now();
+        const lastAttempt = this.processedRaids.get(raidId);
+
+        if (lastAttempt && now - lastAttempt < this.raidCooldownMs) {
+          logger.verbose(
+            `⏭️  [${streamerInfo.username}] Raid ${raidId} already processed recently, skipping`
+          );
+          return;
+        }
+
+        this.processedRaids.set(raidId, now);
+
+        const fiveMinutesAgo = now - 5 * 60 * 1000;
+        for (const [id, timestamp] of this.processedRaids.entries()) {
+          if (timestamp < fiveMinutesAgo) {
+            this.processedRaids.delete(id);
+          }
+        }
+
+        logger.info(`🎭  [${streamerInfo.username}] Обнаружен рейд на канал ${targetLogin}`);
+        const success = await graphqlClient.joinRaid(raidId);
+        if (success) {
+          logger.info(`✅  [${streamerInfo.username}] Успешно присоединились к рейду на ${targetLogin}!`);
+          this.addEvent('raid-joined', streamerInfo.username, `Joined raid to ${targetLogin}`);
+        } else {
+          logger.verbose(
+            `ℹ️  [${streamerInfo.username}] Не удалось присоединиться к рейду (возможно, уже присоединились)`
+          );
+        }
+      },
+    };
+  }
+
+  /**
+   * Восстанавливает время просмотра после перезапуска, если стрим тот же
+   */
+  private restoreWatchSessionAfterRestart(streamerInfo: StreamerInfo): void {
+    if (!streamerInfo.isOnline) {
+      streamerInfo.startTime = 0;
+      return;
+    }
+
+    const saved = this.pointsState[streamerInfo.username];
+    const maxResumeAgeMs = parseInt(
+      process.env.WATCH_RESUME_MAX_AGE_MS || String(24 * 60 * 60 * 1000),
+      10
+    );
+    const now = Date.now();
+
+    const canResumeByBroadcast =
+      saved?.isOnline &&
+      saved.startTime > 0 &&
+      saved.broadcastId &&
+      streamerInfo.broadcastId &&
+      saved.broadcastId === streamerInfo.broadcastId;
+
+    if (canResumeByBroadcast) {
+      streamerInfo.startTime = saved.startTime;
+      logger.info(
+        `⏱️  [${streamerInfo.username}] Просмотр возобновлён (тот же стрим): ${formatElapsedTime(now - streamerInfo.startTime)}`
+      );
+      return;
+    }
+
+    const canResumeByRecentState =
+      saved?.isOnline &&
+      saved.startTime > 0 &&
+      saved.updatedAt > 0 &&
+      now - saved.updatedAt < maxResumeAgeMs &&
+      (!saved.broadcastId || !streamerInfo.broadcastId);
+
+    if (canResumeByRecentState) {
+      streamerInfo.startTime = saved.startTime;
+      logger.info(
+        `⏱️  [${streamerInfo.username}] Просмотр возобновлён (сохранённое состояние): ${formatElapsedTime(now - streamerInfo.startTime)}`
+      );
+      return;
+    }
+
+    if (this.databaseStorage?.isReady()) {
+      const dbStats = this.databaseStorage.getStreamerStats(streamerInfo.username);
+      const streamStillActive =
+        dbStats?.lastStreamStart &&
+        (!dbStats.lastStreamEnd || dbStats.lastStreamEnd < dbStats.lastStreamStart);
+
+      if (streamStillActive && dbStats.lastStreamStart) {
+        streamerInfo.startTime = dbStats.lastStreamStart;
+        logger.info(
+          `⏱️  [${streamerInfo.username}] Просмотр возобновлён (из БД): ${formatElapsedTime(now - streamerInfo.startTime)}`
+        );
+        return;
+      }
+    }
+
+    if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
+      streamerInfo.startTime = now;
+      logger.verbose(`⏱️  [${streamerInfo.username}] Новая сессия просмотра`);
+    }
   }
 
   /**
@@ -970,120 +899,216 @@ export class StreamWatcher {
   }
 
   /**
-   * Запускает отправку событий просмотра
+   * Запускает отправку событий просмотра и периодическую проверку бонусов
    */
   private startWatching(): void {
-    // Отправляем события каждую минуту
     this.watchInterval = setSafeAsyncInterval('minute-watched', () => this.sendWatchEvents(), 60000);
     runSafeAsync('minute-watched-initial', () => this.sendWatchEvents());
+    this.startClaimPolling();
+  }
+
+  /**
+   * Периодический опрос GraphQL на доступные бонусы (дополнение к WebSocket)
+   */
+  private startClaimPolling(): void {
+    if (this.claimCheckInterval) {
+      return;
+    }
+
+    this.claimCheckInterval = setSafeAsyncInterval(
+      'claim-poll',
+      () => this.pollPendingClaims(),
+      this.claimCheckIntervalMs
+    );
+    runSafeAsync('claim-poll-initial', () => this.pollPendingClaims());
+  }
+
+  /**
+   * Проверяет онлайн-каналы на availableClaim и собирает бонусы
+   */
+  private async pollPendingClaims(): Promise<void> {
+    const graphqlClient = this.graphqlClient;
+    if (!graphqlClient) {
+      return;
+    }
+
+    const onlineStreamers = Array.from(this.streamers.values()).filter(
+      (s) => s.isOnline && s.channelId
+    );
+    if (onlineStreamers.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+    for (const [username, timestamp] of this.recentClaimAttempts.entries()) {
+      if (timestamp < fiveMinutesAgo) {
+        this.recentClaimAttempts.delete(username);
+      }
+    }
+
+    for (const streamerInfo of onlineStreamers) {
+      const lastAttempt = this.recentClaimAttempts.get(streamerInfo.username);
+      if (lastAttempt && now - lastAttempt < this.claimAttemptCooldownMs) {
+        continue;
+      }
+
+      try {
+        const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
+        const claimId = pointsInfo?.availableClaim?.id;
+        if (!claimId) {
+          continue;
+        }
+
+        this.recentClaimAttempts.set(streamerInfo.username, now);
+        logger.verbose(
+          `🔍  [${streamerInfo.username}] GraphQL poll: бонус ${claimId}, собираем...`
+        );
+        await this.handleClaimAvailable(streamerInfo, claimId, graphqlClient);
+      } catch (error: any) {
+        logger.verbose(
+          `⚠️  [${streamerInfo.username}] Ошибка опроса бонуса: ${error.message || error}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Лёгкая подготовка стримера перед minute-watched (полное обновление — по интервалу)
+   */
+  private async prepareStreamerForWatch(streamerInfo: StreamerInfo): Promise<void> {
+    const now = Date.now();
+    const needsFullUpdate =
+      !streamerInfo.lastWatchPrepAt ||
+      now - streamerInfo.lastWatchPrepAt > this.watchPrepIntervalMs ||
+      !streamerInfo.broadcastId;
+
+    if (needsFullUpdate) {
+      await withTimeout(
+        () => this.twitchAPI.updateStreamerInfo(streamerInfo),
+        this.watchOpTimeoutMs,
+        `updateStreamerInfo:${streamerInfo.username}`
+      );
+      streamerInfo.lastWatchPrepAt = now;
+    }
+
+    if (!streamerInfo.spadeUrl && streamerInfo.isOnline) {
+      logger.verbose(`🔄  [${streamerInfo.username}] Attempting to get spade_url...`);
+      streamerInfo.spadeUrl = await withTimeout(
+        () => this.twitchAPI.getSpadeUrl(streamerInfo.username),
+        this.watchOpTimeoutMs,
+        `getSpadeUrl:${streamerInfo.username}`
+      );
+      if (streamerInfo.spadeUrl) {
+        logger.verbose(`✅  [${streamerInfo.username}] Spade URL obtained`);
+      }
+    }
   }
 
   /**
    * Отправляет события просмотра для онлайн стримеров
    */
   private async sendWatchEvents(): Promise<void> {
-    const allOnlineStreamers = Array.from(this.streamers.values())
-      .filter(s => s.isOnline);
-
-    if (allOnlineStreamers.length === 0) {
+    if (this.watchEventsInProgress) {
+      logger.verbose('⏭️  minute-watched: предыдущий цикл ещё выполняется, пропуск');
       return;
     }
 
-    // Используем настраиваемое ограничение на количество одновременно просматриваемых каналов
-    // Если каналов больше лимита, используем ротацию - каждый цикл выбираем разных стримеров
-    let onlineStreamers: StreamerInfo[];
-    
-    if (allOnlineStreamers.length <= this.maxSimultaneousChannels) {
-      // Если каналов меньше или равно лимиту, используем все
-      onlineStreamers = allOnlineStreamers;
-    } else {
-      // Если каналов больше лимита, используем ротацию
-      // Используем индекс на основе текущего времени для равномерного распределения
-      const rotationIndex = Math.floor(Date.now() / 60000) % allOnlineStreamers.length;
-      onlineStreamers = [];
-      for (let i = 0; i < this.maxSimultaneousChannels; i++) {
-        onlineStreamers.push(allOnlineStreamers[(rotationIndex + i) % allOnlineStreamers.length]);
-      }
-      logger.verbose(`🔄  Rotating channels (${allOnlineStreamers.length} online, showing ${this.maxSimultaneousChannels}): ${onlineStreamers.map(s => s.username).join(', ')}`);
-    }
+    this.watchEventsInProgress = true;
+    const cycleStart = Date.now();
 
-    logger.verbose(`📺  Sending minute-watched events for ${onlineStreamers.length} streamer(s): ${onlineStreamers.map(s => s.username).join(', ')}`);
+    try {
+      const allOnlineStreamers = Array.from(this.streamers.values()).filter((s) => s.isOnline);
 
-    // Обновляем информацию о стримерах перед отправкой с graceful degradation
-    for (const streamerInfo of onlineStreamers) {
-      try {
-        await this.twitchAPI.updateStreamerInfo(streamerInfo);
-        
-        // Если spade_url еще не получен, пытаемся получить его
-        if (!streamerInfo.spadeUrl && streamerInfo.isOnline) {
-          logger.verbose(`🔄  [${streamerInfo.username}] Attempting to get spade_url...`);
-          try {
-            streamerInfo.spadeUrl = await this.twitchAPI.getSpadeUrl(streamerInfo.username);
-            if (streamerInfo.spadeUrl) {
-              logger.verbose(`✅  [${streamerInfo.username}] Spade URL obtained`);
-            }
-          } catch (error: any) {
-            // Graceful degradation: если не удалось получить spade_url, продолжаем с остальными стримерами
-            logger.warn(`⚠️  [${streamerInfo.username}] Failed to get spade_url: ${error.message || error}`);
-          }
-        }
-      } catch (error: any) {
-        // Graceful degradation: при ошибке обновления информации продолжаем с последними известными данными
-        logger.warn(`⚠️  [${streamerInfo.username}] Failed to update streamer info: ${error.message || error}`);
-        logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known data`);
-      }
-    }
-
-    // Отправляем события последовательно с динамическим интервалом
-    // Распределяем 60 секунд между всеми каналами для равномерного распределения
-    const totalInterval = 60000; // 60 секунд
-    const interval = Math.floor(totalInterval / onlineStreamers.length);
-
-    // Вспомогательная функция для задержки
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-    for (let i = 0; i < onlineStreamers.length; i++) {
-      // Добавляем задержку перед отправкой (кроме первого стримера)
-      if (i > 0) {
-        await delay(interval);
+      if (allOnlineStreamers.length === 0) {
+        return;
       }
 
-      const streamerInfo = onlineStreamers[i];
-      
-      // Проверяем, что стример все еще онлайн (мог уйти офлайн во время обновления)
-      if (!streamerInfo.isOnline) {
-        logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, пропускаем отправку события`);
-        continue;
-      }
-      
-      // Проверяем, что spade_url есть перед отправкой
-      if (!streamerInfo.spadeUrl) {
-        logger.warn(`⚠️  [${streamerInfo.username}] Spade URL not available, skipping event`);
-        // Graceful degradation: продолжаем с остальными стримерами
-        continue;
-      }
-      
-      try {
-        const success = await this.twitchAPI.sendMinuteWatched(streamerInfo);
-        
-        if (success) {
-          logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
-          // Не добавляем событие minute-watched в историю событий веб-интерфейса
-          // Это техническое событие, которое не нужно пользователю
-        } else if (!streamerInfo.isOnline) {
-          logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
-        } else {
-          // Сбрасываем spade_url — на следующем цикле получим заново (часто помогает после fetch failed)
-          streamerInfo.spadeUrl = null;
-          logger.verbose(
-            `🔄  [${streamerInfo.username}] minute-watched не отправлен, spade_url будет обновлён на следующем цикле`
+      let onlineStreamers: StreamerInfo[];
+
+      if (allOnlineStreamers.length <= this.maxSimultaneousChannels) {
+        onlineStreamers = allOnlineStreamers;
+      } else {
+        const rotationIndex = Math.floor(Date.now() / 60000) % allOnlineStreamers.length;
+        onlineStreamers = [];
+        for (let i = 0; i < this.maxSimultaneousChannels; i++) {
+          onlineStreamers.push(
+            allOnlineStreamers[(rotationIndex + i) % allOnlineStreamers.length]
           );
         }
-      } catch (error: any) {
-        // Graceful degradation: при ошибке отправки изолируем этого стримера и продолжаем с остальными
-        logger.error(`❌  [${streamerInfo.username}] Error sending minute watched event: ${error.message || error}`);
-        logger.verbose(`ℹ️  [${streamerInfo.username}] Isolated due to error, continuing with other streamers`);
+        logger.verbose(
+          `🔄  Rotating channels (${allOnlineStreamers.length} online, showing ${this.maxSimultaneousChannels}): ${onlineStreamers.map((s) => s.username).join(', ')}`
+        );
       }
+
+      logger.verbose(
+        `📺  Sending minute-watched events for ${onlineStreamers.length} streamer(s): ${onlineStreamers.map((s) => s.username).join(', ')}`
+      );
+
+      for (const streamerInfo of onlineStreamers) {
+        try {
+          await this.prepareStreamerForWatch(streamerInfo);
+        } catch (error: any) {
+          logger.warn(
+            `⚠️  [${streamerInfo.username}] Failed to prepare for watch: ${error.message || error}`
+          );
+          logger.verbose(`ℹ️  [${streamerInfo.username}] Continuing with last known data`);
+        }
+      }
+
+      const totalInterval = 60000;
+      const interval = Math.floor(totalInterval / onlineStreamers.length);
+      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      for (let i = 0; i < onlineStreamers.length; i++) {
+        if (i > 0) {
+          await delay(interval);
+        }
+
+        const streamerInfo = onlineStreamers[i];
+
+        if (!streamerInfo.isOnline) {
+          logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, пропускаем отправку события`);
+          continue;
+        }
+
+        if (!streamerInfo.spadeUrl) {
+          logger.warn(`⚠️  [${streamerInfo.username}] Spade URL not available, skipping event`);
+          continue;
+        }
+
+        try {
+          const success = await withTimeout(
+            () => this.twitchAPI.sendMinuteWatched(streamerInfo),
+            this.watchOpTimeoutMs,
+            `sendMinuteWatched:${streamerInfo.username}`
+          );
+
+          if (success) {
+            logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+          } else if (!streamerInfo.isOnline) {
+            logger.verbose(`ℹ️  [${streamerInfo.username}] Стример ушел офлайн, событие не отправлено`);
+          } else {
+            streamerInfo.spadeUrl = null;
+            logger.verbose(
+              `🔄  [${streamerInfo.username}] minute-watched не отправлен, spade_url будет обновлён на следующем цикле`
+            );
+          }
+        } catch (error: any) {
+          logger.error(
+            `❌  [${streamerInfo.username}] Error sending minute watched event: ${error.message || error}`
+          );
+          logger.verbose(`ℹ️  [${streamerInfo.username}] Isolated due to error, continuing with other streamers`);
+        }
+      }
+    } finally {
+      const cycleMs = Date.now() - cycleStart;
+      if (cycleMs > 55000) {
+        logger.warn(`⚠️  minute-watched cycle took ${cycleMs}ms (may delay next tick)`);
+      } else {
+        logger.verbose(`ℹ️  minute-watched cycle took ${cycleMs}ms`);
+      }
+      this.watchEventsInProgress = false;
     }
   }
 
@@ -2569,6 +2594,8 @@ export class StreamWatcher {
           lastChannelPoints: info.lastChannelPoints,
           streamPointsEarned: info.streamPointsEarned ?? 0,
           isOnline: info.isOnline,
+          startTime: info.isOnline && info.startTime > 0 ? info.startTime : 0,
+          broadcastId: info.isOnline ? info.broadcastId : null,
           updatedAt: now,
         };
       }

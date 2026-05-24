@@ -19,6 +19,7 @@ export interface StreamerInfo {
   initialChannelPoints: number | null; // Начальные баллы при старте просмотра
   lastChannelPoints: number | null; // Последние известные баллы
   streamPointsEarned: number; // Баллы, заработанные за текущий стрим (сбрасываются при stream-up)
+  lastWatchPrepAt?: number; // Время последней подготовки перед minute-watched
 }
 
 /**

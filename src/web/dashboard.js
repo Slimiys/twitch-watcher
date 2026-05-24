@@ -504,10 +504,30 @@ function generateColorFromText(text) {
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
+/**
+ * API-ключ dashboard (localStorage, не входит в экспорт appSettings)
+ */
+function getDashboardApiKey() {
+    return safeGetLocalStorage('dashboardApiKey') || '';
+}
+
+function setDashboardApiKey(key) {
+    safeSetLocalStorage('dashboardApiKey', key || '');
+}
+
 async function fetchData(endpoint) {
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const headers = {};
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+
+        const response = await fetch(`${API_BASE}${endpoint}`, { headers });
         if (!response.ok) {
+            if (response.status === 401) {
+                console.warn(`Unauthorized for ${endpoint}: проверьте API-ключ в настройках`);
+            }
             // Если сервис недоступен (503), пытаемся получить сообщение об ошибке
             if (response.status === 503) {
                 try {
@@ -3919,6 +3939,11 @@ function showSettingsModal() {
     document.getElementById('osNotificationsSetting').checked = settings.osNotifications;
     document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
 
+    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
+    if (apiKeyInput) {
+        apiKeyInput.value = getDashboardApiKey();
+    }
+
     const osHint = document.getElementById('osNotificationsHint');
     if (osHint) {
         const availability = getOsNotificationAvailability();
@@ -3972,6 +3997,11 @@ async function saveSettings() {
         osNotifications: document.getElementById('osNotificationsSetting').checked,
         soundNotifications: document.getElementById('soundNotificationsSetting').checked
     };
+
+    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
+    if (apiKeyInput) {
+        setDashboardApiKey(apiKeyInput.value.trim());
+    }
 
     if (settings.osNotifications) {
         const permission = await ensureOsNotificationPermission();
