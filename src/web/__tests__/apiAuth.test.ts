@@ -48,6 +48,7 @@ describe('apiAuth', () => {
     const middleware = createDashboardApiKeyMiddleware();
     const next = vi.fn();
     middleware(mockReq('/api/server-info'), mockRes(), next as NextFunction);
+    middleware(mockReq('/api/app-update-check'), mockRes(), next as NextFunction);
     expect(next).toHaveBeenCalled();
   });
 

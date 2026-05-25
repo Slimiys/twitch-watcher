@@ -2427,6 +2427,32 @@ th.notify-header-clickable:active {
     padding: 14px 16px;
 }
 
+.bot-health-card-version {
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.bot-health-card-version:hover,
+.bot-health-card-version:focus-visible {
+    border-color: #9147ff;
+    background: #1f1f23;
+    outline: none;
+}
+
+.bot-health-update-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a1a1a;
+    background: #ffb800;
+    border-radius: 4px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 .bot-health-card-title {
     font-size: 12px;
     color: #adadb8;

@@ -23,6 +23,7 @@ import {
   triggerDashboardUpdate,
   validateDashboardUpdateRequest,
 } from './appUpdate';
+import { checkAppUpdateAvailable } from './appUpdateCheck';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -221,6 +222,24 @@ export class WebServer {
           dashboardUpdateCheck.ok === false ? dashboardUpdateCheck.error : null,
         dashboardUpdateInProgress: isDashboardUpdateInProgress(),
       });
+    });
+
+    this.app.get('/api/app-update-check', (req: Request, res: Response) => {
+      try {
+        const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+        const result = checkAppUpdateAvailable(forceRefresh);
+        res.json({
+          ...result,
+          dashboardUpdateEnabled: isDashboardUpdateEnabled(),
+          dashboardUpdateCanTrigger: validateDashboardUpdateRequest().ok,
+        });
+      } catch (error: any) {
+        logger.error('Error checking app update:', error);
+        res.status(500).json({
+          error: error.message || 'Unknown error',
+          updateAvailable: false,
+        });
+      }
     });
 
     this.app.post('/api/app-update', (req: Request, res: Response) => {
