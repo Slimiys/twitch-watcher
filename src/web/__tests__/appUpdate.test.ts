@@ -16,6 +16,9 @@ describe('appUpdate', () => {
     expect(isDashboardUpdateEnabled()).toBe(false);
     const check = validateDashboardUpdateRequest();
     expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.error).toContain('DASHBOARD_UPDATE_ENABLED');
+    }
   });
 
   it('разрешено без WEB_DASHBOARD_API_KEY (личный Termux)', () => {

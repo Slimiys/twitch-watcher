@@ -10,7 +10,7 @@
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="dashboard.css?v=5">
-    <script src="dashboard.js?v=14" defer></script>
+    <script src="dashboard.js?v=15" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -61,6 +61,14 @@
                 <button class="settings-btn" id="appUpdateBtn" title="git pull и run-local.sh (Termux)" style="display: none;">
                     <span>🔄</span>
                     <span>Обновиться</span>
+                </button>
+                <button class="settings-btn" id="appStopBtn" title="Остановить бота" style="display: none;">
+                    <span>⏹</span>
+                    <span>Остановить</span>
+                </button>
+                <button class="settings-btn" id="appRestartBtn" title="Перезапустить бота" style="display: none;">
+                    <span>🔁</span>
+                    <span>Перезапустить</span>
                 </button>
                 <button class="settings-btn" id="settingsBtn" title="Settings">
                     <span>⚙️</span>

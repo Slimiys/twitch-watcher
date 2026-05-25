@@ -6,10 +6,9 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getProjectRoot, getPidFilePath } from '../pidFile';
-import { getDashboardApiKey } from './apiAuth';
 import { logger } from '../modes/api/logger';
 
-let updateInProgress = false;
+let dashboardActionInProgress = false;
 
 /**
  * Включено ли обновление через API (явно DASHBOARD_UPDATE_ENABLED=true)
@@ -19,26 +18,24 @@ export function isDashboardUpdateEnabled(): boolean {
 }
 
 /**
- * Проверка перед запуском обновления
+ * Проверка перед удалённым действием (обновление / stop / restart)
  */
-export function validateDashboardUpdateRequest(): { ok: true } | { ok: false; error: string } {
+export function validateDashboardControlRequest(scriptPath: string): { ok: true } | { ok: false; error: string } {
   if (!isDashboardUpdateEnabled()) {
     return {
       ok: false,
-      error: 'Обновление через dashboard отключено. Установите DASHBOARD_UPDATE_ENABLED=true в .env',
+      error: 'Управление через dashboard отключено. Установите DASHBOARD_UPDATE_ENABLED=true в .env',
     };
   }
-  if (updateInProgress) {
-    return { ok: false, error: 'Обновление уже выполняется' };
+  if (dashboardActionInProgress) {
+    return { ok: false, error: 'Другое действие уже выполняется' };
   }
   if (process.platform === 'win32') {
     return {
       ok: false,
-      error: 'Обновление через dashboard поддерживается только на Linux/Android (bash)',
+      error: 'Управление процессом поддерживается только на Linux/Android (bash)',
     };
   }
-
-  const scriptPath = resolveUpdateScriptPath();
   if (!fs.existsSync(scriptPath)) {
     return { ok: false, error: `Скрипт не найден: ${scriptPath}` };
   }
@@ -47,10 +44,65 @@ export function validateDashboardUpdateRequest(): { ok: true } | { ok: false; er
 }
 
 /**
+ * Проверка перед запуском обновления
+ */
+export function validateDashboardUpdateRequest(): { ok: true } | { ok: false; error: string } {
+  return validateDashboardControlRequest(resolveUpdateScriptPath());
+}
+
+/**
  * Путь к scripts/dashboard-update.sh
  */
 export function resolveUpdateScriptPath(): string {
   return path.join(getProjectRoot(), 'scripts', 'dashboard-update.sh');
+}
+
+/**
+ * Путь к scripts/dashboard-stop.sh
+ */
+export function resolveStopScriptPath(): string {
+  return path.join(getProjectRoot(), 'scripts', 'dashboard-stop.sh');
+}
+
+/**
+ * Путь к scripts/dashboard-restart.sh
+ */
+export function resolveRestartScriptPath(): string {
+  return path.join(getProjectRoot(), 'scripts', 'dashboard-restart.sh');
+}
+
+function spawnDashboardScript(scriptPath: string, logLabel: string): void {
+  const projectRoot = getProjectRoot();
+  dashboardActionInProgress = true;
+
+  try {
+    fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
+  } catch {
+    // каталог logs может уже существовать
+  }
+
+  const child = spawn('bash', [scriptPath], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      TWITCH_WATCHER_PID: String(process.pid),
+      TWITCH_WATCHER_PID_FILE: getPidFilePath(),
+    },
+  });
+
+  child.unref();
+
+  child.on('error', (err) => {
+    dashboardActionInProgress = false;
+    logger.error(`Dashboard ${logLabel} spawn failed:`, err.message);
+  });
+
+  setTimeout(() => {
+    dashboardActionInProgress = false;
+  }, 10 * 60 * 1000);
+
 }
 
 /**
@@ -65,13 +117,14 @@ export function triggerDashboardUpdate(): { started: boolean; message: string } 
   const projectRoot = getProjectRoot();
   const scriptPath = resolveUpdateScriptPath();
   const branch = process.env.DASHBOARD_UPDATE_GIT_BRANCH?.trim() || 'dev';
-  updateInProgress = true;
 
   try {
     fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
   } catch {
     // каталог logs может уже существовать
   }
+
+  dashboardActionInProgress = true;
 
   const child = spawn('bash', [scriptPath], {
     detached: true,
@@ -88,13 +141,12 @@ export function triggerDashboardUpdate(): { started: boolean; message: string } 
   child.unref();
 
   child.on('error', (err) => {
-    updateInProgress = false;
+    dashboardActionInProgress = false;
     logger.error('Dashboard update spawn failed:', err.message);
   });
 
-  // Сброс флага через таймаут на случай, если процесс не перезапустился
   setTimeout(() => {
-    updateInProgress = false;
+    dashboardActionInProgress = false;
   }, 10 * 60 * 1000);
 
   logger.warn(
@@ -109,8 +161,46 @@ export function triggerDashboardUpdate(): { started: boolean; message: string } 
 }
 
 /**
- * Идёт ли сейчас обновление
+ * Останавливает текущий процесс бота
+ */
+export function triggerDashboardStop(): { started: boolean; message: string } {
+  const scriptPath = resolveStopScriptPath();
+  const check = validateDashboardControlRequest(scriptPath);
+  if (!check.ok) {
+    return { started: false, message: check.error };
+  }
+
+  spawnDashboardScript(scriptPath, 'stop');
+  logger.warn(`⏹  Dashboard stop scheduled (pid ${process.pid}). Log: logs/dashboard-stop.log`);
+
+  return {
+    started: true,
+    message: 'Остановка запущена. Бот завершится через несколько секунд. Лог: logs/dashboard-stop.log',
+  };
+}
+
+/**
+ * Перезапускает бота (stop + npm start), как после обновления
+ */
+export function triggerDashboardRestart(): { started: boolean; message: string } {
+  const scriptPath = resolveRestartScriptPath();
+  const check = validateDashboardControlRequest(scriptPath);
+  if (!check.ok) {
+    return { started: false, message: check.error };
+  }
+
+  spawnDashboardScript(scriptPath, 'restart');
+  logger.warn(`🔁  Dashboard restart scheduled (pid ${process.pid}). Log: logs/update-restart.log`);
+
+  return {
+    started: true,
+    message: 'Перезапуск запущен. Лог: logs/update-restart.log',
+  };
+}
+
+/**
+ * Идёт ли сейчас удалённое действие (обновление / stop / restart)
  */
 export function isDashboardUpdateInProgress(): boolean {
-  return updateInProgress;
+  return dashboardActionInProgress;
 }

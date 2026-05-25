@@ -93,6 +93,8 @@ DASHBOARD_UPDATE_ENABLED=true
 
 Раз в минуту дашборд сравнивает ваш коммит с `origin/dev` (нужен интернет и `git`). Если есть новая ревизия — на карточке **Версия** появится индикатор **NEW** и подпись «Доступно: …». **Нажмите на карточку** → подтвердите → выполнится `git fetch`, `reset` на `origin/dev`, сборка и перезапуск. Лог: `logs/dashboard-update.log`.
 
+В шапке дашборда (при `DASHBOARD_UPDATE_ENABLED=true`): **Остановить** — завершить процесс; **Перезапустить** — stop + `npm start` (лог `logs/update-restart.log`).
+
 Опционально: `WEB_DASHBOARD_API_KEY` — защита REST API; `DASHBOARD_UPDATE_GIT_BRANCH=dev` (по умолчанию dev).
 
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)

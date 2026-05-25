@@ -21,6 +21,8 @@ import {
   isDashboardUpdateEnabled,
   isDashboardUpdateInProgress,
   triggerDashboardUpdate,
+  triggerDashboardRestart,
+  triggerDashboardStop,
   validateDashboardUpdateRequest,
 } from './appUpdate';
 import { buildAppUpdateStatus } from './appUpdateStatus';
@@ -249,6 +251,34 @@ export class WebServer {
         res.json(result);
       } catch (error: any) {
         logger.error('Error triggering app update:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/app-stop', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardStop();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app stop:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/app-restart', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardRestart();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app restart:', error);
         res.status(500).json({ started: false, message: error.message || 'Unknown error' });
       }
     });

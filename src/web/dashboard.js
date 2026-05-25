@@ -481,6 +481,100 @@ async function initAppUpdateButton() {
 }
 
 /**
+ * Кнопки «Остановить» и «Перезапустить» (Termux, DASHBOARD_UPDATE_ENABLED)
+ */
+async function initProcessControlButtons() {
+    const stopBtn = document.getElementById('appStopBtn');
+    const restartBtn = document.getElementById('appRestartBtn');
+    if (!stopBtn && !restartBtn) {
+        return;
+    }
+
+    const info = await fetchData('/server-info');
+    const enabled = info?.dashboardUpdateEnabled === true;
+    const inProgress = info?.dashboardUpdateInProgress === true;
+    const blocked = info?.dashboardUpdateBlockedReason;
+
+    if (stopBtn) {
+        stopBtn.style.display = enabled ? '' : 'none';
+        stopBtn.disabled = inProgress;
+        stopBtn.title = blocked || 'Остановить бота (завершить процесс)';
+        if (!stopBtn.dataset.bound) {
+            stopBtn.dataset.bound = '1';
+            stopBtn.addEventListener('click', () => {
+                if (stopBtn.disabled) {
+                    return;
+                }
+                showConfirmModal(
+                    'Остановить бота?',
+                    'Процесс twitch-watcher будет завершён. Дашборд отключится. Продолжить?',
+                    () => triggerDashboardStop()
+                );
+            });
+        }
+    }
+
+    if (restartBtn) {
+        restartBtn.style.display = enabled ? '' : 'none';
+        restartBtn.disabled = inProgress;
+        restartBtn.title = blocked || 'Перезапуск: stop + npm start (как после обновления)';
+        if (!restartBtn.dataset.bound) {
+            restartBtn.dataset.bound = '1';
+            restartBtn.addEventListener('click', () => {
+                if (restartBtn.disabled) {
+                    return;
+                }
+                showConfirmModal(
+                    'Перезапустить бота?',
+                    'Будет выполнено: остановка процесса → npm start в фоне. ' +
+                        'Дашборд отключится на 1–2 минуты. Продолжить?',
+                    () => triggerDashboardRestart()
+                );
+            });
+        }
+    }
+}
+
+async function triggerDashboardStop() {
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Остановка…');
+    }
+    const result = await postApi('/app-stop', {});
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        updateConnectionStatus(false);
+        const statusText = document.getElementById('statusText');
+        if (statusText) {
+            statusText.textContent = 'Остановка…';
+        }
+    } else if (typeof showNotification === 'function') {
+        showNotification('error', result.message || 'Не удалось остановить');
+    }
+}
+
+async function triggerDashboardRestart() {
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Перезапуск…');
+    }
+    const result = await postApi('/app-restart', {});
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        updateConnectionStatus(false);
+        const statusText = document.getElementById('statusText');
+        if (statusText) {
+            statusText.textContent = 'Перезапуск…';
+        }
+        startDashboardReconnectWatch('Перезапуск завершён. Перезагрузка страницы…');
+    } else if (typeof showNotification === 'function') {
+        showNotification('error', result.message || 'Не удалось перезапустить');
+    }
+}
+
+/**
  * Опрос статуса обновления (ветка dev на origin)
  */
 async function pollVersionUpdateStatus(forceRefresh = false) {
@@ -704,23 +798,35 @@ function startVersionUpdatePolling() {
     versionUpdatePollTimer = setInterval(() => pollVersionUpdateStatus(false), VERSION_UPDATE_POLL_MS);
 }
 
-function startVersionUpdateFastPolling() {
+/** Ожидание поднятия бота после перезапуска / обновления */
+function startDashboardReconnectWatch(successMessage) {
     if (versionUpdateFastPollTimer) {
         clearInterval(versionUpdateFastPollTimer);
     }
+    let attempts = 0;
+    const maxAttempts = 40;
+
     versionUpdateFastPollTimer = setInterval(async () => {
-        const st = await pollVersionUpdateStatus(true);
-        if (st?.uiState !== 'updating' && !st?.dashboardUpdateInProgress) {
-            stopVersionUpdateFastPolling();
+        attempts += 1;
+        const info = await fetchData('/server-info');
+        if (info?.pid) {
+            stopDashboardReconnectWatch();
             if (typeof showNotification === 'function') {
-                showNotification('success', 'Обновление завершено. Перезагрузка страницы…');
+                showNotification('success', successMessage || 'Бот снова online. Перезагрузка страницы…');
             }
             setTimeout(() => window.location.reload(), 1500);
+            return;
+        }
+        if (attempts >= maxAttempts) {
+            stopDashboardReconnectWatch();
+            if (typeof showNotification === 'function') {
+                showNotification('warn', 'Бот не ответил вовремя. Обновите страницу вручную.');
+            }
         }
     }, VERSION_UPDATE_FAST_POLL_MS);
 }
 
-function stopVersionUpdateFastPolling() {
+function stopDashboardReconnectWatch() {
     if (versionUpdateFastPollTimer) {
         clearInterval(versionUpdateFastPollTimer);
         versionUpdateFastPollTimer = null;
@@ -754,7 +860,7 @@ async function triggerDashboardAppUpdate() {
         if (statusText) {
             statusText.textContent = 'Обновление…';
         }
-        startVersionUpdateFastPolling();
+        startDashboardReconnectWatch('Обновление завершено. Перезагрузка страницы…');
     } else {
         versionCardBusy = false;
         await pollVersionUpdateStatus(true);
@@ -2533,6 +2639,7 @@ function startDashboardCore() {
     dashboardCoreStarted = true;
     checkInitializationStatus();
     initAppUpdateButton();
+    initProcessControlButtons();
     startVersionUpdatePolling();
     startAutoUpdate();
 }
