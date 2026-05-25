@@ -697,6 +697,7 @@ export class StreamWatcher {
         logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
         this.resetStreamSessionPoints(streamerInfo);
         streamerInfo.startTime = Date.now();
+        this.persistLastStreamStart(streamerInfo.username, streamerInfo.startTime);
         this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
 
         try {
@@ -729,6 +730,7 @@ export class StreamWatcher {
         logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
         this.stopChannelWatchTimer(streamerInfo.username);
         this.syncStreamPointsEarned(streamerInfo);
+        this.persistLastStreamEnd(streamerInfo.username, Date.now());
         this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
 
         const sessionId = this.activeSessions.get(streamerInfo.username);
@@ -1526,6 +1528,24 @@ export class StreamWatcher {
   }
 
   /**
+   * Сохраняет время начала стрима в БД (WebSocket и GraphQL fallback)
+   */
+  private persistLastStreamStart(username: string, timestamp: number): void {
+    if (this.databaseStorage?.isReady()) {
+      this.databaseStorage.updateLastStreamStart(username, timestamp);
+    }
+  }
+
+  /**
+   * Сохраняет время окончания стрима в БД (WebSocket и GraphQL fallback)
+   */
+  private persistLastStreamEnd(username: string, timestamp: number): void {
+    if (this.databaseStorage?.isReady()) {
+      this.databaseStorage.updateLastStreamEnd(username, timestamp);
+    }
+  }
+
+  /**
    * Проверяет статус всех стримеров с graceful degradation
    */
   private async checkStreamersStatus(): Promise<void> {
@@ -1544,11 +1564,7 @@ export class StreamWatcher {
           this.resetStreamSessionPoints(streamerInfo);
           const streamStartTime = Date.now();
           streamerInfo.startTime = streamStartTime;
-          
-          // Сохраняем время запуска стрима в базу данных
-          if (this.databaseStorage && this.databaseStorage.isReady()) {
-            this.databaseStorage.updateLastStreamStart(streamerInfo.username, streamStartTime);
-          }
+          this.persistLastStreamStart(streamerInfo.username, streamStartTime);
           
           try {
             await this.updateInitialPoints(streamerInfo);
@@ -1580,12 +1596,8 @@ export class StreamWatcher {
           streamerInfo.startTime = 0;
           this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
-          
-          // Сохраняем время завершения стрима в базу данных
-          if (this.databaseStorage && this.databaseStorage.isReady()) {
-            this.databaseStorage.updateLastStreamEnd(streamerInfo.username, streamEndTime);
-          }
-          
+          this.persistLastStreamEnd(streamerInfo.username, streamEndTime);
+
           // Завершаем сессию просмотра
           const sessionId = this.activeSessions.get(streamerInfo.username);
           if (this.statisticsStorage && sessionId) {
