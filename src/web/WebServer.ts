@@ -23,7 +23,7 @@ import {
   triggerDashboardUpdate,
   validateDashboardUpdateRequest,
 } from './appUpdate';
-import { checkAppUpdateAvailable } from './appUpdateCheck';
+import { buildAppUpdateStatus } from './appUpdateStatus';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -227,17 +227,14 @@ export class WebServer {
     this.app.get('/api/app-update-check', (req: Request, res: Response) => {
       try {
         const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
-        const result = checkAppUpdateAvailable(forceRefresh);
-        res.json({
-          ...result,
-          dashboardUpdateEnabled: isDashboardUpdateEnabled(),
-          dashboardUpdateCanTrigger: validateDashboardUpdateRequest().ok,
-        });
+        res.json(buildAppUpdateStatus(forceRefresh));
       } catch (error: any) {
         logger.error('Error checking app update:', error);
         res.status(500).json({
           error: error.message || 'Unknown error',
           updateAvailable: false,
+          uiState: 'error',
+          indicatorLabel: 'Ошибка проверки',
         });
       }
     });

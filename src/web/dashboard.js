@@ -461,95 +461,120 @@ async function postApi(endpoint, body = {}) {
     }
 }
 
+/** Опрос обновлений и карточка «Версия» */
+const VERSION_UPDATE_POLL_MS = 60_000;
+const VERSION_UPDATE_FAST_POLL_MS = 5_000;
+let versionUpdatePollTimer = null;
+let versionUpdateFastPollTimer = null;
+let versionUpdateStatus = null;
+let lastBotHealthForVersion = null;
+let versionCardBusy = false;
+
 /**
- * Показывает кнопку «Обновиться», если сервер разрешил обновление
+ * Кнопка «Обновиться» в шапке скрыта — обновление через карточку «Версия»
  */
 async function initAppUpdateButton() {
     const btn = document.getElementById('appUpdateBtn');
-    if (!btn) {
-        return;
-    }
-
-    const info = await fetchData('/server-info');
-    if (info?.dashboardUpdateEnabled) {
-        btn.style.display = '';
-        const blocked = info.dashboardUpdateBlockedReason;
-        btn.disabled = info.dashboardUpdateInProgress === true || Boolean(blocked);
-        btn.title = blocked || 'git pull + run-local.sh + перезапуск (Termux)';
-    } else {
+    if (btn) {
         btn.style.display = 'none';
     }
-
-    btn.addEventListener('click', () => {
-        if (btn.disabled) {
-            return;
-        }
-        showConfirmModal(
-            'Обновить приложение?',
-            'Будет выполнено: git pull → npm install → npm run build → перезапуск бота. ' +
-                'Дашборд отключится на 1–3 минуты. Продолжить?',
-            () => triggerDashboardAppUpdate(btn)
-        );
-    });
 }
 
 /**
- * Запуск обновления через /api/app-update
+ * Опрос статуса обновления (ветка dev на origin)
  */
-const VERSION_UPDATE_POLL_MS = 60_000;
-let versionUpdatePollTimer = null;
-let versionUpdateCheckState = null;
-let lastBotHealthForVersion = null;
+async function pollVersionUpdateStatus(forceRefresh = false) {
+    if (!forceRefresh) {
+        versionUpdateStatus = {
+            ...(versionUpdateStatus || {}),
+            uiState: 'checking',
+            indicatorLabel: 'Проверка…',
+        };
+        if (lastBotHealthForVersion) {
+            patchBotHealthVersionCard(lastBotHealthForVersion);
+        }
+    }
 
-/**
- * Опрос удалённой ветки (раз в минуту и по клику на «Версия»)
- */
-async function pollVersionUpdateCheck(forceRefresh = false) {
     const query = forceRefresh ? '?refresh=1' : '';
     const data = await fetchData(`/app-update-check${query}`);
     if (!data) {
-        return;
+        return null;
     }
-    versionUpdateCheckState = data;
+    versionUpdateStatus = data;
     if (lastBotHealthForVersion) {
         patchBotHealthVersionCard(lastBotHealthForVersion);
+    }
+    return data;
+}
+
+function versionCardDotKind(uiState) {
+    switch (uiState) {
+        case 'available':
+            return 'warn';
+        case 'updating':
+        case 'checking':
+            return 'off';
+        case 'error':
+            return 'err';
+        case 'unavailable':
+            return 'off';
+        case 'current':
+        default:
+            return 'ok';
     }
 }
 
 /**
- * Карточка «Версия» (кликабельная)
+ * Карточка «Версия» с индикатором состояния обновления
  */
 function renderVersionHealthCard(health) {
-    const st = versionUpdateCheckState;
-    let dotKind = 'ok';
-    let title = 'Проверить обновление на удалённой ветке';
+    const st = versionUpdateStatus;
+    const uiState = st?.uiState || 'checking';
+    const dotKind = versionCardDotKind(uiState);
+    const indicatorLabel = st?.indicatorLabel || 'Проверка…';
+
+    let title = 'Нажмите, чтобы проверить обновление';
+    if (uiState === 'available') {
+        title = 'Доступно обновление с dev — нажмите для установки';
+    } else if (uiState === 'current') {
+        title = 'Версия совпадает с origin/dev';
+    } else if (uiState === 'updating') {
+        title = 'Идёт обновление…';
+    } else if (uiState === 'error') {
+        title = 'Ошибка проверки — нажмите повторить';
+    }
+
     let valueHtml = escapeHtml(health.appVersion || '—');
+    if (uiState === 'available') {
+        valueHtml += '<span class="bot-health-update-badge">NEW</span>';
+    }
+
     const detailParts = [
-        `Semver ${escapeHtml(health.appSemver || '')} · git ${escapeHtml(health.gitRevision || '')}`,
+        `<span class="version-status-pill version-status-pill--${uiState}">${escapeHtml(indicatorLabel)}</span>`,
+        `Локально: git ${escapeHtml(health.gitRevision || st?.localRevision || '—')}`,
     ];
 
-    if (st) {
-        if (st.updateAvailable) {
-            dotKind = 'warn';
-            title = 'Доступно обновление — нажмите для установки';
-            valueHtml += '<span class="bot-health-update-badge">Обновление</span>';
-            if (st.remoteRevision) {
-                detailParts.push(
-                    `На ${escapeHtml(st.remote || 'origin')}/${escapeHtml(st.branch || 'dev')}: ` +
-                        `<strong>${escapeHtml(st.remoteRevision)}</strong>`
-                );
-            }
-        } else if (st.error) {
-            dotKind = 'warn';
-            detailParts.push(escapeHtml(st.error));
-        } else if (st.checkSkippedReason) {
-            detailParts.push(escapeHtml(st.checkSkippedReason));
-        }
+    if (st?.remoteRevision && uiState === 'available') {
+        detailParts.push(
+            `${escapeHtml(st.remote || 'origin')}/${escapeHtml(st.branch || 'dev')}: ` +
+                `<strong>${escapeHtml(st.remoteRevision)}</strong>`
+        );
+    }
+    if (st?.error) {
+        detailParts.push(escapeHtml(st.error));
+    }
+    if (st?.checkSkippedReason) {
+        detailParts.push(escapeHtml(st.checkSkippedReason));
+    }
+    if (st?.dashboardUpdateEnabled === false && uiState === 'available') {
+        detailParts.push('Для установки: DASHBOARD_UPDATE_ENABLED=true в .env');
     }
 
     const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
+    const busyAttr = versionCardBusy || uiState === 'updating' ? ' aria-busy="true"' : '';
+
     return `
-        <div class="bot-health-card bot-health-card-version" id="botHealthVersionCard" role="button" tabindex="0" title="${escapeHtml(title)}">
+        <div class="bot-health-card bot-health-card-version" id="botHealthVersionCard" data-state="${escapeHtml(uiState)}" role="button" tabindex="0" title="${escapeHtml(title)}"${busyAttr}>
             <div class="bot-health-card-title">Версия</div>
             <div class="bot-health-card-value">${dot}${valueHtml}</div>
             <div class="bot-health-card-detail">${detailParts.join('<br>')}</div>
@@ -591,47 +616,71 @@ function patchBotHealthVersionCard(health) {
 }
 
 /**
- * Клик по «Версия»: свежая проверка и предложение обновиться
+ * Клик по «Версия»: проверка и установка последней ревизии dev
  */
 async function handleVersionCardClick() {
-    await pollVersionUpdateCheck(true);
-    const st = versionUpdateCheckState;
-    if (!st) {
+    if (versionCardBusy) {
+        return;
+    }
+
+    const st = versionUpdateStatus;
+    if (st?.uiState === 'updating' || st?.dashboardUpdateInProgress) {
         if (typeof showNotification === 'function') {
-            showNotification('error', 'Не удалось проверить обновления');
+            showNotification('info', 'Обновление уже выполняется. Лог: logs/dashboard-update.log');
         }
         return;
     }
-    if (st.checkSkippedReason) {
-        if (typeof showNotification === 'function') {
-            showNotification('info', st.checkSkippedReason);
-        }
+
+    if (st?.uiState === 'available' && st.updateAvailable) {
+        promptInstallAppUpdate(st);
         return;
     }
-    if (st.error) {
-        if (typeof showNotification === 'function') {
-            showNotification('error', st.error);
+
+    versionCardBusy = true;
+    try {
+        const fresh = await pollVersionUpdateStatus(true);
+        if (!fresh) {
+            if (typeof showNotification === 'function') {
+                showNotification('error', 'Не удалось проверить обновления');
+            }
+            return;
         }
-        return;
-    }
-    if (!st.updateAvailable) {
-        if (typeof showNotification === 'function') {
-            showNotification('success', `Версия актуальна (ветка ${st.branch})`);
+        if (fresh.checkSkippedReason) {
+            if (typeof showNotification === 'function') {
+                showNotification('info', fresh.checkSkippedReason);
+            }
+            return;
         }
-        return;
+        if (fresh.error) {
+            if (typeof showNotification === 'function') {
+                showNotification('error', fresh.error);
+            }
+            return;
+        }
+        if (fresh.uiState === 'available' && fresh.updateAvailable) {
+            promptInstallAppUpdate(fresh);
+            return;
+        }
+        if (typeof showNotification === 'function') {
+            showNotification('success', `Версия актуальна (${fresh.remote}/${fresh.branch})`);
+        }
+    } finally {
+        versionCardBusy = false;
     }
+}
+
+function promptInstallAppUpdate(st) {
     if (!st.dashboardUpdateEnabled) {
         if (typeof showNotification === 'function') {
             showNotification(
                 'warn',
-                `Доступна новая версия (${st.remoteRevision}). Включите DASHBOARD_UPDATE_ENABLED в .env`
+                `На ${st.remote}/${st.branch} есть ${st.remoteRevision}. Включите DASHBOARD_UPDATE_ENABLED=true в .env`
             );
         }
         return;
     }
     if (!st.dashboardUpdateCanTrigger) {
-        const info = await fetchData('/server-info');
-        const msg = info?.dashboardUpdateBlockedReason || 'Обновление сейчас недоступно';
+        const msg = st.dashboardUpdateBlockedReason || 'Обновление сейчас недоступно';
         if (typeof showNotification === 'function') {
             showNotification('warn', msg);
         }
@@ -639,10 +688,11 @@ async function handleVersionCardClick() {
     }
 
     showConfirmModal(
-        'Обновить приложение?',
-        `На ${st.remote}/${st.branch} есть ревизия ${st.remoteRevision} (у вас ${st.localRevision}). ` +
-            'Будет выполнено: git pull → npm install → build → перезапуск. Дашборд отключится на 1–3 минуты. Продолжить?',
-        () => triggerDashboardAppUpdate(document.getElementById('appUpdateBtn'))
+        'Обновить до последней версии dev?',
+        `Будет выполнено: git fetch → reset на origin/${st.branch} (${st.remoteRevision}) → ` +
+            'npm install → build → перезапуск. Локальные изменения в репозитории будут сброшены. ' +
+            'Дашборд отключится на 1–3 минуты. Продолжить?',
+        () => triggerDashboardAppUpdate()
     );
 }
 
@@ -650,13 +700,43 @@ function startVersionUpdatePolling() {
     if (versionUpdatePollTimer) {
         clearInterval(versionUpdatePollTimer);
     }
-    pollVersionUpdateCheck(false);
-    versionUpdatePollTimer = setInterval(() => pollVersionUpdateCheck(false), VERSION_UPDATE_POLL_MS);
+    pollVersionUpdateStatus(false);
+    versionUpdatePollTimer = setInterval(() => pollVersionUpdateStatus(false), VERSION_UPDATE_POLL_MS);
 }
 
-async function triggerDashboardAppUpdate(btn) {
-    if (btn) {
-        btn.disabled = true;
+function startVersionUpdateFastPolling() {
+    if (versionUpdateFastPollTimer) {
+        clearInterval(versionUpdateFastPollTimer);
+    }
+    versionUpdateFastPollTimer = setInterval(async () => {
+        const st = await pollVersionUpdateStatus(true);
+        if (st?.uiState !== 'updating' && !st?.dashboardUpdateInProgress) {
+            stopVersionUpdateFastPolling();
+            if (typeof showNotification === 'function') {
+                showNotification('success', 'Обновление завершено. Перезагрузка страницы…');
+            }
+            setTimeout(() => window.location.reload(), 1500);
+        }
+    }, VERSION_UPDATE_FAST_POLL_MS);
+}
+
+function stopVersionUpdateFastPolling() {
+    if (versionUpdateFastPollTimer) {
+        clearInterval(versionUpdateFastPollTimer);
+        versionUpdateFastPollTimer = null;
+    }
+}
+
+async function triggerDashboardAppUpdate() {
+    versionCardBusy = true;
+    versionUpdateStatus = {
+        ...(versionUpdateStatus || {}),
+        uiState: 'updating',
+        indicatorLabel: 'Обновление…',
+        dashboardUpdateInProgress: true,
+    };
+    if (lastBotHealthForVersion) {
+        patchBotHealthVersionCard(lastBotHealthForVersion);
     }
 
     if (typeof showNotification === 'function') {
@@ -674,10 +754,10 @@ async function triggerDashboardAppUpdate(btn) {
         if (statusText) {
             statusText.textContent = 'Обновление…';
         }
+        startVersionUpdateFastPolling();
     } else {
-        if (btn) {
-            btn.disabled = false;
-        }
+        versionCardBusy = false;
+        await pollVersionUpdateStatus(true);
         if (typeof showNotification === 'function') {
             showNotification('error', result.message || 'Не удалось запустить обновление');
         } else {

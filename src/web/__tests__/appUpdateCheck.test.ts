@@ -11,7 +11,11 @@ vi.mock('child_process', () => ({
 }));
 
 vi.mock('../../appVersion', () => ({
-  getAppVersionParts: () => ({ semver: '0.6.0', revision: 'aaa111bbb222', label: '0.6.0.aaa111bbb222' }),
+  getAppVersionParts: () => ({
+    semver: '0.6.0',
+    revision: 'aaa111bbb222',
+    label: '0.6.0.aaa111bbb222',
+  }),
 }));
 
 vi.mock('../../pidFile', () => ({
@@ -22,6 +26,9 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(() => true),
 }));
 
+const LOCAL_FULL = 'aaa111bbb222cccddd444eee5555555555555555';
+const REMOTE_FULL = 'bbb222ccc333ddd444eee555555555555555555';
+
 describe('appUpdateCheck', () => {
   const envBackup = { ...process.env };
 
@@ -31,8 +38,8 @@ describe('appUpdateCheck', () => {
     vi.clearAllMocks();
   });
 
-  it('revisionsMatch сравнивает короткие hash', () => {
-    expect(revisionsMatch('a476fe20ce2b', 'a476fe20ce2b')).toBe(true);
+  it('revisionsMatch сравнивает полные и короткие hash', () => {
+    expect(revisionsMatch(LOCAL_FULL, LOCAL_FULL)).toBe(true);
     expect(revisionsMatch('a476fe2', 'a476fe20ce2b')).toBe(true);
     expect(revisionsMatch('abc', 'def')).toBe(false);
   });
@@ -43,10 +50,16 @@ describe('appUpdateCheck', () => {
     execFileSync.mockImplementation((cmd, args) => {
       const argv = args ?? [];
       if (cmd === 'git' && argv[0] === 'ls-remote') {
-        return 'bbb222ccc333ddd444eee555\trefs/heads/dev\n';
+        return `${REMOTE_FULL}\trefs/heads/dev\n`;
       }
-      if (cmd === 'git' && argv[0] === 'rev-parse') {
-        return 'bbb222ccc333\n';
+      if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === 'HEAD') {
+        return LOCAL_FULL;
+      }
+      if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === '--short=12') {
+        return 'aaa111bbb222';
+      }
+      if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === '--short=12' && argv[2]) {
+        return 'bbb222ccc333';
       }
       return '';
     });
@@ -59,7 +72,8 @@ describe('appUpdateCheck', () => {
     Object.defineProperty(process, 'platform', { value: prev });
 
     expect(result.updateAvailable).toBe(true);
-    expect(result.remoteRevision).toBe('bbb222ccc333');
+    expect(result.checkStatus).toBe('available');
+    expect(result.remoteRevisionFull).toBe(REMOTE_FULL);
     expect(result.branch).toBe('dev');
   });
 
@@ -68,10 +82,13 @@ describe('appUpdateCheck', () => {
     execFileSync.mockImplementation((cmd, args) => {
       const argv = args ?? [];
       if (cmd === 'git' && argv[0] === 'ls-remote') {
-        return 'aaa111bbb222cccddd444eee\trefs/heads/dev\n';
+        return `${LOCAL_FULL}\trefs/heads/dev\n`;
       }
-      if (cmd === 'git' && argv[0] === 'rev-parse') {
-        return 'aaa111bbb222\n';
+      if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === 'HEAD') {
+        return LOCAL_FULL;
+      }
+      if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === '--short=12') {
+        return 'aaa111bbb222';
       }
       return '';
     });
@@ -84,5 +101,6 @@ describe('appUpdateCheck', () => {
     Object.defineProperty(process, 'platform', { value: prev });
 
     expect(result.updateAvailable).toBe(false);
+    expect(result.checkStatus).toBe('current');
   });
 });

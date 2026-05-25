@@ -2429,7 +2429,7 @@ th.notify-header-clickable:active {
 
 .bot-health-card-version {
     cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .bot-health-card-version:hover,
@@ -2437,6 +2437,68 @@ th.notify-header-clickable:active {
     border-color: #9147ff;
     background: #1f1f23;
     outline: none;
+}
+
+.bot-health-card-version[data-state="available"] {
+    border-color: #ffb800;
+    box-shadow: 0 0 0 1px rgba(255, 184, 0, 0.35);
+    animation: version-update-pulse 2s ease-in-out infinite;
+}
+
+.bot-health-card-version[data-state="updating"],
+.bot-health-card-version[data-state="checking"] {
+    border-color: #5a5a6a;
+    cursor: wait;
+}
+
+.bot-health-card-version[data-state="error"] {
+    border-color: #eb0400;
+}
+
+@keyframes version-update-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 1px rgba(255, 184, 0, 0.25);
+    }
+    50% {
+        box-shadow: 0 0 12px 2px rgba(255, 184, 0, 0.45);
+    }
+}
+
+.version-status-pill {
+    display: inline-block;
+    margin-bottom: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1.3;
+}
+
+.version-status-pill--current {
+    color: #00d166;
+    background: rgba(0, 209, 102, 0.12);
+}
+
+.version-status-pill--available {
+    color: #ffb800;
+    background: rgba(255, 184, 0, 0.18);
+}
+
+.version-status-pill--checking,
+.version-status-pill--updating {
+    color: #adadb8;
+    background: rgba(173, 173, 184, 0.12);
+}
+
+.version-status-pill--error {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.version-status-pill--unavailable {
+    color: #adadb8;
+    background: rgba(173, 173, 184, 0.08);
 }
 
 .bot-health-update-badge {

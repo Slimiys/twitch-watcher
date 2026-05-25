@@ -85,14 +85,15 @@ TWITCH_DEVICE_ID=uuid-из-cookie-unique_id
 
 При старте в логе должно быть: `Integrity: manual`. Успешный сбор: `Бонус успешно собран!` и `Reason: CLAIM` в событиях баллов.
 
-**Обновление с телефона (кнопка в дашборде):** в `.env` добавьте:
+**Обновление с телефона (карточка «Версия» в «Статус бота»):** в `.env` добавьте:
 
 ```env
 DASHBOARD_UPDATE_ENABLED=true
-WEB_DASHBOARD_API_KEY=придумайте_длинный_ключ
 ```
 
-В настройках дашборда укажите тот же API-ключ. Кнопка **«Обновиться»** выполнит `git pull`, `run-local.sh --update-only` и перезапуск. Лог: `logs/dashboard-update.log`.
+Раз в минуту дашборд сравнивает ваш коммит с `origin/dev` (нужен интернет и `git`). Если есть новая ревизия — на карточке **Версия** появится индикатор **NEW** и подпись «Доступно: …». **Нажмите на карточку** → подтвердите → выполнится `git fetch`, `reset` на `origin/dev`, сборка и перезапуск. Лог: `logs/dashboard-update.log`.
+
+Опционально: `WEB_DASHBOARD_API_KEY` — защита REST API; `DASHBOARD_UPDATE_GIT_BRANCH=dev` (по умолчанию dev).
 
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)
 

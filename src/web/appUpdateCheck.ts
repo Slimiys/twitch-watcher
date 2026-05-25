@@ -8,13 +8,18 @@ import * as path from 'path';
 import { getAppVersionParts } from '../appVersion';
 import { getProjectRoot } from '../pidFile';
 
+export type AppUpdateCheckStatus = 'current' | 'available' | 'error' | 'skipped';
+
 /** Результат сравнения локальной и удалённой ревизии */
 export interface AppUpdateCheckResult {
   branch: string;
   remote: string;
   localRevision: string;
   remoteRevision: string | null;
+  localRevisionFull: string;
+  remoteRevisionFull: string | null;
   updateAvailable: boolean;
+  checkStatus: AppUpdateCheckStatus;
   checkedAt: number;
   error: string | null;
   checkSkippedReason: string | null;
@@ -40,7 +45,7 @@ export function getUpdateCheckRemote(): string {
 }
 
 /**
- * Сравнивает HEAD с refs/heads/&lt;branch&gt; на remote через git ls-remote
+ * Сравнивает локальный HEAD с refs/heads/&lt;branch&gt; на remote через git ls-remote
  * @param forceRefresh игнорировать кэш (клик по версии)
  */
 export function checkAppUpdateAvailable(forceRefresh = false): AppUpdateCheckResult {
@@ -51,72 +56,63 @@ export function checkAppUpdateAvailable(forceRefresh = false): AppUpdateCheckRes
 
   const branch = getUpdateCheckBranch();
   const remote = getUpdateCheckRemote();
-  const { revision: localRevision } = getAppVersionParts();
+  const fallback = getAppVersionParts();
 
   if (process.platform === 'win32') {
-    const result: AppUpdateCheckResult = {
-      branch,
-      remote,
-      localRevision,
-      remoteRevision: null,
-      updateAvailable: false,
-      checkedAt: now,
-      error: null,
-      checkSkippedReason: 'Проверка обновлений недоступна на Windows',
-    };
-    cached = { at: now, result };
-    return result;
+    return storeCache(now, buildSkipped(branch, remote, fallback.revision, 'Проверка обновлений недоступна на Windows'));
   }
 
   const projectRoot = getProjectRoot();
   if (!fs.existsSync(path.join(projectRoot, '.git'))) {
-    const result: AppUpdateCheckResult = {
-      branch,
-      remote,
-      localRevision,
-      remoteRevision: null,
-      updateAvailable: false,
-      checkedAt: now,
-      error: null,
-      checkSkippedReason: 'Не git-репозиторий',
-    };
-    cached = { at: now, result };
-    return result;
+    return storeCache(
+      now,
+      buildSkipped(branch, remote, fallback.revision, 'Не git-репозиторий')
+    );
   }
 
   try {
-    const remoteRevision = resolveRemoteBranchRevision(projectRoot, remote, branch);
-    const updateAvailable =
-      remoteRevision != null &&
-      localRevision !== 'unknown' &&
-      !revisionsMatch(localRevision, remoteRevision);
+    const local = resolveLocalHeadRevision(projectRoot);
+    const localRevisionFull = local?.full ?? fallback.revision;
+    const localRevision = local?.short ?? shortenRevision(localRevisionFull);
 
-    const result: AppUpdateCheckResult = {
+    const remoteFull = resolveRemoteBranchRevisionFull(projectRoot, remote, branch);
+    const remoteRevision = remoteFull ? shortenRevision(remoteFull) : null;
+
+    const updateAvailable =
+      remoteFull != null &&
+      localRevisionFull !== 'unknown' &&
+      !revisionsMatch(localRevisionFull, remoteFull);
+
+    const checkStatus: AppUpdateCheckStatus = updateAvailable ? 'available' : 'current';
+
+    return storeCache(now, {
       branch,
       remote,
       localRevision,
       remoteRevision,
+      localRevisionFull,
+      remoteRevisionFull: remoteFull,
       updateAvailable,
+      checkStatus,
       checkedAt: now,
       error: null,
       checkSkippedReason: null,
-    };
-    cached = { at: now, result };
-    return result;
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const result: AppUpdateCheckResult = {
+    return storeCache(now, {
       branch,
       remote,
-      localRevision,
+      localRevision: fallback.revision,
       remoteRevision: null,
+      localRevisionFull: fallback.revision,
+      remoteRevisionFull: null,
       updateAvailable: false,
+      checkStatus: 'error',
       checkedAt: now,
       error: message,
       checkSkippedReason: null,
-    };
-    cached = { at: now, result };
-    return result;
+    });
   }
 }
 
@@ -125,7 +121,51 @@ export function clearAppUpdateCheckCache(): void {
   cached = null;
 }
 
-function resolveRemoteBranchRevision(root: string, remote: string, branch: string): string | null {
+function storeCache(at: number, result: AppUpdateCheckResult): AppUpdateCheckResult {
+  cached = { at, result };
+  return result;
+}
+
+function buildSkipped(
+  branch: string,
+  remote: string,
+  localRevision: string,
+  reason: string
+): AppUpdateCheckResult {
+  return {
+    branch,
+    remote,
+    localRevision,
+    remoteRevision: null,
+    localRevisionFull: localRevision,
+    remoteRevisionFull: null,
+    updateAvailable: false,
+    checkStatus: 'skipped',
+    checkedAt: Date.now(),
+    error: null,
+    checkSkippedReason: reason,
+  };
+}
+
+function resolveLocalHeadRevision(root: string): { full: string; short: string } | null {
+  try {
+    const full = execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const short = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      encoding: 'utf8',
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return { full, short };
+  } catch {
+    return null;
+  }
+}
+
+function resolveRemoteBranchRevisionFull(root: string, remote: string, branch: string): string | null {
   const ref = `refs/heads/${branch}`;
   const out = execFileSync(
     'git',
@@ -143,11 +183,7 @@ function resolveRemoteBranchRevision(root: string, remote: string, branch: strin
   }
 
   const sha = out.split(/\s+/)[0]?.trim();
-  if (!sha) {
-    return null;
-  }
-
-  return shortenRevision(sha);
+  return sha || null;
 }
 
 function shortenRevision(revision: string): string {
@@ -166,7 +202,7 @@ function shortenRevision(revision: string): string {
 }
 
 /**
- * Сравнение коротких hash (общий префикс 7+ символов)
+ * Сравнение ревизий (полный hash или общий префикс коротких)
  */
 export function revisionsMatch(a: string, b: string): boolean {
   const left = a.trim().toLowerCase();
@@ -176,6 +212,9 @@ export function revisionsMatch(a: string, b: string): boolean {
   }
   if (left === right) {
     return true;
+  }
+  if (left.length >= 40 && right.length >= 40) {
+    return left === right;
   }
   const minLen = Math.min(left.length, right.length, 12);
   if (minLen >= 7) {

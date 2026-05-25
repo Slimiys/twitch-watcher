@@ -16,11 +16,12 @@ echo "  Root: $ROOT"
 echo "  Branch: $BRANCH"
 echo "========================================"
 
-echo "[1/4] git pull..."
+echo "[1/4] git fetch + reset to origin/${BRANCH}..."
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  git pull origin "$BRANCH" || git pull
+  git fetch origin "$BRANCH"
+  git reset --hard "origin/${BRANCH}"
 else
-  echo "[WARN] Not a git repository, skipping git pull"
+  echo "[WARN] Not a git repository, skipping git sync"
 fi
 
 echo "[2/4] run-local.sh --update-only (npm install + build)..."
