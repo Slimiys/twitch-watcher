@@ -522,15 +522,11 @@ function renderBotUptimeLabel() {
     if (!el) {
         return;
     }
-    if (lifecycleWaitMode) {
-        el.textContent = lifecycleWaitMode === 'update' ? 'Обновление бота…' : 'Перезапуск бота…';
-        return;
-    }
-    if (botUptimeStartedAt == null) {
+    if (lifecycleWaitMode || botUptimeStartedAt == null) {
         el.textContent = '';
         return;
     }
-    el.textContent = `Бот работает: ${formatBotUptimeDuration(Date.now() - botUptimeStartedAt)}`;
+    el.textContent = `Время после запуска: ${formatBotUptimeDuration(Date.now() - botUptimeStartedAt)}`;
 }
 
 /**

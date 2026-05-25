@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=6">
-    <script src="dashboard.js?v=33" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=7">
+    <script src="dashboard.js?v=34" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -35,7 +35,13 @@
             <div class="dashboard-header-brand">
                 <h1>Twitch Watcher Dashboard</h1>
                 <p class="dashboard-header-tagline">Real-time monitoring and statistics</p>
-                <p id="botUptimeDisplay" class="dashboard-bot-uptime" aria-live="polite"></p>
+                <div class="dashboard-header-meta">
+                    <p id="botUptimeDisplay" class="dashboard-bot-uptime" aria-live="polite"></p>
+                    <div class="connection-status connection-status--brand" id="connectionStatus">
+                        <span class="status-dot offline" id="statusDot"></span>
+                        <span id="statusText">Connecting...</span>
+                    </div>
+                </div>
             </div>
             <div class="dashboard-header-toolbar">
                 <div class="header-toolbar-group header-toolbar-group--refresh">
@@ -106,15 +112,9 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="header-status-row">
-                            <div class="loading-indicator" id="loadingIndicator" style="display: none;">
-                                <div class="loading-spinner"></div>
-                                <span>Updating...</span>
-                            </div>
-                            <div class="connection-status" id="connectionStatus">
-                                <span class="status-dot offline" id="statusDot"></span>
-                                <span id="statusText">Connecting...</span>
-                            </div>
+                        <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+                            <div class="loading-spinner"></div>
+                            <span>Updating...</span>
                         </div>
                     </div>
                 </div>
