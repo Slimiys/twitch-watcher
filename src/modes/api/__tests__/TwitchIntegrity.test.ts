@@ -6,15 +6,13 @@ describe('TwitchIntegrityProvider', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
-    delete process.env.TWITCH_CLIENT_INTEGRITY;
   });
 
   afterEach(() => {
     process.env = { ...envBackup };
   });
 
-  it('кэширует integrity token до истечения срока (api)', async () => {
+  it('кэширует integrity token до истечения срока', async () => {
     const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
 
     (global.fetch as any) = vi.fn().mockResolvedValue({
@@ -44,7 +42,7 @@ describe('TwitchIntegrityProvider', () => {
     );
   });
 
-  it('invalidate сбрасывает кэш и запрашивает новый token (api)', async () => {
+  it('invalidate сбрасывает кэш и запрашивает новый token', async () => {
     const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
 
     (global.fetch as any) = vi
@@ -72,19 +70,5 @@ describe('TwitchIntegrityProvider', () => {
 
     expect(refreshed).toBe('token-2');
     expect(global.fetch).toHaveBeenCalledTimes(2);
-  });
-
-  it('manual: берёт токен из TWITCH_CLIENT_INTEGRITY без fetch', async () => {
-    process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
-    process.env.TWITCH_CLIENT_INTEGRITY = 'v4.public.manual-token';
-
-    const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
-    expect(provider.getSource()).toBe('manual');
-
-    (global.fetch as any) = vi.fn();
-
-    const token = await provider.getToken();
-    expect(token).toBe('v4.public.manual-token');
-    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

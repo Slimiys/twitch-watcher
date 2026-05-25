@@ -1,46 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  loadIntegritySource,
-  hasManualIntegrityToken,
-  getManualIntegrityToken,
-} from '../integrityConfig';
+import { describe, it, expect } from 'vitest';
+import { integrityExpirationToMs } from '../integrityConfig';
 
 describe('integrityConfig', () => {
-  const envBackup = { ...process.env };
+  const now = 1_700_000_000_000;
 
-  beforeEach(() => {
-    delete process.env.TWITCH_INTEGRITY_SOURCE;
-    delete process.env.TWITCH_INTEGRITY_BROWSER;
-    delete process.env.TWITCH_CLIENT_INTEGRITY;
+  it('без expiration — +4 часа от now', () => {
+    expect(integrityExpirationToMs(undefined, now)).toBe(now + 4 * 60 * 60 * 1000);
   });
 
-  afterEach(() => {
-    process.env = { ...envBackup };
+  it('expiration в секундах умножается на 1000', () => {
+    expect(integrityExpirationToMs(1_700_000_100, now)).toBe(1_700_000_100_000);
   });
 
-  it('по умолчанию browser', () => {
-    expect(loadIntegritySource()).toBe('browser');
-  });
-
-  it('TWITCH_INTEGRITY_SOURCE=manual', () => {
-    process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
-    expect(loadIntegritySource()).toBe('manual');
-  });
-
-  it('TWITCH_INTEGRITY_BROWSER=false с ручным токеном → manual', () => {
-    process.env.TWITCH_INTEGRITY_BROWSER = 'false';
-    process.env.TWITCH_CLIENT_INTEGRITY = 'v4.public.test';
-    expect(loadIntegritySource()).toBe('manual');
-  });
-
-  it('TWITCH_INTEGRITY_BROWSER=false без токена → api', () => {
-    process.env.TWITCH_INTEGRITY_BROWSER = 'false';
-    expect(loadIntegritySource()).toBe('api');
-  });
-
-  it('hasManualIntegrityToken и getManualIntegrityToken', () => {
-    process.env.TWITCH_CLIENT_INTEGRITY = '  token-abc  ';
-    expect(hasManualIntegrityToken()).toBe(true);
-    expect(getManualIntegrityToken()).toBe('token-abc');
+  it('expiration в миллисекундах возвращается как есть', () => {
+    expect(integrityExpirationToMs(1_700_000_100_000, now)).toBe(1_700_000_100_000);
   });
 });

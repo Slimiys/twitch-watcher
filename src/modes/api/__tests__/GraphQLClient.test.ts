@@ -71,7 +71,6 @@ describe('GraphQLClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
     client = new GraphQLClient(mockAuthToken, mockUserAgent);
   });
 
