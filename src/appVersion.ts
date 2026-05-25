@@ -17,6 +17,13 @@ export function getAppVersionParts(): { semver: string; revision: string; label:
 }
 
 /**
+ * Сбрасывает кэш метки версии (после git pull / перезапуска процесса)
+ */
+export function resetAppVersionLabelCache(): void {
+  cachedVersionLabel = null;
+}
+
+/**
  * Возвращает метку версии приложения: semver и короткий hash коммита (например 0.5.2.a1b2c3d4e5f6).
  */
 export function getAppVersionLabel(): string {

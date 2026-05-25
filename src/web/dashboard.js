@@ -465,6 +465,8 @@ let versionUpdateFastPollTimer = null;
 let versionUpdateStatus = null;
 let lastBotHealthForVersion = null;
 let versionCardBusy = false;
+/** После reload по завершении update/restart — принудительно обновить карточку «Версия» */
+let forceVersionRefreshOnReady = false;
 /** Режим ожидания перезапуска: update | restart */
 let lifecycleWaitMode = null;
 /** PID бота до update/restart (новый процесс = другой pid) */
@@ -955,11 +957,9 @@ function finishLifecycleFromServer(data, successMessage) {
     lifecycleWaitMode = null;
     lifecycleWaitPreviousPid = null;
     lifecycleWaitStartedAt = 0;
+    lastBotHealthForVersion = null;
     if (data) {
         versionUpdateStatus = data;
-        if (lastBotHealthForVersion) {
-            patchBotHealthVersionCard(lastBotHealthForVersion);
-        }
     }
     scheduleDashboardReload(successMessage);
 }
@@ -1035,6 +1035,7 @@ function scheduleDashboardReload(successMessage) {
         await waitForNewBotApiReady();
         const url = new URL(window.location.href);
         url.searchParams.set('_', String(Date.now()));
+        url.searchParams.set('vrefresh', '1');
         window.location.replace(url.toString());
     })();
 }
@@ -1614,6 +1615,16 @@ async function onApplicationInitializationComplete() {
 
     applicationDataRefreshStarted = true;
     await updateAll();
+
+    const shouldForceVersion = forceVersionRefreshOnReady;
+    if (shouldForceVersion) {
+        forceVersionRefreshOnReady = false;
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('vrefresh');
+        window.history.replaceState({}, '', cleanUrl.toString());
+    }
+    await pollVersionUpdateStatus(shouldForceVersion);
+    await updateBotHealth();
 
     if (updateMode === 'event') {
         await primeEventUpdateBaseline();
@@ -2961,6 +2972,8 @@ function startDashboardCore() {
         return;
     }
     dashboardCoreStarted = true;
+    forceVersionRefreshOnReady =
+        new URL(window.location.href).searchParams.get('vrefresh') === '1';
     checkInitializationStatus();
     initAppUpdateButton();
     initProcessControlButtons();

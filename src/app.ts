@@ -10,7 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { askLogin } from './input';
 import { CookieData, LoginInput, AppConfig } from './types';
-import { getAppVersionLabel } from './appVersion';
+import { getAppVersionLabel, resetAppVersionLabelCache } from './appVersion';
+import { clearAppUpdateCheckCache } from './web/appUpdateCheck';
 import { writePidFile } from './pidFile';
 import { logger } from './modes/api/logger';
 import { writeCrashReport } from './processGuards';
@@ -182,6 +183,8 @@ async function startAPIMode(): Promise<void> {
  */
 async function main(): Promise<void> {
   writePidFile();
+  resetAppVersionLabelCache();
+  clearAppUpdateCheckCache();
   const versionLabel = getAppVersionLabel();
   console.clear();
   console.log('=========================');
