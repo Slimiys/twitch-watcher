@@ -3,6 +3,15 @@
  */
 
 /**
+ * Результат ClaimCommunityPoints
+ */
+export interface ClaimBonusResult {
+  success: boolean;
+  /** integrity — обновить TWITCH_CLIENT_INTEGRITY; permanent — не повторять claimId */
+  failureKind?: 'integrity' | 'permanent';
+}
+
+/**
  * Информация о стримере
  */
 export interface StreamerInfo {
@@ -18,6 +27,8 @@ export interface StreamerInfo {
   startTime: number; // Время начала просмотра (переход из офлайн в онлайн)
   initialChannelPoints: number | null; // Начальные баллы при старте просмотра
   lastChannelPoints: number | null; // Последние известные баллы
+  streamPointsEarned: number; // Баллы, заработанные за текущий стрим (сбрасываются при stream-up)
+  lastWatchPrepAt?: number; // Время последней подготовки перед minute-watched
 }
 
 /**
@@ -70,6 +81,7 @@ export interface ClaimAvailableMessage {
   data: {
     claim: {
       id: string;
+      channel_id?: string | number;
     };
   };
 }
@@ -127,7 +139,7 @@ export interface GraphQLResponse {
 export interface WatchStatistics {
   streamerName: string;
   elapsedTime: number; // В миллисекундах
-  pointsEarned: number; // Количество заработанных баллов с начала просмотра
+  pointsEarned: number; // Количество заработанных баллов за текущий стрим
   currentPoints: number;
   status: 'ONLINE' | 'OFFLINE';
   game: string | null; // Категория/игра, которую стримит стример
@@ -145,12 +157,21 @@ export interface TokenInfo {
 }
 
 /**
+ * Причина неуспешной валидации токена
+ * - invalid: токен отклонён Twitch (401 и т.д.)
+ * - network: запрос не удался из-за сети/DNS
+ */
+export type TokenValidationErrorType = 'invalid' | 'network';
+
+/**
  * Результат валидации токена
  */
 export interface TokenValidationResult {
   isValid: boolean;
   tokenInfo?: TokenInfo;
   expiresAt?: number; // Timestamp когда токен истечет (если известен)
+  /** Причина ошибки при isValid: false (чтобы не путать сетевые ошибки с невалидным токеном) */
+  errorType?: TokenValidationErrorType;
 }
 
 /**
@@ -171,6 +192,8 @@ export interface RetryConfig {
     maxReconnectAttempts: number;
     initialDelayMs: number;
     maxDelayMs: number;
+    /** Пауза перед новым циклом reconnect после исчерпания попыток (мс) */
+    reconnectCyclePauseMs?: number;
   };
 }
 

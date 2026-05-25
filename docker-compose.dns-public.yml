@@ -1,0 +1,8 @@
+# Дополнение: публичные DNS (Google/Cloudflare). Используйте, если без этого домены не резолвятся.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.dns-public.yml up -d --build
+services:
+  twitch_watcher:
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1

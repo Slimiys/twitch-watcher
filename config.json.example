@@ -1,0 +1,29 @@
+{
+  "streamers": [
+    "example_streamer_1",
+    "example_streamer_2"
+  ],
+  "retry": {
+    "maxAttempts": 5,
+    "initialDelayMs": 1000,
+    "maxDelayMs": 30000,
+    "multiplier": 2,
+    "jitter": true,
+    "circuitBreaker": {
+      "failureThreshold": 5,
+      "resetTimeoutMs": 30000,
+      "halfOpenMaxAttempts": 1
+    },
+    "websocket": {
+      "maxReconnectAttempts": 10,
+      "initialDelayMs": 1000,
+      "maxDelayMs": 60000
+    }
+  },
+  "statistics": {
+    "storagePath": "./statistics",
+    "format": "json",
+    "rotationDays": 30,
+    "autoSave": true
+  }
+}

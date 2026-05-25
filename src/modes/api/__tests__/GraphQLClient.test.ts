@@ -71,6 +71,9 @@ describe('GraphQLClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.TWITCH_CLIENT_VERSION = 'test-build-id-for-vitest';
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
+    delete process.env.TWITCH_CLIENT_INTEGRITY;
     client = new GraphQLClient(mockAuthToken, mockUserAgent);
   });
 
@@ -278,6 +281,46 @@ describe('GraphQLClient', () => {
       expect(result?.availableClaim?.id).toBe('claim123');
     });
 
+    it('должен использовать legacy persisted query при PersistedQueryNotFound', async () => {
+      const mockResponse = {
+        data: {
+          community: {
+            channel: {
+              self: {
+                communityPoints: {
+                  balance: 2500,
+                  availableClaim: null,
+                },
+              },
+            },
+          },
+        },
+      };
+
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            errors: [{ message: 'PersistedQueryNotFound' }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
+
+      const result = await client.getChannelPoints('testuser');
+
+      expect(result?.balance).toBe(2500);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      const secondBody = JSON.parse((global.fetch as any).mock.calls[1][1].body);
+      expect(secondBody.extensions.persistedQuery.sha256Hash).toBe(
+        '9988086babc615a918a1e9a722ff41d98847acac822645209ac7379eecb27152'
+      );
+    });
+
     it('должен вернуть null при ошибке', async () => {
       (global.fetch as any).mockResolvedValueOnce({
         ok: false,
@@ -292,30 +335,40 @@ describe('GraphQLClient', () => {
   });
 
   describe('claimBonus', () => {
+    const mockIntegrityResponse = {
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'integrity-token', expiration: Math.floor(Date.now() / 1000) + 3600 }),
+    };
+
     it('должен успешно собрать бонус', async () => {
       const mockResponse = {
         data: {
           claimCommunityPoints: {
             error: null,
+            status: 'SUCCESS',
           },
         },
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockResponse,
-      });
+      (global.fetch as any)
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
 
       const result = await client.claimBonus('channel123', 'claim123');
 
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('должен вернуть false при ошибке сбора бонуса', async () => {
+    it('должен вернуть false при ошибке integrity', async () => {
       const mockResponse = {
         data: {
-          claimCommunityPoints: null, // null означает, что бонус уже собран или недоступен
+          claimCommunityPoints: null,
         },
         errors: [
           {
@@ -324,15 +377,25 @@ describe('GraphQLClient', () => {
         ],
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockResponse,
-      });
+      (global.fetch as any)
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        })
+        .mockResolvedValueOnce(mockIntegrityResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockResponse,
+        });
 
       const result = await client.claimBonus('channel123', 'claim123');
 
-      expect(result).toBe(false);
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe('integrity');
+      expect(global.fetch).toHaveBeenCalledTimes(4);
     });
   });
 

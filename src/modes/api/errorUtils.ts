@@ -30,6 +30,42 @@ export function isPermanentHttpError(statusCode: number): boolean {
 }
 
 /**
+ * Проверяет, указывает ли текст ошибки на сетевую проблему (DNS, fetch failed и т.д.)
+ */
+export function isNetworkErrorMessage(message: string): boolean {
+  if (!message) {
+    return false;
+  }
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('fetch failed') ||
+    lower.includes('econnrefused') ||
+    lower.includes('enotfound') ||
+    lower.includes('eai_again') ||
+    lower.includes('etimedout') ||
+    lower.includes('network error') ||
+    lower.includes('socket hang up')
+  );
+}
+
+/**
+ * Проверяет, является ли ошибка сетевой
+ */
+export function isNetworkError(error: any): boolean {
+  if (!error) {
+    return false;
+  }
+  const message = error.message || String(error);
+  if (isNetworkErrorMessage(message)) {
+    return true;
+  }
+  if (error.cause && isNetworkErrorMessage(String(error.cause))) {
+    return true;
+  }
+  return isTemporaryNetworkError(error);
+}
+
+/**
  * Определяет, является ли сетевая ошибка временной
  * @param error Объект ошибки
  * @returns true если ошибка временная

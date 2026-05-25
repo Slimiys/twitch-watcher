@@ -1,8 +1,5 @@
 const API_BASE = '/api';
-let pointsChart = null;
 let updateInterval = null;
-// Плагин зума Chart.js (ленивая инициализация, чтобы избежать ошибок TDZ)
-let zoomPlugin = null;
 
 /**
  * Безопасное получение значения из localStorage
@@ -32,13 +29,13 @@ function safeSetLocalStorage(key, value) {
     }
 }
 
-// Настройки графика
-let chartMode = safeGetLocalStorage('chartMode') || 'accumulated'; // 'accumulated' или 'daily'
-let chartPeriod = safeGetLocalStorage('chartPeriod') || '30'; // 'all', '90', '30', '7', '1'
-
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
+let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
+let eventSource = null; // Для Server-Sent Events
+let lastEventCheckTimestamp = 0; // Timestamp последнего проверенного события
+let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
 
 let selectedEventTags = new Set();
 try {
@@ -53,10 +50,65 @@ let availableEventTags = new Set(); // Доступные теги из собы
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
 } catch (e) {
-    visibleColumns = {streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, actions: true};
+    visibleColumns = {notify: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
+}
+
+// Предыдущий статус стримеров (для уведомлений online/offline)
+let previousStreamerStatus = {};
+let streamStatusTrackingReady = false;
+
+// Уведомления по стримерам: true = включено (по умолчанию)
+let streamerNotifyPrefs = {};
+/** Имена всех стримеров из последнего ответа /statistics (для массового переключения уведомлений) */
+let lastAllStreamerNames = [];
+try {
+    const prefs = safeGetLocalStorage('streamerNotifyPrefs');
+    if (prefs) {
+        streamerNotifyPrefs = JSON.parse(prefs);
+    }
+} catch (e) {
+    streamerNotifyPrefs = {};
+}
+
+// Настройки сортировки таблицы
+let tableSort = {
+    column: null, // 'streamer', 'lastStreamStart', 'lastStreamEnd'
+    direction: 'asc' // 'asc' или 'desc'
+};
+try {
+    const sort = safeGetLocalStorage('tableSort');
+    if (sort) {
+        tableSort = JSON.parse(sort);
+    }
+} catch (e) {
+    // Используем значения по умолчанию
+}
+
+// Предыдущие значения статистики по стримерам (для отображения разницы)
+// Эти значения обновляются только при изменении баллов
+let previousStreamerStats = {};
+try {
+    const prevStats = safeGetLocalStorage('previousStreamerStats');
+    if (prevStats) {
+        previousStreamerStats = JSON.parse(prevStats);
+    }
+} catch (e) {
+    previousStreamerStats = {};
+}
+
+// Сохраняем старое значение currentPoints для каждого стримера
+// Это нужно для обновления previousPoints перед следующим изменением
+let lastCurrentPoints = {};
+try {
+    const lastPoints = safeGetLocalStorage('lastCurrentPoints');
+    if (lastPoints) {
+        lastCurrentPoints = JSON.parse(lastPoints);
+    }
+} catch (e) {
+    lastCurrentPoints = {};
 }
 
 // Пагинация событий
@@ -155,10 +207,29 @@ function generateWatchTimeProgress(elapsedTime, maxTime = 24 * 60 * 60 * 1000) {
  * @returns {string} Класс для стилизации
  */
 function getPointsCategory(points) {
-    if (points >= 10000) return 'very-high';
-    if (points >= 5000) return 'high';
-    if (points >= 1000) return 'medium';
-    return 'low';
+    if (points >= 100001) return 'tier-4'; // 100001 - 1000000
+    if (points >= 10001) return 'tier-3';  // 10001 - 100000
+    if (points >= 1001) return 'tier-2';    // 1001 - 10000
+    return 'tier-1';                        // 0 - 1000
+}
+
+/**
+ * Генерирует цвет на основе строки (детерминированно)
+ * @param {string} str Строка для генерации цвета
+ * @returns {string} HEX цвет
+ */
+function generateColorFromString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    
+    // Генерируем яркие, насыщенные цвета
+    const hue = Math.abs(hash) % 360;
+    const saturation = 60 + (Math.abs(hash) % 20); // 60-80%
+    const lightness = 50 + (Math.abs(hash) % 15); // 50-65%
+    
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
 /**
@@ -169,6 +240,27 @@ function getPointsCategory(points) {
 function generatePointsBadge(points) {
     const category = getPointsCategory(points);
     return `<span class="points-badge ${category}">${points.toLocaleString()}</span>`;
+}
+
+/**
+ * Генерирует бейдж с баллами и разницей между текущим и предыдущим значением
+ * @param {number} currentPoints Текущее значение
+ * @param {number|null|undefined} previousPoints Предыдущее значение (до изменения)
+ * @returns {string} HTML с бейджем и разницей
+ */
+function generatePointsBadgeWithDiff(currentPoints, previousPoints) {
+    const category = getPointsCategory(currentPoints);
+    const currentFormatted = currentPoints.toLocaleString();
+    
+    let diffHtml = '';
+    if (previousPoints !== null && previousPoints !== undefined && previousPoints !== currentPoints) {
+        const diff = currentPoints - previousPoints;
+        const diffFormatted = diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
+        const diffClass = diff > 0 ? 'diff-positive' : 'diff-negative';
+        diffHtml = ` <span class="points-diff ${diffClass}">(${diffFormatted})</span>`;
+    }
+    
+    return `<span class="points-badge ${category}">${currentFormatted}</span>${diffHtml}`;
 }
 
 /**
@@ -206,6 +298,83 @@ function getEventIcon(eventType) {
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
+}
+
+/**
+ * Форматирует timestamp в читаемую дату и время
+ * @param {number} timestamp Timestamp в миллисекундах
+ * @returns {string} Отформатированная дата и время
+ */
+function formatDateTime(timestamp) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    // Если меньше минуты назад
+    if (diff < 60000) {
+        return 'Just now';
+    }
+    // Если меньше часа назад
+    if (diff < 3600000) {
+        const minutes = Math.floor(diff / 60000);
+        return `${minutes}m ago`;
+    }
+    // Если сегодня
+    if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+    // Если вчера
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+        return `Yesterday ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // Если меньше недели назад
+    if (diff < 7 * 24 * 3600000) {
+        return date.toLocaleDateString('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+    // Иначе полная дата и время
+    return date.toLocaleString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit' 
+    });
+}
+
+/**
+ * Форматирует timestamp в формат даты и времени dd:MM:yyyy HH:mm
+ * @param {number} timestamp Timestamp в миллисекундах
+ * @returns {string} Дата и время в формате dd:MM:yyyy HH:mm или '-'
+ */
+function formatTimeHHMM(timestamp) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+/**
+ * Форматирует дату и время с разделением по цветам
+ * @param {number} timestamp Timestamp
+ * @param {string} timeColor Цвет для времени (CSS цвет)
+ * @returns {string} HTML с датой (белой) и временем (цветным)
+ */
+function formatTimeWithColors(timestamp, timeColor) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `<span style="color: #efeff1;">${day}.${month}.${year}</span> <span style="color: ${timeColor};">${hours}:${minutes}</span>`;
 }
 
 /**
@@ -260,22 +429,6 @@ function generateTableSkeleton(rows = 5) {
  * Генерирует skeleton loader для графика
  * @returns {string} HTML код skeleton loader
  */
-function generateChartSkeleton() {
-    // Создаем несколько линий для имитации графика
-    const lines = Array.from({ length: 5 }).map((_, i) => {
-        const width = 60 + Math.random() * 40;
-        const left = 10 + i * 20;
-        const height = 20 + Math.random() * 200;
-        return `<div class="skeleton-chart-line" style="left: ${left}%; width: ${width}%; height: ${height}px;"></div>`;
-    }).join('');
-    
-    return `
-        <div class="skeleton-chart">
-            ${lines}
-        </div>
-    `;
-}
-
 /**
  * Генерирует skeleton loader для списка событий
  * @param {number} items Количество элементов
@@ -351,10 +504,30 @@ function generateColorFromText(text) {
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
+/**
+ * API-ключ dashboard (localStorage, не входит в экспорт appSettings)
+ */
+function getDashboardApiKey() {
+    return safeGetLocalStorage('dashboardApiKey') || '';
+}
+
+function setDashboardApiKey(key) {
+    safeSetLocalStorage('dashboardApiKey', key || '');
+}
+
 async function fetchData(endpoint) {
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const headers = {};
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+
+        const response = await fetch(`${API_BASE}${endpoint}`, { headers });
         if (!response.ok) {
+            if (response.status === 401) {
+                console.warn(`Unauthorized for ${endpoint}: проверьте API-ключ в настройках`);
+            }
             // Если сервис недоступен (503), пытаемся получить сообщение об ошибке
             if (response.status === 503) {
                 try {
@@ -509,6 +682,284 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
     }
 }
 
+let initializationPollCount = 0;
+
+/**
+ * Скрывает экран загрузки и показывает дашборд
+ */
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loadingScreen');
+    const mainContainer = document.getElementById('mainContainer');
+    if (!loadingScreen || !mainContainer) {
+        return;
+    }
+    loadingScreen.classList.add('hidden');
+    mainContainer.style.display = 'block';
+    setTimeout(() => {
+        if (loadingScreen.parentNode) {
+            loadingScreen.remove();
+        }
+    }, 500);
+}
+
+/**
+ * Проверяет, отвечает ли API статистикой (приложение уже работает)
+ */
+async function isApplicationReadyViaStats() {
+    try {
+        const response = await fetch(`${API_BASE}/statistics?includeOffline=true`);
+        if (!response.ok) {
+            return false;
+        }
+        const stats = await response.json();
+        return Array.isArray(stats) && stats.length > 0;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Проверяет статус инициализации приложения
+ */
+async function checkInitializationStatus() {
+    const loadingScreen = document.getElementById('loadingScreen');
+    const mainContainer = document.getElementById('mainContainer');
+    const statusText = document.getElementById('loadingStatusText');
+    const progressBar = document.getElementById('loadingProgressBar');
+    const progressText = document.getElementById('loadingProgressText');
+    
+    if (!loadingScreen || !mainContainer || !statusText || !progressBar || !progressText) {
+        return;
+    }
+
+    initializationPollCount += 1;
+    
+    try {
+        const response = await fetch(`${API_BASE}/initialization-status`);
+        if (!response.ok) {
+            if (response.status === 404) {
+                statusText.textContent = 'Waiting for server to start...';
+            } else {
+                statusText.textContent = 'Waiting for server...';
+            }
+            if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
+                hideLoadingScreen();
+                return;
+            }
+            setTimeout(checkInitializationStatus, 1000);
+            return;
+        }
+        
+        const status = await response.json();
+        const progress = Number(status.progress) || 0;
+        const isReady = status.isInitialized === true || progress >= 100;
+        
+        statusText.textContent = status.currentAction || 'Initializing...';
+        progressBar.style.width = `${Math.min(100, progress)}%`;
+        progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
+        
+        if (isReady) {
+            setTimeout(hideLoadingScreen, 300);
+            return;
+        }
+
+        // Fallback: бэкенд уже отдаёт стримеров, но progress не обновился
+        if (initializationPollCount >= 3 && await isApplicationReadyViaStats()) {
+            hideLoadingScreen();
+            return;
+        }
+
+        setTimeout(checkInitializationStatus, 500);
+    } catch (error) {
+        statusText.textContent = 'Connecting to server...';
+        if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
+            hideLoadingScreen();
+            return;
+        }
+        setTimeout(checkInitializationStatus, 1000);
+    }
+}
+
+/**
+ * Сравнивает два значения с обработкой пустых значений
+ * Пустые значения (null, undefined, пустая строка) всегда идут в конец списка
+ * @param {*} valueA Первое значение
+ * @param {*} valueB Второе значение
+ * @param {Function} compareFn Функция сравнения для непустых значений (опционально)
+ * @param {boolean} treatZeroAsEmpty Считать ли 0 пустым значением (по умолчанию false)
+ * @returns {number} Результат сравнения (-1, 0, 1)
+ */
+function compareWithNulls(valueA, valueB, compareFn = null, treatZeroAsEmpty = false) {
+    // Проверяем, являются ли значения пустыми
+    let isEmptyA = valueA === null || valueA === undefined || valueA === '';
+    let isEmptyB = valueB === null || valueB === undefined || valueB === '';
+    
+    // Для числовых значений проверяем NaN и, опционально, 0
+    if (typeof valueA === 'number') {
+        isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
+    }
+    if (typeof valueB === 'number') {
+        isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
+    }
+
+    // Если оба пустые, они равны
+    if (isEmptyA && isEmptyB) {
+        return 0;
+    }
+    
+    // Если только первое пустое, оно идет в конец
+    if (isEmptyA) {
+        return 1;
+    }
+    
+    // Если только второе пустое, оно идет в конец
+    if (isEmptyB) {
+        return -1;
+    }
+    
+    // Если оба не пустые, используем функцию сравнения или числовое сравнение
+    if (compareFn) {
+        return compareFn(valueA, valueB);
+    }
+    
+    // По умолчанию числовое сравнение
+    return Number(valueA) - Number(valueB);
+}
+
+/**
+ * Сортирует данные таблицы по указанной колонке и направлению
+ * @param {Array} data Массив данных для сортировки
+ * @param {Object} sort Объект с полями column и direction
+ * @returns {Array} Отсортированный массив
+ */
+function sortTableData(data, sort) {
+    if (!sort.column) {
+        const result = data.sort((a, b) => {
+            if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
+            if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
+            return a.streamerName.localeCompare(b.streamerName);
+        });
+        return result;
+    }
+
+    const direction = sort.direction === 'desc' ? -1 : 1;
+
+    const result = data.sort((a, b) => {
+        if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
+        if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
+        
+        let valueA, valueB, treatZeroAsEmpty = false;
+        
+        switch (sort.column) {
+            case 'streamer':
+                valueA = a.streamerName;
+                valueB = b.streamerName;
+                break;
+            case 'lastStreamStart':
+                valueA = a.lastStreamStart ? Number(a.lastStreamStart) : null;
+                valueB = b.lastStreamStart ? Number(b.lastStreamStart) : null;
+                treatZeroAsEmpty = true;
+                break;
+            case 'lastStreamEnd':
+                valueA = a.lastStreamEnd ? Number(a.lastStreamEnd) : null;
+                valueB = b.lastStreamEnd ? Number(b.lastStreamEnd) : null;
+                treatZeroAsEmpty = true;
+                break;
+            case 'game':
+                valueA = a.game;
+                valueB = b.game;
+                break;
+            case 'watchTime':
+                valueA = a.elapsedTime;
+                valueB = b.elapsedTime;
+                break;
+            case 'pointsEarned':
+                valueA = a.pointsEarned;
+                valueB = b.pointsEarned;
+                break;
+            case 'currentPoints':
+                valueA = a.currentPoints;
+                valueB = b.currentPoints;
+                break;
+            case 'status':
+                valueA = a.status;
+                valueB = b.status;
+                break;
+            default:
+                valueA = a.streamerName;
+                valueB = b.streamerName;
+                break;
+        }
+
+        let isEmptyA = valueA === null || valueA === undefined || valueA === '';
+        let isEmptyB = valueB === null || valueB === undefined || valueB === '';
+        
+        if (typeof valueA === 'number') {
+            isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
+        }
+        if (typeof valueB === 'number') {
+            isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
+        }
+
+        if (isEmptyA && isEmptyB) return 0;
+        if (isEmptyA) return 1;
+        if (isEmptyB) return -1;
+
+        let comparison = 0;
+        
+        switch (sort.column) {
+            case 'streamer':
+                comparison = valueA.localeCompare(valueB);
+                break;
+            case 'lastStreamStart':
+            case 'lastStreamEnd':
+                comparison = Number(valueA) - Number(valueB);
+                break;
+            case 'game':
+                comparison = valueA.localeCompare(valueB);
+                break;
+            case 'watchTime':
+            case 'pointsEarned':
+            case 'currentPoints':
+                comparison = Number(valueA) - Number(valueB);
+                break;
+            case 'status':
+                const statusOrder = { 'ONLINE': 0, 'OFFLINE': 1 };
+                comparison = (statusOrder[valueA] || 2) - (statusOrder[valueB] || 2);
+                break;
+        }
+
+        return comparison * direction;
+    });
+
+    return result;
+}
+
+/**
+ * Обработчик клика на заголовок таблицы для сортировки
+ * @param {string} column Ключ колонки для сортировки
+ */
+window.handleTableSort = function(column) {
+    // Определяем, является ли колонка временной (для временных колонок начальное направление - desc)
+    const isTimeColumn = column === 'lastStreamStart' || column === 'lastStreamEnd';
+    
+    // Если кликнули на ту же колонку, меняем направление сортировки
+    if (tableSort.column === column) {
+        tableSort.direction = tableSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        // Если кликнули на другую колонку, устанавливаем новую колонку и направление по умолчанию
+        tableSort.column = column;
+        // Для временных колонок начальное направление - desc, для остальных - asc
+        tableSort.direction = isTimeColumn ? 'desc' : 'asc';
+    }
+
+    // Сохраняем настройки сортировки в localStorage
+    safeSetLocalStorage('tableSort', JSON.stringify(tableSort));
+
+    // Обновляем таблицу
+    updateStatistics();
+};
+
 async function updateStatistics() {
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
@@ -522,7 +973,6 @@ async function updateStatistics() {
     // Запрашиваем всех стримеров, включая офлайн
     const stats = await fetchData('/statistics?includeOffline=true');
     
-    
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
@@ -532,13 +982,27 @@ async function updateStatistics() {
     }
 
     if (stats.length === 0) {
+        lastAllStreamerNames = [];
         const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
         } else {
             table.innerHTML = emptyMessage;
         }
+        streamStatusTrackingReady = false;
+        previousStreamerStatus = {};
         return;
+    }
+
+    lastAllStreamerNames = stats.map((s) => s.streamerName).filter(Boolean);
+
+    try {
+        const statusChanges = detectStreamerStatusChanges(stats);
+        if (statusChanges.length > 0) {
+            processStreamStatusNotifications(statusChanges);
+        }
+    } catch (e) {
+        console.warn('Stream status notifications failed:', e);
     }
 
     // Фильтруем офлайн стримеров, если они скрыты
@@ -547,13 +1011,92 @@ async function updateStatistics() {
         filteredStats = stats.filter(s => s.status === 'ONLINE');
     }
 
-    // Сортируем: сначала онлайн, потом офлайн, внутри группы - по имени
-    const sortedStats = [...filteredStats].sort((a, b) => {
-        if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
-        if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
-        // Если оба онлайн или оба офлайн, сортируем по имени
-        return a.streamerName.localeCompare(b.streamerName);
+    // Сохраняем предыдущие значения для отображения разницы
+    // Используем lastCurrentPoints, если он отличается от текущего, иначе previousStreamerStats
+    const currentPreviousStats = {};
+    stats.forEach(s => {
+        if (s.streamerName) {
+            const streamerName = s.streamerName;
+            const currentPointsEarned = s.pointsEarned || 0;
+            const currentCurrentPoints = s.currentPoints || 0;
+            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
+            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
+            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
+            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
+            
+            if (lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned) {
+                currentPreviousStats[streamerName] = { 
+                    pointsEarned: lastPointsEarned,
+                    currentPoints: lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints
+                };
+            } else if (lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints) {
+                currentPreviousStats[streamerName] = { 
+                    pointsEarned: lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned,
+                    currentPoints: lastCurrentPointsValue
+                };
+            } else if (previousStreamerStats[streamerName]) {
+                currentPreviousStats[streamerName] = { ...previousStreamerStats[streamerName] };
+            }
+        }
     });
+    
+    stats.forEach(s => {
+        if (s.streamerName) {
+            const streamerName = s.streamerName;
+            const currentPointsEarned = s.pointsEarned || 0;
+            const currentCurrentPoints = s.currentPoints || 0;
+            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
+            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
+            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
+            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
+            
+            if (prevPointsEarned === undefined) {
+                previousStreamerStats[streamerName] = {
+                    pointsEarned: currentPointsEarned,
+                    currentPoints: currentCurrentPoints
+                };
+                lastCurrentPoints[streamerName] = {
+                    pointsEarned: currentPointsEarned,
+                    currentPoints: currentCurrentPoints
+                };
+            } else {
+                const pointsEarnedChanged = prevPointsEarned !== currentPointsEarned;
+                const currentPointsChanged = prevCurrentPoints !== currentCurrentPoints;
+                
+                if (pointsEarnedChanged || currentPointsChanged) {
+                    // Определяем старое значение: если lastCurrentPoints равен currentPoints,
+                    // используем previousStreamerStats, иначе lastCurrentPoints
+                    let newPrevPointsEarned, newPrevCurrentPoints;
+                    const lastPointsEarnedChanged = lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned;
+                    const lastCurrentPointsChanged = lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints;
+                    
+                    if (!lastPointsEarnedChanged && !lastCurrentPointsChanged && (lastPointsEarned !== undefined || lastCurrentPointsValue !== undefined)) {
+                        newPrevPointsEarned = prevPointsEarned;
+                        newPrevCurrentPoints = prevCurrentPoints;
+                    } else {
+                        newPrevPointsEarned = lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned;
+                        newPrevCurrentPoints = lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints;
+                    }
+                    
+                    previousStreamerStats[streamerName] = {
+                        pointsEarned: newPrevPointsEarned,
+                        currentPoints: newPrevCurrentPoints
+                    };
+                    
+                    lastCurrentPoints[streamerName] = {
+                        pointsEarned: currentPointsEarned,
+                        currentPoints: currentCurrentPoints
+                    };
+                }
+            }
+        }
+    });
+    
+    safeSetLocalStorage('previousStreamerStats', JSON.stringify(previousStreamerStats));
+    safeSetLocalStorage('lastCurrentPoints', JSON.stringify(lastCurrentPoints));
+    
+    // Сортируем данные
+    const sortedStats = sortTableData([...filteredStats], tableSort);
 
     // Если офлайн стримеры скрыты и нет онлайн стримеров, показываем сообщение
     if (!showOffline && sortedStats.length === 0) {
@@ -571,13 +1114,20 @@ async function updateStatistics() {
     }
 
     // Определяем колонки с их видимостью
+    const allNotifyOn = areAllStreamerNotificationsEnabled(lastAllStreamerNames);
+    const notifyHeaderTitle = allNotifyOn
+        ? 'Выключить оповещения у всех стримеров'
+        : 'Включить оповещения у всех стримеров';
     const columns = [
+        { key: 'notify', label: allNotifyOn ? '🔔' : '🔕', visible: visibleColumns.notify !== false },
         { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
         { key: 'status', label: 'Status', visible: visibleColumns.status !== false },
         { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
         { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
         { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
         { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
+        { key: 'lastStreamStart', label: 'Last Stream Start', visible: visibleColumns.lastStreamStart !== false },
+        { key: 'lastStreamEnd', label: 'Last Stream End', visible: visibleColumns.lastStreamEnd !== false },
         { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
     ];
     
@@ -587,13 +1137,49 @@ async function updateStatistics() {
         <table>
             <thead>
                 <tr>
-                    ${visibleColumnsList.map(col => `<th>${col.label}</th>`).join('')}
+                    ${visibleColumnsList.map(col => {
+                        // Определяем, можно ли сортировать эту колонку
+                        const isSortable = ['streamer', 'lastStreamStart', 'lastStreamEnd'].includes(col.key);
+                        const isSorted = tableSort.column === col.key;
+                        const sortIcon = isSorted 
+                            ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
+                            : (isSortable ? ' ↕' : '');
+                        const sortClass = isSorted ? ` sort-${tableSort.direction}` : '';
+                        const clickHandler = col.key === 'notify'
+                            ? ' onclick="toggleAllStreamerNotifications()"'
+                            : (isSortable ? ` onclick="handleTableSort('${col.key}')"` : '');
+                        const cursorStyle = (col.key === 'notify' || isSortable)
+                            ? ' style="cursor: pointer; user-select: none;"'
+                            : '';
+                        const notifyClass = col.key === 'notify' ? ' notify-header notify-header-clickable' : '';
+                        const notifyTitle = col.key === 'notify' ? ` title="${notifyHeaderTitle}"` : '';
+                        
+                        return `<th class="table-header${notifyClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${notifyTitle}>${col.label}${sortIcon}</th>`;
+                    }).join('')}
                 </tr>
             </thead>
             <tbody>
                 ${sortedStats.map(s => `
                     <tr>
-                        ${visibleColumns.streamer !== false ? `<td class="streamer-name"><a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link">${s.streamerName}</a></td>` : ''}
+                        ${visibleColumns.notify !== false ? (() => {
+                            const notifyOn = isStreamerNotifyEnabled(s.streamerName);
+                            const safeAttr = String(s.streamerName)
+                                .replace(/&/g, '&amp;')
+                                .replace(/"/g, '&quot;');
+                            return `<td class="notify-cell">
+                                <span role="button" tabindex="0"
+                                    class="streamer-notify-toggle ${notifyOn ? 'streamer-notify-on' : 'streamer-notify-off'}"
+                                    data-streamer="${safeAttr}"
+                                    onclick="toggleStreamerNotify(this)"
+                                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStreamerNotify(this);}"
+                                    title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</span>
+                            </td>`;
+                        })() : ''}
+                        ${visibleColumns.streamer !== false ? (() => {
+                            const streamerColor = colorizeStreamerNames ? generateColorFromString(s.streamerName) : null;
+                            const colorStyle = streamerColor ? `style="color: ${streamerColor};"` : '';
+                            return `<td class="streamer-name"><a href="https://www.twitch.tv/${s.streamerName}" target="_blank" rel="noopener noreferrer" class="streamer-link" ${colorStyle}>${s.streamerName}</a></td>`;
+                        })() : ''}
                         ${visibleColumns.status !== false ? `
                             <td>
                                 <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
@@ -603,9 +1189,47 @@ async function updateStatistics() {
                             </td>
                         ` : ''}
                         ${visibleColumns.watchTime !== false ? `<td>${generateWatchTimeProgress(s.elapsedTime)}</td>` : ''}
-                        ${visibleColumns.pointsEarned !== false ? `<td>${generatePointsBadge(s.pointsEarned)}</td>` : ''}
-                        ${visibleColumns.currentPoints !== false ? `<td>${generatePointsBadge(s.currentPoints)}</td>` : ''}
+                        ${visibleColumns.pointsEarned !== false ? (() => {
+                            const prevPointsEarned = currentPreviousStats[s.streamerName]?.pointsEarned;
+                            const currentPointsEarned = s.pointsEarned || 0;
+                            return `<td>${generatePointsBadgeWithDiff(currentPointsEarned, prevPointsEarned)}</td>`;
+                        })() : ''}
+                        ${visibleColumns.currentPoints !== false ? (() => {
+                            const prevCurrentPoints = currentPreviousStats[s.streamerName]?.currentPoints;
+                            const currentCurrentPoints = s.currentPoints || 0;
+                            return `<td>${generatePointsBadgeWithDiff(currentCurrentPoints, prevCurrentPoints)}</td>`;
+                        })() : ''}
                         ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeWithColors(s.lastStreamStart, '#00d166') : '-'}</td>` : ''}
+                        ${visibleColumns.lastStreamEnd !== false ? (() => {
+                            const endTime = s.lastStreamEnd;
+                            const startTime = s.lastStreamStart;
+                            
+                            // Если нет времени окончания, показываем прочерк
+                            if (!endTime) return '<td>-</td>';
+                            
+                            const end = Number(endTime);
+                            if (isNaN(end) || end <= 0) return '<td>-</td>';
+                            
+                            // Если есть время окончания, но нет времени начала, показываем полупрозрачным
+                            if (!startTime) {
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
+                            }
+                            
+                            const start = Number(startTime);
+                            if (isNaN(start) || start <= 0) {
+                                // Если время начала некорректное, но есть время окончания, показываем полупрозрачным
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
+                            }
+                            
+                            // Если время окончания меньше времени начала (некорректное состояние), показываем полупрозрачным
+                            if (end < start) {
+                                return `<td class="invalid-time">${formatTimeWithColors(endTime, '#ef4444')}</td>`;
+                            }
+                            
+                            // Все корректно - показываем с красным временем
+                            return `<td>${formatTimeWithColors(endTime, '#ef4444')}</td>`;
+                        })() : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
@@ -633,159 +1257,21 @@ async function updateStatistics() {
     
     lastDataUpdate.stats = Date.now();
     updateStaleDataIndicator('stats', table);
+    
+    // previousStreamerStats уже обновлен выше, перед отображением разницы
+    // Это гарантирует, что при следующем обновлении previous будет равен текущему значению
 }
 
 let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
 
-/**
- * Фильтрует историю по выбранному периоду
- * @param {Array} history История баллов
- * @param {string} period Период ('all', '90', '30', '7', '1')
- * @returns {Array} Отфильтрованная история
- */
-function filterHistoryByPeriod(history, period) {
-    if (period === 'all') return history;
-    
-    const now = Date.now();
-    const days = parseInt(period);
-    const cutoffDate = new Date(now - days * 24 * 60 * 60 * 1000);
-    
-    return history.filter(entry => new Date(entry.timestamp) >= cutoffDate);
-}
-
-/**
- * Вычисляет статистику для графика
- * @param {Array} history История баллов
- * @param {string} mode Режим ('accumulated' или 'daily')
- * @returns {Object} Статистика
- */
-function calculateChartStats(history, mode) {
-    if (!history || history.length === 0) {
-        return {
-            total: 0,
-            average: 0,
-            max: 0,
-            trend: 'neutral'
-        };
-    }
-    
-    // Группируем по дням
-    const dailyPoints = new Map();
-    history.forEach(entry => {
-        const date = new Date(entry.timestamp);
-        const dayKey = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0];
-        
-        if (!dailyPoints.has(dayKey)) {
-            dailyPoints.set(dayKey, 0);
-        }
-        dailyPoints.set(dayKey, dailyPoints.get(dayKey) + entry.points);
-    });
-    
-    const dailyValues = Array.from(dailyPoints.values());
-    const total = dailyValues.reduce((sum, val) => sum + val, 0);
-    const average = dailyValues.length > 0 ? total / dailyValues.length : 0;
-    const max = dailyValues.length > 0 ? Math.max(...dailyValues) : 0;
-    
-    // Определяем тренд (сравниваем первую и вторую половину периода)
-    let trend = 'neutral';
-    if (dailyValues.length >= 4) {
-        const firstHalf = dailyValues.slice(0, Math.floor(dailyValues.length / 2));
-        const secondHalf = dailyValues.slice(Math.floor(dailyValues.length / 2));
-        const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
-        const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
-        
-        if (secondAvg > firstAvg * 1.1) trend = 'positive';
-        else if (secondAvg < firstAvg * 0.9) trend = 'negative';
-    }
-    
-    return { total, average, max, trend };
-}
-
-/**
- * Обновляет карточки статистики графика
- * @param {Object} stats Статистика
- */
-function updateChartStats(stats) {
-    const statsGrid = document.getElementById('chartStatsGrid');
-    if (!statsGrid) return;
-    
-    if (stats.total === 0) {
-        statsGrid.style.display = 'none';
-        return;
-    }
-    
-    statsGrid.style.display = 'grid';
-    
-    const trendIcon = stats.trend === 'positive' ? '↑' : stats.trend === 'negative' ? '↓' : '→';
-    const trendClass = stats.trend === 'positive' ? 'positive' : stats.trend === 'negative' ? 'negative' : 'neutral';
-    
-    statsGrid.innerHTML = `
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Total Points</div>
-            <div class="chart-stat-value">${Math.round(stats.total).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Average per Day</div>
-            <div class="chart-stat-value">${Math.round(stats.average).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Max per Day</div>
-            <div class="chart-stat-value">${Math.round(stats.max).toLocaleString()}</div>
-        </div>
-        <div class="chart-stat-card">
-            <div class="chart-stat-label">Trend</div>
-            <div class="chart-stat-value">${trendIcon}</div>
-            <div class="chart-stat-change ${trendClass}">
-                ${stats.trend === 'positive' ? 'Increasing' : stats.trend === 'negative' ? 'Decreasing' : 'Stable'}
-            </div>
-        </div>
-    `;
-}
-
-/**
- * Экспортирует график как изображение
- */
-function exportChart() {
-    if (!pointsChart) return;
-    
-    const canvas = document.getElementById('pointsChart');
-    if (!canvas) return;
-    
-    // Создаем ссылку для скачивания
-    const link = document.createElement('a');
-    link.download = `points-chart-${new Date().toISOString().split('T')[0]}.png`;
-    link.href = canvas.toDataURL('image/png');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-/**
- * Сбрасывает зум графика
- */
-function resetChartZoom() {
-    if (!pointsChart) return;
-    
-    if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
-        try {
-            pointsChart.resetZoom();
-            // Скрываем кнопку после сброса
-            const resetBtn = document.getElementById('resetZoomBtn');
-            if (resetBtn) {
-                resetBtn.style.display = 'none';
-            }
-        } catch (e) {
-            console.warn('Error resetting zoom:', e);
-        }
-    }
-}
-
+// Функции графика удалены - раздел Points History временно отключен
 async function updatePointsChart() {
-    const chartContainer = document.querySelector('.chart-container');
-    const isFirstLoad = !pointsChart;
-    
-    // Показываем skeleton только при первой загрузке
-    if (isFirstLoad && chartContainer) {
+    // Функция отключена - раздел Points History временно удален
+    return;
+}
+
+/**
+ * Обновляет индикатор устаревших данных
         const canvas = document.getElementById('pointsChart');
         if (canvas && canvas.parentElement) {
             canvas.parentElement.innerHTML = generateChartSkeleton();
@@ -1334,8 +1820,6 @@ function updateStaleDataIndicator(type, container) {
         
         indicator.addEventListener('click', () => {
             if (type === 'stats') updateStatistics();
-            else if (type === 'events') updateEvents(true);
-            else if (type === 'chart') updatePointsChart();
             else if (type === 'overall') updateOverallStats();
         });
         
@@ -1418,8 +1902,12 @@ const defaultSettings = {
     saveChartZoom: false,
     autoUpdateChart: true,
     showToastNotifications: true,
+    osNotifications: false,
     soundNotifications: false
 };
+
+/** @type {AudioContext | null} */
+let notificationAudioContext = null;
 
 /**
  * Загружает настройки из localStorage
@@ -1473,16 +1961,34 @@ function applySettings(settings) {
 function updateAvailableTags(events) {
     const newTags = new Set();
     events.forEach(event => {
-        if (event.type) {
+        if (event.type && event.type !== 'minute-watched') {
             newTags.add(event.type);
         }
     });
     
-    // Добавляем новые теги к доступным
-    newTags.forEach(tag => availableEventTags.add(tag));
+    // Обновляем доступные теги (заменяем, а не добавляем)
+    const oldAvailableTags = availableEventTags;
+    availableEventTags = newTags;
     
-    // Обновляем UI фильтров
-    updateFiltersUI();
+    // Очищаем выбранные теги, которых больше нет в доступных тегах
+    // Это предотвращает ситуацию, когда выбраны теги, которых нет в текущих событиях
+    const tagsToRemove = [];
+    selectedEventTags.forEach(tag => {
+        if (!availableEventTags.has(tag)) {
+            tagsToRemove.push(tag);
+        }
+    });
+    
+    if (tagsToRemove.length > 0) {
+        tagsToRemove.forEach(tag => selectedEventTags.delete(tag));
+        // Сохраняем обновленные теги в localStorage
+        safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+        // Обновляем UI фильтров
+        updateFiltersUI();
+    } else if (oldAvailableTags.size === 0 && newTags.size > 0) {
+        // При первой загрузке (когда старых тегов не было) обновляем UI
+        updateFiltersUI();
+    }
 }
 
 /**
@@ -1545,8 +2051,22 @@ function toggleEventTag(tag) {
     // Обновляем UI
     updateFiltersUI();
     
+    // Временно отключаем observer при фильтрации, чтобы избежать бесконечного обновления
+    if (window.eventsScrollObserver) {
+        window.eventsScrollObserver.disconnect();
+    }
+    
     // Перефильтровываем кэшированные события без нового запроса
-    renderFilteredEvents(cachedEvents);
+    // Используем allLoadedEvents вместо cachedEvents для консистентности
+    const eventsToFilter = allLoadedEvents.length > 0 ? allLoadedEvents : cachedEvents;
+    if (eventsToFilter.length > 0) {
+        renderFilteredEvents(eventsToFilter, false);
+    }
+    
+    // Восстанавливаем observer после небольшой задержки
+    setTimeout(() => {
+        setupInfiniteScroll();
+    }, 100);
 }
 
 /**
@@ -1556,10 +2076,359 @@ function toggleEventTag(tag) {
  */
 function isImportantEvent(event) {
     const importantTypes = [
-        'token-expired', 'token-invalid', 'stream-up', 'claim-success',
+        'token-expired', 'token-invalid', 'stream-up', 'stream-down', 'claim-success',
         'raid-joined', 'points-earned', 'claim-earned'
     ];
     return importantTypes.includes(event.type);
+}
+
+/**
+ * Экранирование HTML
+ */
+function escapeHtml(text) {
+    if (text == null) {
+        return '';
+    }
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+/**
+ * Включены ли уведомления для стримера (online/offline)
+ */
+function isStreamerNotifyEnabled(streamerName) {
+    if (!streamerName) {
+        return true;
+    }
+    const key = streamerName.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(streamerNotifyPrefs, key)) {
+        return streamerNotifyPrefs[key] !== false;
+    }
+    return true;
+}
+
+/**
+ * Сохраняет настройку уведомлений для стримера
+ */
+function setStreamerNotifyEnabled(streamerName, enabled) {
+    const key = streamerName.toLowerCase();
+    streamerNotifyPrefs[key] = enabled;
+    safeSetLocalStorage('streamerNotifyPrefs', JSON.stringify(streamerNotifyPrefs));
+}
+
+/**
+ * Проверяет, включены ли уведомления у всех указанных стримеров
+ */
+function areAllStreamerNotificationsEnabled(streamerNames) {
+    if (!streamerNames?.length) {
+        return true;
+    }
+    return streamerNames.every((name) => isStreamerNotifyEnabled(name));
+}
+
+/**
+ * Включает или выключает уведомления у всех стримеров (клик по заголовку колонки)
+ */
+function toggleAllStreamerNotifications() {
+    if (!lastAllStreamerNames.length) {
+        return;
+    }
+
+    const enableAll = !areAllStreamerNotificationsEnabled(lastAllStreamerNames);
+    lastAllStreamerNames.forEach((name) => setStreamerNotifyEnabled(name, enableAll));
+    updateStatistics();
+}
+
+/**
+ * Переключает уведомления для стримера (кнопка в таблице)
+ */
+function toggleStreamerNotify(buttonEl) {
+    const streamerName = buttonEl?.dataset?.streamer;
+    if (!streamerName) {
+        return;
+    }
+    const next = !isStreamerNotifyEnabled(streamerName);
+    setStreamerNotifyEnabled(streamerName, next);
+    updateStreamerNotifyButton(buttonEl, next);
+}
+
+/**
+ * Обновляет вид кнопки уведомлений в таблице
+ */
+function updateStreamerNotifyButton(buttonEl, enabled) {
+    if (!buttonEl) {
+        return;
+    }
+    buttonEl.classList.toggle('streamer-notify-off', !enabled);
+    buttonEl.classList.toggle('streamer-notify-on', enabled);
+    buttonEl.textContent = enabled ? '🔔' : '🔕';
+    buttonEl.title = enabled
+        ? 'Уведомления при старте/остановке стрима включены'
+        : 'Уведомления при старте/остановке стрима выключены';
+}
+
+/** Время последнего предупреждения о разрешении ОС (чтобы не дублировать toast) */
+let lastOsPermissionWarningAt = 0;
+
+/**
+ * Проверяет, доступны ли Web Notifications в текущем контексте страницы
+ * @returns {{ ok: boolean, reason?: string, message?: string }}
+ */
+function getOsNotificationAvailability() {
+    if (!('Notification' in window)) {
+        return {
+            ok: false,
+            reason: 'unsupported',
+            message: 'Браузер не поддерживает уведомления ОС',
+        };
+    }
+    if (!window.isSecureContext) {
+        const host = window.location.hostname;
+        const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+        if (!isLocalHost) {
+            return {
+                ok: false,
+                reason: 'insecure',
+                message: 'Уведомления ОС недоступны по HTTP с IP-адреса (например http://192.168.x.x). '
+                    + 'Включите WEB_SERVER_HTTPS=true в .env на сервере и откройте https://IP:3001, '
+                    + 'или используйте http://localhost:3001 через SSH-туннель.',
+            };
+        }
+    }
+    return { ok: true, permission: Notification.permission };
+}
+
+/**
+ * Показывает предупреждение о разрешении ОС без дублей подряд
+ */
+function showOsPermissionWarning(message) {
+    const now = Date.now();
+    if (now - lastOsPermissionWarningAt < 2500) {
+        return;
+    }
+    lastOsPermissionWarningAt = now;
+    showNotification('warning', message);
+}
+
+/**
+ * Запрашивает разрешение на уведомления ОС
+ * @returns {Promise<{ ok: boolean, message?: string }>}
+ */
+async function ensureOsNotificationPermission() {
+    const availability = getOsNotificationAvailability();
+    if (!availability.ok) {
+        return { ok: false, message: availability.message };
+    }
+
+    if (Notification.permission === 'granted') {
+        return { ok: true };
+    }
+
+    if (Notification.permission === 'denied') {
+        return {
+            ok: false,
+            message: 'Уведомления для этого сайта заблокированы. '
+                + 'Замок слева от адреса → Уведомления → «Разрешить», затем обновите страницу (F5).',
+        };
+    }
+
+    try {
+        const result = await Notification.requestPermission();
+        if (result === 'granted' || Notification.permission === 'granted') {
+            return { ok: true };
+        }
+    } catch (e) {
+        console.warn('Notification.requestPermission failed:', e);
+    }
+
+    if (Notification.permission === 'denied') {
+        return {
+            ok: false,
+            message: 'Уведомления заблокированы. Разрешите их в настройках сайта и обновите страницу (F5).',
+        };
+    }
+
+    return {
+        ok: false,
+        message: 'Разрешите уведомления во всплывающем запросе браузера или в настройках сайта (замок в адресной строке).',
+    };
+}
+
+/**
+ * Запрашивает разрешение на уведомления ОС (совместимость)
+ */
+async function requestOsNotificationPermission() {
+    const result = await ensureOsNotificationPermission();
+    return result.ok;
+}
+
+/**
+ * Воспроизводит короткий звук уведомления
+ */
+function playNotificationSound(isOnline) {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+            return;
+        }
+        if (!notificationAudioContext) {
+            notificationAudioContext = new AudioCtx();
+        }
+        const ctx = notificationAudioContext;
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = isOnline ? 880 : 440;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.2);
+    } catch (e) {
+        console.warn('Notification sound failed:', e);
+    }
+}
+
+/** Имя стримера для тестовых уведомлений */
+const NOTIFICATION_TEST_STREAMER = 'TestStreamer';
+
+/**
+ * Показывает toast для смены статуса стрима
+ */
+function showStreamToast(isOnline, streamerName) {
+    const settings = loadSettings();
+    if (!settings.showToastNotifications) {
+        return;
+    }
+    const type = isOnline ? 'stream-up' : 'stream-down';
+    const message = isOnline
+        ? `${streamerName} — начал стрим`
+        : `${streamerName} — завершил стрим`;
+    showNotification(type, message, 6000);
+}
+
+/**
+ * Параметры ОС-уведомления (уникальный tag — иначе Windows заменяет без нового toast)
+ */
+function buildOsNotificationOptions(streamerName, isOnline) {
+    const safeName = String(streamerName || 'unknown').toLowerCase();
+    return {
+        body: isOnline
+            ? `${streamerName} начал трансляцию`
+            : `${streamerName} завершил трансляцию`,
+        tag: `tw-${safeName}-${isOnline ? 'up' : 'down'}-${Date.now()}`,
+        renotify: true,
+        silent: false,
+    };
+}
+
+/**
+ * Показывает системное уведомление браузера
+ * @param {number} delayMs задержка (для пачки уведомлений под Windows)
+ */
+function showStreamOsNotification(isOnline, streamerName, delayMs = 0) {
+    const settings = loadSettings();
+    if (!settings.osNotifications || !('Notification' in window)) {
+        return;
+    }
+    if (Notification.permission !== 'granted') {
+        return;
+    }
+    const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
+    const options = buildOsNotificationOptions(streamerName, isOnline);
+
+    const fire = () => {
+        try {
+            new Notification(title, options);
+        } catch (e) {
+            console.warn('OS notification failed:', e);
+        }
+    };
+
+    if (delayMs > 0) {
+        setTimeout(fire, delayMs);
+    } else {
+        fire();
+    }
+}
+
+/**
+ * Обрабатывает уведомления о смене статуса стрима
+ * @param {Array<{streamer: string, type: string}>} items
+ */
+function processStreamStatusNotifications(items) {
+    if (!items || items.length === 0) {
+        return;
+    }
+    const settings = loadSettings();
+    const anyChannelEnabled = settings.showToastNotifications
+        || settings.osNotifications
+        || settings.soundNotifications;
+    if (!anyChannelEnabled) {
+        return;
+    }
+
+    items.forEach((item, index) => {
+        const streamerName = item.streamer || item.streamerName;
+        if (!streamerName || !isStreamerNotifyEnabled(streamerName)) {
+            return;
+        }
+        const isOnline = item.type === 'stream-up';
+        const osDelayMs = index * 400;
+        showStreamToast(isOnline, streamerName);
+        showStreamOsNotification(isOnline, streamerName, osDelayMs);
+        if (settings.soundNotifications) {
+            if (osDelayMs > 0) {
+                setTimeout(() => playNotificationSound(isOnline), osDelayMs);
+            } else {
+                playNotificationSound(isOnline);
+            }
+        }
+    });
+}
+
+/**
+ * Сравнивает статистику и возвращает смены ONLINE/OFFLINE
+ */
+function detectStreamerStatusChanges(stats) {
+    const changes = [];
+    if (!stats || !Array.isArray(stats)) {
+        return changes;
+    }
+
+    if (!streamStatusTrackingReady) {
+        stats.forEach((s) => {
+            if (s.streamerName) {
+                previousStreamerStatus[s.streamerName] = s.status;
+            }
+        });
+        streamStatusTrackingReady = true;
+        return changes;
+    }
+
+    stats.forEach((s) => {
+        const name = s.streamerName;
+        if (!name) {
+            return;
+        }
+        const prev = previousStreamerStatus[name];
+        const current = s.status;
+        if (prev && prev !== current) {
+            if (current === 'ONLINE') {
+                changes.push({ streamer: name, type: 'stream-up' });
+            } else if (current === 'OFFLINE') {
+                changes.push({ streamer: name, type: 'stream-down' });
+            }
+        }
+        previousStreamerStatus[name] = current;
+    });
+
+    return changes;
 }
 
 /**
@@ -1614,9 +2483,15 @@ function formatGroupTime(timestamp) {
 /**
  * Отображает отфильтрованные события с группировкой
  * @param events Массив событий для отображения
+ * @param shouldSetupScroll Нужно ли настраивать бесконечную прокрутку (по умолчанию true)
  */
-function renderFilteredEvents(events) {
+function renderFilteredEvents(events, shouldSetupScroll = true) {
     const list = document.getElementById('eventsList');
+    if (!list) {
+        console.error('eventsList element not found');
+        return;
+    }
+    
     const hasContent = list && (list.querySelector('.event-group') || list.querySelector('table'));
     const hasSkeleton = list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'));
     
@@ -1635,14 +2510,51 @@ function renderFilteredEvents(events) {
         return;
     }
 
+    // Удаляем дубликаты перед фильтрацией
+    const uniqueEventsMap = new Map();
+    events.forEach(event => {
+        const key = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
+        if (!uniqueEventsMap.has(key)) {
+            uniqueEventsMap.set(key, event);
+        }
+    });
+    const uniqueEvents = Array.from(uniqueEventsMap.values());
+
     // Фильтруем события по выбранным тегам и исключаем технические события
-    let filteredEvents = events.filter(event => event.type !== 'minute-watched');
+    let filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
+    const eventsBeforeFilter = filteredEvents.length;
+    
+    // Если выбраны теги, фильтруем по ним
     if (selectedEventTags.size > 0) {
         filteredEvents = filteredEvents.filter(event => selectedEventTags.has(event.type));
+        
+        // Если после фильтрации событий не осталось, но были события до фильтрации,
+        // это означает, что выбранные теги не соответствуют ни одному событию
+        // В этом случае очищаем selectedEventTags и показываем все события
+        if (filteredEvents.length === 0 && eventsBeforeFilter > 0) {
+            // Очищаем selectedEventTags, так как выбранные теги не соответствуют событиям
+            selectedEventTags.clear();
+            safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
+            // Обновляем UI фильтров
+            updateFiltersUI();
+            // Показываем все события (без фильтра)
+            filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
+        }
     }
 
     if (filteredEvents.length === 0) {
-        list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
+        if (uniqueEvents.length === 0) {
+            // Событий вообще нет
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        } else if (selectedEventTags.size > 0) {
+            // Есть события, но они не соответствуют выбранным фильтрам
+            // Это не должно происходить, так как мы уже очистили фильтры выше,
+            // но на всякий случай показываем сообщение
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
+        } else {
+            // События есть, но после фильтрации их не осталось (не должно происходить)
+            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
+        }
         return;
     }
 
@@ -1650,7 +2562,11 @@ function renderFilteredEvents(events) {
     filteredEvents.sort((a, b) => b.timestamp - a.timestamp);
 
     // Определяем новые события (из отфильтрованных)
-    const newEvents = filteredEvents.filter(e => e.timestamp > lastEventTimestamp);
+    // Используем timestamp только если он был установлен (не 0)
+    // При фильтрации не помечаем события как новые, чтобы избежать дублирования
+    const newEvents = lastEventTimestamp > 0 && !list.querySelector('.event-group')
+        ? filteredEvents.filter(e => e.timestamp > lastEventTimestamp)
+        : [];
     
     // Автопрокрутка к новым событиям, если включена в настройках
     const settings = loadSettings();
@@ -1693,13 +2609,21 @@ function renderFilteredEvents(events) {
                             styleAttr = `style="background: ${bgColor}; color: ${textColor};"`;
                         }
                         
-                        const isNew = newEvents.some(ne => ne.timestamp === event.timestamp && ne.streamer === event.streamer);
+                        // Проверяем, является ли событие новым (только при первой загрузке, не при фильтрации)
+                        const isNew = newEvents.length > 0 && newEvents.some(ne => 
+                            ne.timestamp === event.timestamp && 
+                            ne.streamer === event.streamer && 
+                            ne.type === event.type &&
+                            ne.message === event.message
+                        );
                         const isImportant = isImportantEvent(event);
                         const importantClass = isImportant ? 'event-item-important' : '';
                         
                         const eventIcon = getEventIcon(event.type);
+                        // Используем уникальный ключ для предотвращения дублирования в DOM
+                        const eventKey = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
                         return `
-                            <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}">
+                            <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}" data-event-key="${eventKey}">
                                 <span class="event-time">${formatTimestamp(event.timestamp)}</span>
                                 <span class="event-icon">${eventIcon}</span>
                                 <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
@@ -1714,26 +2638,73 @@ function renderFilteredEvents(events) {
 
     // Если был skeleton, заменяем плавно
     if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
-        // Добавляем триггер для бесконечной прокрутки перед заменой
-        if (hasMoreEvents && !isLoadingEvents) {
+        // Добавляем триггер для бесконечной прокрутки перед заменой только если нужно
+        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
             html += '<div id="loadMoreTrigger" style="height: 20px; width: 100%;"></div>';
         } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
             html += '<div style="text-align: center; padding: 20px; color: #adadb8; font-size: 14px;">All events loaded</div>';
         }
         replaceSkeletonWithContent(list, html);
         
-        // Устанавливаем observer после замены
-        setTimeout(() => {
-            const loadMoreTrigger = document.getElementById('loadMoreTrigger');
-            if (loadMoreTrigger && window.eventsScrollObserver) {
-                window.eventsScrollObserver.observe(loadMoreTrigger);
-            }
-        }, 500);
+        // Устанавливаем observer после замены только если нужно
+        if (shouldSetupScroll) {
+            setTimeout(() => {
+                const loadMoreTrigger = document.getElementById('loadMoreTrigger');
+                if (loadMoreTrigger && window.eventsScrollObserver) {
+                    window.eventsScrollObserver.observe(loadMoreTrigger);
+                }
+            }, 500);
+        }
     } else {
-        list.innerHTML = html;
+        // Сохраняем состояние свернутых групп перед заменой содержимого
+        const collapsedGroups = new Set();
+        list.querySelectorAll('.event-group-content').forEach(content => {
+            if (content.style.display === 'none') {
+                const groupId = content.id.replace('content-', '');
+                collapsedGroups.add(groupId);
+            }
+        });
         
-        // Добавляем триггер для бесконечной прокрутки в конец списка
-        if (hasMoreEvents && !isLoadingEvents) {
+        // Перед заменой содержимого удаляем старые элементы, чтобы избежать дублирования
+        // Используем data-event-key для проверки уникальности
+        const existingEventKeys = new Set();
+        list.querySelectorAll('[data-event-key]').forEach(el => {
+            const key = el.getAttribute('data-event-key');
+            if (key) {
+                existingEventKeys.add(key);
+            }
+        });
+        
+        // Создаем временный контейнер для нового HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        // Удаляем дубликаты из нового HTML
+        const newEventElements = tempDiv.querySelectorAll('[data-event-key]');
+        newEventElements.forEach(el => {
+            const key = el.getAttribute('data-event-key');
+            if (key && existingEventKeys.has(key)) {
+                el.remove();
+            } else if (key) {
+                existingEventKeys.add(key);
+            }
+        });
+        
+        // Заменяем содержимое
+        list.innerHTML = tempDiv.innerHTML;
+        
+        // Восстанавливаем состояние свернутых групп
+        collapsedGroups.forEach(groupId => {
+            const content = document.getElementById(`content-${groupId}`);
+            const toggle = document.getElementById(`toggle-${groupId}`);
+            if (content && toggle) {
+                content.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        });
+        
+        // Добавляем триггер для бесконечной прокрутки в конец списка только если нужно
+        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
             const loadMoreTrigger = document.createElement('div');
             loadMoreTrigger.id = 'loadMoreTrigger';
             loadMoreTrigger.style.height = '20px';
@@ -1785,6 +2756,7 @@ async function updateEvents(reset = false, loadMore = false) {
         eventsOffset = 0;
         allLoadedEvents = [];
         hasMoreEvents = true;
+        lastEventTimestamp = 0; // Сбрасываем timestamp при полном сбросе
     }
     
     if (isLoadingEvents) return;
@@ -1816,10 +2788,41 @@ async function updateEvents(reset = false, loadMore = false) {
         const fetchedEvents = response.events;
         
         if (reset) {
-            // При сбросе просто заменяем все события
+            // При сбросе загружаем все события постепенно
+            // Сначала загружаем первую порцию
             allLoadedEvents = fetchedEvents;
             eventsOffset = fetchedEvents.length;
             hasMoreEvents = response.hasMore;
+            
+            // Если есть еще события, загружаем их сразу (до разумного лимита, например 200)
+            if (hasMoreEvents && fetchedEvents.length < 200) {
+                // Загружаем еще события, чтобы показать события от всех стримеров
+                let continueLoading = true;
+                while (continueLoading && eventsOffset < 200 && hasMoreEvents) {
+                    const nextResponse = await fetchData(`/events?limit=${eventsPageSize}&offset=${eventsOffset}`);
+                    if (nextResponse && nextResponse.events && nextResponse.events.length > 0) {
+                        // Используем Map для предотвращения дубликатов
+                        const existingEventsMap = new Map();
+                        allLoadedEvents.forEach(e => {
+                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                            existingEventsMap.set(key, e);
+                        });
+                        
+                        // Добавляем только уникальные события
+                        const uniqueNewEvents = nextResponse.events.filter(e => {
+                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                            return !existingEventsMap.has(key);
+                        });
+                        
+                        allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
+                        eventsOffset += uniqueNewEvents.length;
+                        hasMoreEvents = nextResponse.hasMore;
+                    } else {
+                        continueLoading = false;
+                        hasMoreEvents = false;
+                    }
+                }
+            }
         } else if (isCheckingNew) {
             // При проверке новых событий объединяем их с уже загруженными
             // Создаем Map для быстрого поиска дубликатов
@@ -1834,6 +2837,15 @@ async function updateEvents(reset = false, loadMore = false) {
                 const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
                 return !existingEventsMap.has(key);
             });
+
+            const streamEvents = trulyNewEvents.filter(
+                (e) => e.type === 'stream-up' || e.type === 'stream-down'
+            );
+            if (streamEvents.length > 0) {
+                processStreamStatusNotifications(
+                    streamEvents.map((e) => ({ streamer: e.streamer, type: e.type }))
+                );
+            }
             
             // Объединяем: новые события в начале, затем уже загруженные
             allLoadedEvents = [...trulyNewEvents, ...allLoadedEvents];
@@ -1843,8 +2855,20 @@ async function updateEvents(reset = false, loadMore = false) {
             // eventsOffset не меняется при проверке новых событий
         } else {
             // При прокрутке вниз добавляем старые события в конец
-            allLoadedEvents = [...allLoadedEvents, ...fetchedEvents];
-            eventsOffset += fetchedEvents.length;
+            // Проверяем на дубликаты перед добавлением
+            const existingEventsMap = new Map();
+            allLoadedEvents.forEach(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                existingEventsMap.set(key, e);
+            });
+            
+            const uniqueNewEvents = fetchedEvents.filter(e => {
+                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
+                return !existingEventsMap.has(key);
+            });
+            
+            allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
+            eventsOffset += uniqueNewEvents.length;
             hasMoreEvents = response.hasMore;
         }
 
@@ -1889,6 +2913,16 @@ function setupInfiniteScroll() {
         window.eventsScrollObserver.disconnect();
     }
     
+    // Если больше нет событий для загрузки, не создаем триггер
+    if (!hasMoreEvents || isLoadingEvents) {
+        // Удаляем существующий триггер, если есть
+        const existingTrigger = document.getElementById('loadMoreTrigger');
+        if (existingTrigger) {
+            existingTrigger.remove();
+        }
+        return;
+    }
+    
     // Создаем элемент-триггер для загрузки
     let loadMoreTrigger = document.getElementById('loadMoreTrigger');
     if (!loadMoreTrigger) {
@@ -1899,20 +2933,41 @@ function setupInfiniteScroll() {
         eventsList.appendChild(loadMoreTrigger);
     }
     
-    // Создаем Intersection Observer
-    window.eventsScrollObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
-                updateEvents(false, true); // loadMore=true для загрузки старых событий
-            }
+    // Проверяем, виден ли триггер сразу после создания
+    // Если да, то добавляем небольшую задержку перед наблюдением, чтобы избежать немедленной загрузки
+    setTimeout(() => {
+        // Проверяем еще раз, что триггер существует и условия все еще выполняются
+        const trigger = document.getElementById('loadMoreTrigger');
+        if (!trigger || !hasMoreEvents || isLoadingEvents) {
+            return;
+        }
+        
+        // Проверяем, виден ли триггер в viewport
+        const rect = trigger.getBoundingClientRect();
+        const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+        
+        // Если триггер виден сразу, это означает, что контента мало и прокрутка не нужна
+        // В этом случае не наблюдаем за триггером, чтобы избежать бесконечной загрузки
+        if (isVisible && eventsList.scrollHeight <= eventsList.clientHeight) {
+            // Контент помещается на экране, не нужно наблюдать за триггером
+            return;
+        }
+        
+        // Создаем Intersection Observer только если триггер не виден сразу
+        window.eventsScrollObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
+                    updateEvents(false, true); // loadMore=true для загрузки старых событий
+                }
+            });
+        }, {
+            root: eventsList, // Используем eventsList как root для правильного определения видимости
+            rootMargin: '100px',
+            threshold: 0.1
         });
-    }, {
-        root: null,
-        rootMargin: '100px',
-        threshold: 0.1
-    });
-    
-    window.eventsScrollObserver.observe(loadMoreTrigger);
+        
+        window.eventsScrollObserver.observe(trigger);
+    }, 100); // Небольшая задержка для проверки видимости
 }
 
 async function updateTokenInfo() {
@@ -2017,7 +3072,7 @@ async function updateDatabaseInfo() {
     } else if (dbStatus.available) {
         statusText = 'Unavailable';
         statusColor = '#f59e0b';
-        reasonText = dbStatus.reason || 'Database not ready';
+        reasonText = dbStatus.reason || dbStatus.error || 'Database not ready';
     } else {
         statusText = 'Not Initialized';
         statusColor = '#adadb8';
@@ -2043,7 +3098,7 @@ async function updateDatabaseInfo() {
         <div style="background: #1a1a1f; padding: 15px; border-radius: 6px; border: 1px solid #26262c; grid-column: 1 / -1;">
             <div style="color: #adadb8; font-size: 12px; margin-bottom: 8px;">ℹ️ Note</div>
             <div style="color: #adadb8; font-size: 13px; line-height: 1.5;">
-                Database features are optional. The application will continue to work using file-based storage (StatisticsStorage) if the database is not available. This is normal on platforms where better-sqlite3 cannot be compiled (e.g., Android without Python and build tools).
+                Database features are optional. The application will continue to work using file-based storage (StatisticsStorage) if the database is not available. The application uses sql.js (WebAssembly-based SQLite) which works on all platforms including Android without requiring compilation.
             </div>
         </div>
         ` : ''}
@@ -2076,8 +3131,6 @@ async function updateAll() {
         await Promise.all([
             updateOverallStats(),
             updateStatistics(),
-            updateEvents(false), // Не сбрасываем события при автообновлении, только добавляем новые
-            updatePointsChart(),
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()
@@ -2132,32 +3185,107 @@ async function dismissNotification(id) {
 }
 
 function setUpdateInterval(seconds) {
-    updateIntervalMs = seconds * 1000;
-    
-    // Сохраняем интервал в localStorage
-    safeSetLocalStorage('updateIntervalMs', updateIntervalMs.toString());
-    
-    // Обновляем активную кнопку
-    document.querySelectorAll('.interval-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (parseInt(btn.dataset.interval) === seconds) {
-            btn.classList.add('active');
-        }
-    });
-    
-    // Перезапускаем автообновление с новым интервалом
+    // Останавливаем текущее обновление
     if (updateInterval) {
         clearInterval(updateInterval);
+        updateInterval = null;
     }
-    updateInterval = setInterval(updateAll, updateIntervalMs);
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    
+    if (seconds === 'event') {
+        // Режим обновления по событию
+        updateMode = 'event';
+        safeSetLocalStorage('updateMode', 'event');
+        
+        // Обновляем активную кнопку
+        document.querySelectorAll('.interval-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.interval === 'event') {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Запускаем проверку событий
+        startEventBasedUpdate();
+    } else {
+        // Режим периодического обновления
+        updateMode = 'interval';
+        updateIntervalMs = seconds * 1000;
+        safeSetLocalStorage('updateMode', 'interval');
+        safeSetLocalStorage('updateIntervalMs', updateIntervalMs.toString());
+        
+        // Обновляем активную кнопку
+        document.querySelectorAll('.interval-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (parseInt(btn.dataset.interval) === seconds) {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Перезапускаем автообновление с новым интервалом
+        updateInterval = setInterval(updateAll, updateIntervalMs);
+    }
+}
+
+async function startEventBasedUpdate() {
+    // Загружаем начальные данные
+    await updateAll();
+    
+    // Инициализируем timestamp последнего события
+    try {
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response && response.events && response.events.length > 0) {
+            lastEventCheckTimestamp = response.events[0].timestamp;
+        }
+    } catch (error) {
+        // Игнорируем ошибки
+    }
+    
+    // Начинаем проверку новых событий
+    checkForNewEvents();
+}
+
+async function checkForNewEvents() {
+    if (updateMode !== 'event') return;
+    
+    try {
+        // Проверяем новые события с момента последней проверки
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response && response.events && response.events.length > 0) {
+            const latestEvent = response.events[0];
+            
+            // Если есть новое событие (с timestamp больше последнего проверенного)
+            if (latestEvent.timestamp > lastEventCheckTimestamp) {
+                lastEventCheckTimestamp = latestEvent.timestamp;
+                // Обновляем все данные при получении нового события
+                await updateAll();
+            }
+        }
+    } catch (error) {
+        // Игнорируем ошибки, продолжаем проверку
+    }
+    
+    // Проверяем снова через небольшую задержку (polling)
+    if (updateMode === 'event') {
+        setTimeout(checkForNewEvents, 2000); // Проверяем каждые 2 секунды
+    }
 }
 
 function startAutoUpdate() {
     updateAll();
-    updateInterval = setInterval(updateAll, updateIntervalMs);
     
     // Проверка подключения при старте
     updateConnectionStatus(false);
+    
+    // Запускаем обновление в зависимости от режима
+    if (updateMode === 'event') {
+        startEventBasedUpdate();
+    } else {
+        updateInterval = setInterval(updateAll, updateIntervalMs);
+    }
 }
 
 function toggleOfflineStreamers() {
@@ -2249,6 +3377,28 @@ function closeColumnSettings() {
     dropdown.classList.remove('show');
 }
 
+/**
+ * Инициализация раздела событий (больше не требуется вычисление высоты)
+ */
+function setupStickyEventsSection() {
+    // Функция больше не нужна, так как используется CSS Grid
+    // Оставляем пустую функцию для совместимости
+}
+
+/** Запуск опроса API и автообновления (не ждём Chart.js CDN и window.load) */
+let dashboardCoreStarted = false;
+
+function startDashboardCore() {
+    if (dashboardCoreStarted) {
+        return;
+    }
+    dashboardCoreStarted = true;
+    checkInitializationStatus();
+    startAutoUpdate();
+}
+
+document.addEventListener('DOMContentLoaded', startDashboardCore);
+
 window.addEventListener('load', () => {
     // Применяем настройки при загрузке (только если DOM готов)
     try {
@@ -2291,21 +3441,47 @@ window.addEventListener('load', () => {
     }
     
     // Восстанавливаем активную кнопку интервала обновления
-    const savedIntervalSeconds = updateIntervalMs / 1000;
     document.querySelectorAll('.interval-btn').forEach(btn => {
         btn.classList.remove('active');
-        if (parseInt(btn.dataset.interval) === savedIntervalSeconds) {
+        if (updateMode === 'event' && btn.dataset.interval === 'event') {
             btn.classList.add('active');
+        } else if (updateMode === 'interval') {
+            const savedIntervalSeconds = updateIntervalMs / 1000;
+            if (parseInt(btn.dataset.interval) === savedIntervalSeconds) {
+                btn.classList.add('active');
+            }
         }
     });
     
+    // Восстанавливаем состояние переключателя цветовой кодировки
+    const colorizeToggle = document.getElementById('colorizeStreamerNamesToggle');
+    if (colorizeToggle) {
+        colorizeToggle.checked = colorizeStreamerNames;
+        colorizeToggle.addEventListener('change', (e) => {
+            colorizeStreamerNames = e.target.checked;
+            safeSetLocalStorage('colorizeStreamerNames', colorizeStreamerNames.toString());
+            updateStatistics(); // Обновляем таблицу для применения цветов
+        });
+    }
+    
     // Обработчик для кнопки настроек
+    const testBtn = document.getElementById('testBtn');
+    if (testBtn) {
+        testBtn.addEventListener('click', showTestModal);
+    }
+
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', showSettingsModal);
     }
     
-    startAutoUpdate();
+    // Раздел событий удален
+    
+    // Добавляем обработчик для кнопки заполнения тестовыми данными
+    const fillTestDataBtn = document.getElementById('fillTestDataBtn');
+    if (fillTestDataBtn) {
+        fillTestDataBtn.addEventListener('click', fillTestData);
+    }
     
     // Добавляем обработчик для кнопки пометки токена как невалидного
     const markTokenInvalidBtn = document.getElementById('markTokenInvalidBtn');
@@ -2322,8 +3498,12 @@ window.addEventListener('load', () => {
     // Добавляем обработчики для кнопок интервала обновления
     document.querySelectorAll('.interval-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            const interval = parseInt(btn.dataset.interval);
-            setUpdateInterval(interval);
+            const interval = btn.dataset.interval;
+            if (interval === 'event') {
+                setUpdateInterval('event');
+            } else {
+                setUpdateInterval(parseInt(interval));
+            }
         });
     });
     
@@ -2361,7 +3541,7 @@ window.addEventListener('load', () => {
     
     // Закрываем меню при клике вне его
     document.addEventListener('click', (e) => {
-        if (exportDropdown && !exportDropdown.contains(e.target) && !exportBtn.contains(e.target)) {
+        if (exportDropdown && !exportDropdown.contains(e.target) && exportBtn && !exportBtn.contains(e.target)) {
             closeExportDropdown();
         }
         
@@ -2392,8 +3572,7 @@ window.addEventListener('load', () => {
         });
     }
     
-    // Инициализируем загрузку событий с пагинацией
-    updateEvents(true);
+    // Инициализация событий отключена
     
     // Обработчики для управления графиком
     // Переключатель режима отображения
@@ -2444,6 +3623,53 @@ window.addEventListener('load', () => {
         exportChartBtn.addEventListener('click', exportChart);
     }
 });
+
+/**
+ * Заполняет приложение тестовыми данными
+ */
+async function fillTestData() {
+    const btn = document.getElementById('fillTestDataBtn');
+    if (!btn) return;
+    
+    // Подтверждение действия
+    if (!confirm('Вы уверены, что хотите заполнить приложение тестовыми данными?\n\nЭто действие создаст:\n- Около 1000 тестовых событий различных типов\n- Несколько тестовых стримеров\n\nЭто действие предназначено только для тестирования.')) {
+        return;
+    }
+    
+    // Отключаем кнопку на время запроса
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Generating...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/test/fill-data`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', `Test data generated successfully!\n- ${result.eventsCount || 0} events created\n- ${result.streamersCount || 0} streamers added`);
+            // Обновляем все данные
+            await Promise.all([
+                updateStatistics(),
+                updateOverallStats()
+            ]);
+        } else {
+            showNotification('error', result.message || 'Failed to generate test data');
+        }
+    } catch (error) {
+        console.error('Error filling test data:', error);
+        showNotification('error', 'Failed to generate test data');
+    } finally {
+        // Восстанавливаем кнопку
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
 
 /**
  * Помечает токен как невалидный (для тестирования перезапуска контейнера)
@@ -2601,6 +3827,99 @@ function closeConfirmModal() {
 }
 
 /**
+ * Привязывает закрытие модального окна по клику на overlay (один раз)
+ */
+function bindModalOverlayClose(modal, closeFn) {
+    if (!modal || modal.dataset.overlayCloseBound === '1') {
+        return;
+    }
+    modal.dataset.overlayCloseBound = '1';
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeFn();
+        }
+    });
+}
+
+/**
+ * Показывает панель тестирования
+ */
+function showTestModal() {
+    const modal = document.getElementById('testModal');
+    if (!modal) {
+        return;
+    }
+    modal.style.display = 'flex';
+    bindModalOverlayClose(modal, closeTestModal);
+
+    const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeTestModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+}
+
+/**
+ * Закрывает панель тестирования
+ */
+function closeTestModal() {
+    const modal = document.getElementById('testModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * Тест toast-уведомления (без проверки настроек)
+ */
+function testToastNotification(isOnline) {
+    const type = isOnline ? 'stream-up' : 'stream-down';
+    const message = isOnline
+        ? `${NOTIFICATION_TEST_STREAMER} — начал стрим`
+        : `${NOTIFICATION_TEST_STREAMER} — завершил стрим`;
+    showNotification(type, message, 6000);
+}
+
+/**
+ * Тест уведомления ОС (без проверки настроек)
+ */
+async function testOsNotification(isOnline) {
+    const permission = await ensureOsNotificationPermission();
+    if (!permission.ok) {
+        showOsPermissionWarning(permission.message || 'Не удалось получить разрешение на уведомления');
+        return;
+    }
+
+    const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
+    const body = isOnline
+        ? `${NOTIFICATION_TEST_STREAMER} начал трансляцию`
+        : `${NOTIFICATION_TEST_STREAMER} завершил трансляцию`;
+    try {
+        const notification = new Notification(title, buildOsNotificationOptions(NOTIFICATION_TEST_STREAMER, isOnline));
+        if (!notification) {
+            throw new Error('Notification constructor returned empty');
+        }
+    } catch (e) {
+        console.warn('Test OS notification failed:', e);
+        const availability = getOsNotificationAvailability();
+        if (!availability.ok && availability.message) {
+            showOsPermissionWarning(availability.message);
+        } else {
+            showNotification('error', 'Не удалось показать уведомление ОС. Обновите страницу и проверьте настройки сайта.');
+        }
+    }
+}
+
+/**
+ * Тест звукового уведомления (без проверки настроек)
+ */
+function testSoundNotification(isOnline) {
+    playNotificationSound(isOnline);
+}
+
+/**
  * Показывает панель настроек
  */
 function showSettingsModal() {
@@ -2617,17 +3936,32 @@ function showSettingsModal() {
     document.getElementById('saveChartZoomSetting').checked = settings.saveChartZoom;
     document.getElementById('autoUpdateChartSetting').checked = settings.autoUpdateChart;
     document.getElementById('showToastNotificationsSetting').checked = settings.showToastNotifications;
+    document.getElementById('osNotificationsSetting').checked = settings.osNotifications;
     document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
+
+    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
+    if (apiKeyInput) {
+        apiKeyInput.value = getDashboardApiKey();
+    }
+
+    const osHint = document.getElementById('osNotificationsHint');
+    if (osHint) {
+        const availability = getOsNotificationAvailability();
+        const denied = availability.ok && Notification.permission === 'denied';
+        const showHint = !availability.ok || denied;
+        osHint.style.display = showHint ? 'block' : 'none';
+        if (!availability.ok) {
+            osHint.textContent = availability.message || '';
+        } else if (denied) {
+            osHint.textContent = 'Уведомления ОС заблокированы. Разрешите в настройках сайта (замок в адресной строке) и обновите страницу.';
+        } else {
+            osHint.textContent = 'Разрешите уведомления в браузере при сохранении настроек.';
+        }
+    }
     
     modal.style.display = 'flex';
-    
-    // Закрытие по клику на overlay
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            closeSettingsModal();
-        }
-    });
-    
+    bindModalOverlayClose(modal, closeSettingsModal);
+
     // Закрытие по Escape
     const escapeHandler = (e) => {
         if (e.key === 'Escape') {
@@ -2651,7 +3985,7 @@ function closeSettingsModal() {
 /**
  * Сохраняет настройки
  */
-function saveSettings() {
+async function saveSettings() {
     const settings = {
         fontSize: document.getElementById('fontSizeSetting').value,
         density: document.getElementById('densitySetting').value,
@@ -2660,8 +3994,23 @@ function saveSettings() {
         saveChartZoom: document.getElementById('saveChartZoomSetting').checked,
         autoUpdateChart: document.getElementById('autoUpdateChartSetting').checked,
         showToastNotifications: document.getElementById('showToastNotificationsSetting').checked,
+        osNotifications: document.getElementById('osNotificationsSetting').checked,
         soundNotifications: document.getElementById('soundNotificationsSetting').checked
     };
+
+    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
+    if (apiKeyInput) {
+        setDashboardApiKey(apiKeyInput.value.trim());
+    }
+
+    if (settings.osNotifications) {
+        const permission = await ensureOsNotificationPermission();
+        if (!permission.ok) {
+            settings.osNotifications = false;
+            document.getElementById('osNotificationsSetting').checked = false;
+            showOsPermissionWarning(permission.message || 'Разрешение на уведомления ОС не получено');
+        }
+    }
     
     saveSettingsToStorage(settings);
     applySettings(settings);
@@ -2726,6 +4075,7 @@ function handleSettingsImport(event) {
             document.getElementById('saveChartZoomSetting').checked = validSettings.saveChartZoom;
             document.getElementById('autoUpdateChartSetting').checked = validSettings.autoUpdateChart;
             document.getElementById('showToastNotificationsSetting').checked = validSettings.showToastNotifications;
+            document.getElementById('osNotificationsSetting').checked = validSettings.osNotifications;
             document.getElementById('soundNotificationsSetting').checked = validSettings.soundNotifications;
             
             showNotification('success', 'Настройки импортированы');
@@ -2779,7 +4129,9 @@ const notificationIcons = {
     success: '✅',
     error: '❌',
     info: 'ℹ️',
-    warning: '⚠️'
+    warning: '⚠️',
+    'stream-up': '📺',
+    'stream-down': '📴'
 };
 
 /**
@@ -2882,10 +4234,11 @@ function showNotification(type, message, duration = 5000) {
     notification.className = `toast-notification ${type}`;
     
     const icon = notificationIcons[type] || notificationIcons.info;
+    const safeMessage = escapeHtml(message).replace(/\n/g, '<br>');
     
     notification.innerHTML = `
         <span class="toast-icon">${icon}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message">${safeMessage}</span>
         <button class="toast-close" onclick="this.parentElement.remove()" title="Закрыть">×</button>
     `;
     
@@ -2938,7 +4291,14 @@ window.closeSettingsModal = closeSettingsModal;
 window.exportSettings = exportSettings;
 window.importSettings = importSettings;
 window.saveSettings = saveSettings;
+window.toggleStreamerNotify = toggleStreamerNotify;
+window.toggleAllStreamerNotifications = toggleAllStreamerNotifications;
 window.showSettingsModal = showSettingsModal;
+window.showTestModal = showTestModal;
+window.closeTestModal = closeTestModal;
+window.testToastNotification = testToastNotification;
+window.testOsNotification = testOsNotification;
+window.testSoundNotification = testSoundNotification;
 window.handleSettingsImport = handleSettingsImport;
 
 /**
@@ -3076,6 +4436,9 @@ window.toggleCard = toggleCard;
 window.addEventListener('beforeunload', () => {
     if (updateInterval) {
         clearInterval(updateInterval);
+    }
+    if (eventSource) {
+        eventSource.close();
     }
 });
 

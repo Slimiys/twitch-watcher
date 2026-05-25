@@ -1,12 +1,18 @@
-import * as dotenv from 'dotenv';
+import { setupNetwork } from './setupNetwork';
 
-// Загружаем переменные окружения явно
-dotenv.config();
+setupNetwork();
+
+import { registerProcessGuards } from './processGuards';
+
+registerProcessGuards();
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { askLogin } from './input';
 import { CookieData, LoginInput, AppConfig } from './types';
+import { getAppVersionLabel } from './appVersion';
 import { logger } from './modes/api/logger';
+import { writeCrashReport } from './processGuards';
 
 // ========================================== CONFIG SECTION =================================================================
 const configPath = './config.json';
@@ -117,7 +123,17 @@ async function readLoginData(): Promise<CookieData[]> {
  * Корректное завершение работы приложения
  */
 async function shutDown(): Promise<void> {
-  console.log("\n👋Bye Bye👋");
+  writeCrashReport('gracefulShutdown', { signal: 'SIGINT/SIGTERM' });
+  console.log('\n👋Bye Bye👋');
+  const watcher = (global as any).watcher as { stop?: () => void } | undefined;
+  if (watcher?.stop) {
+    try {
+      watcher.stop();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`⚠️  Error during watcher shutdown: ${message}`);
+    }
+  }
   process.exit(0);
 }
 
@@ -138,7 +154,7 @@ async function startAPIMode(): Promise<void> {
     // Запускаем веб-сервер даже без токена, чтобы показать ошибку в интерфейсе
     const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
     const webServer = new WebServer(webPort);
-    webServer.start();
+    await webServer.startUntilSuccess();
     console.log(`✅  Web server started on port ${webPort} (watcher disabled - no token)`);
     
     // Не выходим из процесса, чтобы веб-сервер продолжал работать
@@ -153,7 +169,6 @@ async function startAPIMode(): Promise<void> {
   
   try {
     await watcher.start();
-    watcher.startStatusCheck();
   } catch (error: any) {
     console.error('❌ Error starting API mode:', error.message || error);
     // Не выходим из процесса, чтобы веб-сервер продолжал работать
@@ -165,9 +180,13 @@ async function startAPIMode(): Promise<void> {
  * Главная функция приложения
  */
 async function main(): Promise<void> {
+  const versionLabel = getAppVersionLabel();
   console.clear();
-  console.log("=========================");
-  
+  console.log('=========================');
+  console.log(`📦  Version: ${versionLabel}`);
+  logger.info(`📦  Version: ${versionLabel}`);
+  console.log('=========================');
+
   // Информируем о количестве загруженных стримеров
   if (channelsWithPriority.length > 0) {
     console.log(`✅  Streamers configured: ${channelsWithPriority.join(', ')}`);
@@ -177,6 +196,7 @@ async function main(): Promise<void> {
   console.log("=========================");
   
   logger.verbose(`🔍  Environment check:`);
+  logger.verbose(`   VERSION: ${versionLabel}`);
   logger.verbose(`   MODE: API (only mode available)`);
   const logLevel = (process.env.LOG_LEVEL || 'verbose').toLowerCase();
   logger.verbose(`   LOG_LEVEL: "${logLevel}"`);
@@ -188,8 +208,19 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+
+  writeCrashReport('startupFatal', {
+    errorMessage: message,
+    stack,
+  });
+
+  console.error('Fatal error during startup:', error);
+  if (!(global as any).watcher) {
+    process.exit(1);
+  }
+  logger.warn('⚠️  Startup error after partial init — watcher/web may still be running');
 });
 
 process.on("SIGINT", shutDown);

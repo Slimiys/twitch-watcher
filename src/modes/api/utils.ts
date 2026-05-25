@@ -3,6 +3,65 @@
  */
 
 import { MinuteWatchedPayload } from './types';
+import { logger } from './logger';
+import { writeCrashReport } from '../../processGuards';
+
+/**
+ * Запускает async-задачу с перехватом ошибок (не роняет процесс)
+ */
+export function runSafeAsync(label: string, callback: () => void | Promise<void>): void {
+  Promise.resolve(callback()).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    writeCrashReport('asyncTaskError', {
+      task: label,
+      errorMessage: message,
+      stack,
+    });
+
+    logger.warn(`⚠️  [${label}] ${message}`);
+    if (stack) {
+      logger.verbose(stack);
+    }
+  });
+}
+
+/**
+ * setInterval для async-колбэков с перехватом необработанных ошибок
+ */
+export function setSafeAsyncInterval(
+  label: string,
+  callback: () => void | Promise<void>,
+  ms: number
+): NodeJS.Timeout {
+  return setInterval(() => runSafeAsync(label, callback), ms);
+}
+
+/**
+ * Выполняет async-операцию с таймаутом
+ */
+export async function withTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+  context: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Timeout after ${timeoutMs}ms [${context}]`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fn(), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 /**
  * Кодирование payload в Base64 для отправки на Spade URL

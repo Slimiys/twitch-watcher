@@ -77,6 +77,14 @@ web_modules/
 # Yarn Integrity file
 .yarn-integrity
 
+# TLS для HTTPS дашборда (генерируется локально)
+certs/
+/server.crt
+/server.key
+
+# Локальные диагностические скрипты (не для репозитория)
+scripts/local/
+
 # dotenv environment variables file
 .env
 .env.test

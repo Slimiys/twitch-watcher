@@ -6,13 +6,31 @@
     <title>Twitch Watcher - Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css">
+    <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <link rel="stylesheet" href="dashboard.css?v=3">
+    <script src="dashboard.js?v=9" defer></script>
 </head>
 <body>
-    <div class="container">
+    <!-- Экран загрузки -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">
+                <h1>Twitch Watcher</h1>
+            </div>
+            <div class="loading-spinner-large"></div>
+            <div class="loading-status">
+                <div id="loadingStatusText" class="loading-status-text">Starting application...</div>
+                <div class="loading-progress-bar">
+                    <div id="loadingProgressBar" class="loading-progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <div id="loadingProgressText" class="loading-progress-text">0%</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="mainContainer" style="display: none;">
         <header>
             <div>
                 <h1>Twitch Watcher Dashboard</h1>
@@ -26,8 +44,20 @@
                         <button class="interval-btn" data-interval="10">10s</button>
                         <button class="interval-btn" data-interval="30">30s</button>
                         <button class="interval-btn" data-interval="60">1m</button>
+                        <button class="interval-btn" data-interval="event">Event</button>
                     </div>
                 </div>
+                <div class="colorize-toggle-control" style="display: flex; align-items: center; gap: 8px;">
+                    <span style="color: #adadb8; font-size: 14px;">Colorize names:</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="colorizeStreamerNamesToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <button class="settings-btn" id="testBtn" title="Тестирование">
+                    <span>🧪</span>
+                    <span>Tests</span>
+                </button>
                 <button class="settings-btn" id="settingsBtn" title="Settings">
                     <span>⚙️</span>
                     <span>Settings</span>
@@ -97,155 +127,101 @@
             <!-- Уведомления будут добавлены динамически -->
         </div>
 
-        <!-- Информация о токене -->
-        <div class="section" id="tokenInfoSection" style="display: none;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="margin: 0;">Token Information</h2>
-                <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
-                    🧪 Mark Invalid
-                </button>
-            </div>
-            <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                <!-- Информация будет добавлена динамически -->
-            </div>
-        </div>
-
-        <!-- Информация о базе данных -->
-        <div class="section" id="databaseInfoSection" style="display: none;">
-            <h2 style="margin: 0; margin-bottom: 20px;">Database Status</h2>
-            <div id="databaseInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                <!-- Информация будет добавлена динамически -->
-            </div>
-        </div>
-
-        <div class="section collapsible-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 class="section-header-clickable" data-section="streamersSectionContent" style="margin: 0; cursor: pointer;">
-                    All Streamers
-                </h2>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
-                               class="add-streamer-input"
-                               onkeypress="if(event.key === 'Enter') addStreamer()">
-                        <button onclick="addStreamer()" class="add-btn">
-                            Add
-                        </button>
-                    </div>
-                    <div class="column-settings-menu">
-                        <button id="columnSettingsBtn" class="toggle-btn" title="Column settings">
-                            <span>⚙️</span>
-                        </button>
-                        <div class="column-settings-dropdown" id="columnSettingsDropdown">
-                            <div class="column-settings-header">Visible Columns</div>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="streamer" checked>
-                                <span>Streamer</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="status" checked>
-                                <span>Status</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="watchTime" checked>
-                                <span>Watch Time</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="pointsEarned" checked>
-                                <span>Points Earned</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="currentPoints" checked>
-                                <span>Current Points</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="game" checked>
-                                <span>Category</span>
-                            </label>
-                            <label class="column-settings-item">
-                                <input type="checkbox" data-column="actions" checked>
-                                <span>Actions</span>
-                            </label>
-                        </div>
-                    </div>
-                    <button id="toggleOfflineBtn" class="toggle-btn">
-                        <span id="toggleOfflineText">Hide Offline</span>
-                    </button>
-                </div>
-            </div>
-            <div id="streamersSectionContent">
-                <div id="watchesTable">
-                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
-                </div>
-            </div>
-        </div>
-
-        <div class="section collapsible-section">
-            <div class="chart-header">
-                <h2 class="chart-title section-header-clickable" data-section="chartSectionContent" style="cursor: pointer;">
-                    Points History
-                </h2>
-                <div class="chart-controls">
-                    <!-- Переключатель режима отображения -->
-                    <div class="chart-mode-control">
-                        <span class="chart-control-label">Mode:</span>
-                        <div class="mode-buttons">
-                            <button class="mode-btn active" data-mode="accumulated" id="modeAccumulated" title="Accumulated points">
-                                Accumulated
-                            </button>
-                            <button class="mode-btn" data-mode="daily" id="modeDaily" title="Daily points">
-                                Daily
+        <!-- Двухколоночный макет -->
+        <div class="main-layout">
+            <!-- All Streamers: строка 1, столбец 1 -->
+            <div class="section collapsible-section grid-item-streamers">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 class="section-header-clickable" data-section="streamersSectionContent" style="margin: 0; cursor: pointer;">
+                        All Streamers
+                    </h2>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="text" id="addStreamerInput" placeholder="Enter streamer name" 
+                                       class="add-streamer-input"
+                                       onkeypress="if(event.key === 'Enter') addStreamer()">
+                                <button onclick="addStreamer()" class="add-btn">
+                                    Add
+                                </button>
+                            </div>
+                            <div class="column-settings-menu">
+                                <button id="columnSettingsBtn" class="toggle-btn" title="Column settings">
+                                    <span>⚙️</span>
+                                </button>
+                                <div class="column-settings-dropdown" id="columnSettingsDropdown">
+                                    <div class="column-settings-header">Visible Columns</div>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="notify" checked>
+                                        <span>Уведомления</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="streamer" checked>
+                                        <span>Streamer</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="status" checked>
+                                        <span>Status</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="watchTime" checked>
+                                        <span>Watch Time</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="pointsEarned" checked>
+                                        <span>Points Earned</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="currentPoints" checked>
+                                        <span>Current Points</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="game" checked>
+                                        <span>Category</span>
+                                    </label>
+                                    <label class="column-settings-item">
+                                        <input type="checkbox" data-column="actions" checked>
+                                        <span>Actions</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button id="toggleOfflineBtn" class="toggle-btn">
+                                <span id="toggleOfflineText">Hide Offline</span>
                             </button>
                         </div>
                     </div>
-                    <!-- Фильтр по периодам -->
-                    <div class="chart-period-control">
-                        <span class="chart-control-label">Period:</span>
-                        <select id="chartPeriod" class="period-select" title="Select time period">
-                            <option value="all">All Time</option>
-                            <option value="90">Last 90 Days</option>
-                            <option value="30" selected>Last 30 Days</option>
-                            <option value="7">Last 7 Days</option>
-                            <option value="1">Today</option>
-                        </select>
+                    <div id="streamersSectionContent">
+                        <div id="watchesTable">
+                            <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                        </div>
                     </div>
-                    <!-- Кнопка сброса зума -->
-                    <button id="resetZoomBtn" class="chart-control-btn" title="Reset zoom" style="display: none;">
-                        <span>🔍</span>
-                        <span class="chart-btn-text">Reset Zoom</span>
-                    </button>
-                    <!-- Кнопка экспорта -->
-                    <button id="exportChartBtn" class="chart-control-btn" title="Export chart as image">
-                        <span>📥</span>
-                        <span class="chart-btn-text">Export</span>
-                    </button>
                 </div>
-            </div>
-            <!-- Карточки статистики -->
-            <div class="chart-stats-grid" id="chartStatsGrid" style="display: none;">
-                <!-- Статистика будет добавлена динамически -->
-            </div>
-            <div id="chartSectionContent">
-                <div class="chart-container">
-                    <canvas id="pointsChart"></canvas>
-                </div>
-            </div>
-        </div>
 
-        <div class="section collapsible-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 class="section-header-clickable" data-section="eventsSectionContent" style="margin: 0; cursor: pointer;">
-                    Recent Events
-                </h2>
-            </div>
-            <div id="eventsSectionContent">
-                <div class="event-filters" id="eventFilters">
-                    <span class="filter-label">Filter:</span>
+            <!-- Token Information: строка 2, столбец 1 -->
+            <div class="section" id="tokenInfoSection" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Token Information</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="fillTestDataBtn" class="test-btn" title="Fill with test data (1000 events, test streamers)">
+                            🧪 Fill Test Data
+                        </button>
+                        <button id="markTokenInvalidBtn" class="test-btn" title="Mark token as invalid (for testing container restart)">
+                            🧪 Mark Invalid
+                        </button>
+                    </div>
                 </div>
-                <div class="events-list" id="eventsList">
-                    <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
+                <div id="tokenInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <!-- Информация будет добавлена динамически -->
                 </div>
             </div>
+
+            <!-- Database Status: строка 3, столбец 1 -->
+            <div class="section" id="databaseInfoSection" style="display: none;">
+                <h2 style="margin: 0; margin-bottom: 20px;">Database Status</h2>
+                <div id="databaseInfoContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <!-- Информация будет добавлена динамически -->
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -262,6 +238,45 @@
             <div class="modal-footer">
                 <button class="modal-btn modal-btn-secondary" onclick="closeConfirmModal()">Отмена</button>
                 <button class="modal-btn modal-btn-primary" id="confirmModalConfirmBtn">Подтвердить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель тестирования -->
+    <div id="testModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content test-modal-content">
+            <div class="modal-header">
+                <h3>Тестирование</h3>
+                <button class="modal-close" onclick="closeTestModal()" title="Закрыть">×</button>
+            </div>
+            <div class="modal-body settings-modal-body">
+                <div class="settings-section" style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">
+                    <h4 class="settings-section-title">Уведомления</h4>
+                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0 0 16px 0;">
+                        Проверка без смены статуса стримера. ОС-уведомления — через браузер на этом ПК.
+                        По HTTP с IP браузер их не покажет; на сервере: WEB_SERVER_HTTPS=true, затем https://IP:3001.
+                    </p>
+                    <div class="test-notify-grid">
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Toast</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testToastNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testToastNotification(false)">Офлайн</button>
+                        </div>
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Уведомления ОС</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testOsNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testOsNotification(false)">Офлайн</button>
+                        </div>
+                        <div class="test-notify-group">
+                            <span class="test-notify-label">Звук</span>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testSoundNotification(true)">Онлайн</button>
+                            <button type="button" class="modal-btn modal-btn-secondary" onclick="testSoundNotification(false)">Офлайн</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeTestModal()">Закрыть</button>
             </div>
         </div>
     </div>
@@ -339,12 +354,32 @@
                     </div>
                     <div class="settings-item">
                         <label class="settings-checkbox-label">
+                            <input type="checkbox" id="osNotificationsSetting" class="settings-checkbox">
+                            <span>Уведомления ОС (браузер)</span>
+                        </label>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-checkbox-label">
                             <input type="checkbox" id="soundNotificationsSetting" class="settings-checkbox">
                             <span>Звуковые уведомления</span>
                         </label>
                     </div>
+                    <p class="settings-hint" id="osNotificationsHint" style="display: none; color: #adadb8; font-size: 12px; margin: 0;">
+                        Разрешите уведомления в браузере при сохранении настроек.
+                    </p>
                 </div>
                 
+                <div class="settings-section">
+                    <h4 class="settings-section-title">API</h4>
+                    <div class="settings-item">
+                        <label class="settings-label" for="dashboardApiKeySetting">API-ключ (WEB_DASHBOARD_API_KEY):</label>
+                        <input type="password" id="dashboardApiKeySetting" class="settings-select" style="width: 100%;" autocomplete="off" placeholder="Оставьте пустым, если защита отключена">
+                    </div>
+                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0;">
+                        Ключ передаётся в заголовке X-API-Key. Хранится только в браузере (localStorage).
+                    </p>
+                </div>
+
                 <div class="settings-section">
                     <h4 class="settings-section-title">Управление настройками</h4>
                     <div class="settings-item" style="display: flex; gap: 10px;">
@@ -361,7 +396,6 @@
         </div>
     </div>
 
-    <script src="dashboard.js"></script>
 </body>
 </html>
 

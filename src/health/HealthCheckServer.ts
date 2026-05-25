@@ -4,6 +4,7 @@
 
 import * as http from 'http';
 import { logger } from '../modes/api/logger';
+import { getWebServerScheme } from '../web/httpsCredentials';
 
 /**
  * Статус компонента
@@ -119,6 +120,16 @@ export class HealthCheckServer {
             timestamp: Date.now()
           }));
         }
+      } else if (urlPath === '/' || urlPath === '/dashboard') {
+        // Редирект на веб-интерфейс (порт 3001)
+        const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
+        const host = req.headers.host?.split(':')[0] || 'localhost';
+        const webScheme = getWebServerScheme();
+        res.writeHead(302, { 
+          'Location': `${webScheme}://${host}:${webPort}/`,
+          'Content-Type': 'text/plain'
+        });
+        res.end(`Redirecting to web dashboard on port ${webPort}...`);
       } else {
         // 404 для других путей
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -172,11 +183,11 @@ export class HealthCheckServer {
         }
       } catch (error: any) {
         components.websocket = {
-          status: ComponentStatus.UNHEALTHY,
+          status: ComponentStatus.UNKNOWN,
           message: error.message || 'Check failed',
-          lastCheck: Date.now()
+          lastCheck: Date.now(),
         };
-        hasUnhealthy = true;
+        hasDegraded = true;
       }
     }
 
@@ -191,11 +202,11 @@ export class HealthCheckServer {
         }
       } catch (error: any) {
         components.api = {
-          status: ComponentStatus.UNHEALTHY,
+          status: ComponentStatus.UNKNOWN,
           message: error.message || 'Check failed',
-          lastCheck: Date.now()
+          lastCheck: Date.now(),
         };
-        hasUnhealthy = true;
+        hasDegraded = true;
       }
     }
 

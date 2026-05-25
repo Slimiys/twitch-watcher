@@ -9,6 +9,7 @@ import { logger } from './logger';
 import { fetchWithRetry, RetryConfig } from './retry';
 import { loadRetryConfig } from './configLoader';
 import { CLIENT_ID } from './constants';
+import { isNetworkError } from './errorUtils';
 
 /**
  * API клиент для работы с Twitch
@@ -20,6 +21,9 @@ export class TwitchAPI {
   private authToken: string;
   private validatedUserId: string | null = null; // User ID из валидации токена (правильный ID пользователя)
   private retryConfig: RetryConfig;
+  /** Троттлинг повторяющихся сетевых ошибок spade/minute-watched в логах */
+  private lastSpadeErrorLogAt = new Map<string, number>();
+  private static readonly SPADE_ERROR_LOG_THROTTLE_MS = 120000;
 
   /**
    * Создает экземпляр Twitch API клиента
@@ -61,11 +65,13 @@ export class TwitchAPI {
   async validateTokenWithInfo(): Promise<TokenValidationResult> {
     try {
       // Используем обычный fetch, так как нам нужно обработать 401 как нормальный случай
+      const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
       const response = await fetch('https://id.twitch.tv/oauth2/validate', {
         method: 'GET',
         headers: {
           'Authorization': `OAuth ${this.authToken}`,
         },
+        signal: AbortSignal.timeout(fetchTimeoutMs),
       });
 
       if (response.status === 200) {
@@ -84,15 +90,28 @@ export class TwitchAPI {
           expiresAt,
         };
       } else {
-        // Токен невалиден (401) или другая ошибка
+        // Токен невалиден (401) или другая ошибка от API
         return {
           isValid: false,
+          errorType: 'invalid',
         };
       }
     } catch (error: any) {
-      logger.verbose(`⚠️  Token validation error: ${error.message || error}`);
+      const msg = error.message || String(error);
+      if (isNetworkError(error)) {
+        logger.warn(`⚠️  Сетевая ошибка при валидации токена (id.twitch.tv): ${msg}`);
+        if (error.code) {
+          logger.warn(`   Код ошибки: ${error.code}`);
+        }
+        return {
+          isValid: false,
+          errorType: 'network',
+        };
+      }
+      logger.verbose(`⚠️  Token validation error: ${msg}`);
       return {
         isValid: false,
+        errorType: 'invalid',
       };
     }
   }
@@ -251,6 +270,34 @@ export class TwitchAPI {
     throw new Error(`Failed to get user ID for ${username}`);
   }
 
+  /** Быстрый retry для spade (кратковременные сбои сети) */
+  private getSpadeRetryConfig(): Partial<RetryConfig> {
+    return {
+      maxAttempts: 4,
+      initialDelayMs: 500,
+      maxDelayMs: 8000,
+      multiplier: 2,
+      jitter: true,
+    };
+  }
+
+  /**
+   * Логирует сетевую ошибку spade без спама (не путаем с отсутствием интернета)
+   */
+  private logSpadeNetworkError(username: string, operation: string, error: any): void {
+    const key = `${username}:${operation}`;
+    const now = Date.now();
+    const last = this.lastSpadeErrorLogAt.get(key) || 0;
+    if (now - last < TwitchAPI.SPADE_ERROR_LOG_THROTTLE_MS) {
+      return;
+    }
+    this.lastSpadeErrorLogAt.set(key, now);
+    const msg = error.message || String(error);
+    logger.warn(
+      `⚠️  [${username}] ${operation}: кратковременный сбой сети (${msg}) — повтор на следующем цикле (~1 мин)`
+    );
+  }
+
   /**
    * Получает spade_url для стримера с retry
    * @param username Имя стримера
@@ -268,13 +315,7 @@ export class TwitchAPI {
             'User-Agent': this.userAgent,
           },
         },
-        {
-          maxAttempts: this.retryConfig.maxAttempts,
-          initialDelayMs: this.retryConfig.initialDelayMs,
-          maxDelayMs: this.retryConfig.maxDelayMs,
-          multiplier: this.retryConfig.multiplier,
-          jitter: this.retryConfig.jitter,
-        },
+        this.getSpadeRetryConfig(),
         `getSpadeUrl:${username}`
       );
 
@@ -333,13 +374,7 @@ export class TwitchAPI {
             'User-Agent': this.userAgent,
           },
         },
-        {
-          maxAttempts: this.retryConfig.maxAttempts,
-          initialDelayMs: this.retryConfig.initialDelayMs,
-          maxDelayMs: this.retryConfig.maxDelayMs,
-          multiplier: this.retryConfig.multiplier,
-          jitter: this.retryConfig.jitter,
-        },
+        this.getSpadeRetryConfig(),
         `getSpadeUrl:settings:${username}`
       );
 
@@ -364,7 +399,11 @@ export class TwitchAPI {
       logger.verbose(`✅  Found spade_url for ${username}: ${spadeUrl.substring(0, 50)}...`);
       return spadeUrl;
     } catch (error: any) {
-      logger.error(`❌  Error getting spade_url for ${username}:`, error.message || error);
+      if (isNetworkError(error)) {
+        this.logSpadeNetworkError(username, 'получение spade_url', error);
+      } else {
+        logger.error(`❌  Error getting spade_url for ${username}:`, error.message || error);
+      }
       return null;
     }
   }
@@ -414,9 +453,11 @@ export class TwitchAPI {
               logger.verbose(`💰  [${streamerInfo.username}] Initial points set via GraphQL: ${pointsInfo.balance}`);
             } else {
               // Обновляем текущие баллы для актуальности данных
-              // Это важно, если WebSocket события не приходят регулярно
               streamerInfo.channelPoints = pointsInfo.balance;
               streamerInfo.lastChannelPoints = pointsInfo.balance;
+              if (streamerInfo.initialChannelPoints !== null) {
+                streamerInfo.streamPointsEarned = pointsInfo.balance - streamerInfo.initialChannelPoints;
+              }
             }
           }
         } catch (e: any) {
@@ -424,13 +465,26 @@ export class TwitchAPI {
           logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось получить баллы через GraphQL (будут обновлены через WebSocket)`);
         }
       } else {
-        // streamInfo null означает, что стример офлайн
-        // Устанавливаем isOnline = false только если стример был онлайн
-        // Это важно для корректного определения офлайн статуса
-        if (streamerInfo.isOnline) {
+        // streamInfo null может означать, что стример офлайн ИЛИ GraphQL недоступен
+        // Проверяем состояние CircuitBreaker перед установкой isOnline = false
+        const circuitBreakerState = this.graphqlClient.getCircuitBreakerState?.();
+        const isCircuitBreakerOpen = circuitBreakerState === 'OPEN' || circuitBreakerState === 'HALF_OPEN';
+        
+        // Устанавливаем isOnline = false только если:
+        // 1. Стример был онлайн
+        // 2. CircuitBreaker не открыт (GraphQL доступен)
+        // Это предотвращает установку isOnline=false из-за недоступности GraphQL
+        const graphqlUnavailable =
+          isCircuitBreakerOpen || this.graphqlClient.hadRecentNetworkFailure();
+        if (streamerInfo.isOnline && !graphqlUnavailable) {
           logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
           streamerInfo.isOnline = false;
           streamerInfo.startTime = 0;
+        } else if (streamerInfo.isOnline && graphqlUnavailable) {
+          // GraphQL недоступен — не помечаем офлайн, полагаемся на WebSocket
+          logger.verbose(
+            `⚠️  [${streamerInfo.username}] GraphQL unavailable (CB: ${circuitBreakerState ?? 'n/a'}, network), keeping current status`
+          );
         }
       }
     } catch (error: any) {
@@ -560,13 +614,7 @@ export class TwitchAPI {
           },
           body: formData.toString(),
         },
-        {
-          maxAttempts: this.retryConfig.maxAttempts,
-          initialDelayMs: this.retryConfig.initialDelayMs,
-          maxDelayMs: this.retryConfig.maxDelayMs,
-          multiplier: this.retryConfig.multiplier,
-          jitter: this.retryConfig.jitter,
-        },
+        this.getSpadeRetryConfig(),
         `sendMinuteWatched:${streamerInfo.username}`
       );
 
@@ -581,7 +629,11 @@ export class TwitchAPI {
       
       return isSuccess;
     } catch (error: any) {
-      logger.error(`❌  Error sending minute-watched for ${streamerInfo.username}:`, error.message || error);
+      if (isNetworkError(error)) {
+        this.logSpadeNetworkError(streamerInfo.username, 'minute-watched', error);
+      } else {
+        logger.error(`❌  Error sending minute-watched for ${streamerInfo.username}:`, error.message || error);
+      }
       return false;
     }
   }
@@ -616,15 +668,15 @@ export class TwitchAPI {
         startTime: 0,
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
 
       // Если онлайн, пробуем получить метаданные (опционально)
       // WebSocket события stream-up/stream-down более надежны для определения статуса
       if (streamerInfo.isOnline) {
         await this.updateStreamerInfo(streamerInfo);
-        streamerInfo.startTime = Date.now();
-        
-        // Пробуем получить начальные баллы (опционально)
+
+        // startTime задаётся в StreamWatcher.restoreWatchSessionAfterRestart()
         try {
           const pointsInfo = await this.graphqlClient.getChannelPoints(username);
           if (pointsInfo) {

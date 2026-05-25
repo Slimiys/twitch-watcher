@@ -3,9 +3,18 @@
  */
 
 import express, { Express, Request, Response } from 'express';
+import * as http from 'http';
+import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../modes/api/logger';
+import {
+  ensureHttpsCredentials,
+  getWebServerScheme,
+  isWebServerHttpsEnabled,
+  resolveHttpsCredentialPaths,
+} from './httpsCredentials';
+import { createDashboardApiKeyMiddleware } from './apiAuth';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -117,6 +126,11 @@ export interface StatisticsProvider {
    * Помечает токен как невалидный (для тестирования)
    */
   markTokenAsInvalid?(): void;
+
+  /**
+   * Заполняет приложение тестовыми данными
+   */
+  fillTestData?(): Promise<{ eventsCount: number; streamersCount: number }>;
 }
 
 /**
@@ -148,7 +162,7 @@ export class WebServer {
     this.app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
       
       if (req.method === 'OPTIONS') {
         res.status(200).end();
@@ -160,13 +174,43 @@ export class WebServer {
 
     // Парсинг JSON
     this.app.use(express.json());
+
+    // API-ключ для /api/* (если задан WEB_DASHBOARD_API_KEY)
+    this.app.use(createDashboardApiKeyMiddleware());
   }
 
   /**
    * Настраивает маршруты
    */
   private setupRoutes(): void {
-    // API маршруты
+    // API маршруты - должны быть ДО статических файлов
+    // Эндпоинт для проверки статуса инициализации
+    this.app.get('/api/server-info', (_req: Request, res: Response) => {
+      const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      res.json({
+        scheme: getWebServerScheme(),
+        httpsEnabled: isWebServerHttpsEnabled(),
+        port: this.port,
+        webServerHttpsEnv: process.env.WEB_SERVER_HTTPS ?? null,
+        certPath,
+        keyPath,
+        certExists: fs.existsSync(certPath),
+        keyExists: fs.existsSync(keyPath),
+        pid: process.pid,
+      });
+    });
+
+    this.app.get('/api/initialization-status', (req: Request, res: Response) => {
+      try {
+        const status = this.getInitializationStatus();
+        res.setHeader('Content-Type', 'application/json');
+        res.json(status);
+      } catch (error: any) {
+        logger.error('Error getting initialization status:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
     this.app.get('/api/statistics', (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
@@ -177,7 +221,27 @@ export class WebServer {
         // Поддерживаем параметр includeOffline для включения офлайн стримеров
         const includeOffline = req.query.includeOffline === 'true';
         const statistics = this.statisticsProvider.getStatistics(includeOffline);
-        res.json(statistics);
+        
+        // Обогащаем статистику данными из базы данных (время последнего запуска/завершения стрима)
+        const streamWatcher = this.statisticsProvider as any;
+        const databaseStorage = streamWatcher.getDatabaseStorage?.();
+        
+        if (databaseStorage && databaseStorage.isReady()) {
+          const enrichedStatistics = statistics.map((stat: any) => {
+            const dbStats = databaseStorage.getStreamerStats(stat.streamerName);
+            if (dbStats) {
+              return {
+                ...stat,
+                lastStreamStart: dbStats.lastStreamStart,
+                lastStreamEnd: dbStats.lastStreamEnd,
+              };
+            }
+            return stat;
+          });
+          res.json(enrichedStatistics);
+        } else {
+          res.json(statistics);
+        }
       } catch (error: any) {
         logger.error('Error getting statistics:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
@@ -437,16 +501,48 @@ export class WebServer {
 
         const isReady = databaseStorage.isReady();
         const dbPath = databaseStorage.getDbPath();
+        const errorReason = databaseStorage.getErrorReason?.();
 
         res.json({
           available: true,
           ready: isReady,
-          reason: isReady ? 'Database is ready' : 'better-sqlite3 not available or not compiled',
-          dbPath: isReady ? dbPath : null
+          reason: isReady ? 'Database is ready' : (errorReason || 'sql.js not available'),
+          dbPath: isReady ? dbPath : null,
+          error: errorReason || null
         });
       } catch (error: any) {
         logger.error('Error getting database status:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API для заполнения тестовыми данными
+    this.app.post('/api/test/fill-data', async (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider) {
+          res.status(503).json({ error: 'Statistics provider not available' });
+          return;
+        }
+
+        const streamWatcher = this.statisticsProvider as any;
+        if (!streamWatcher.fillTestData) {
+          res.status(501).json({ error: 'Fill test data functionality not available' });
+          return;
+        }
+
+        const result = await streamWatcher.fillTestData();
+        res.json({
+          success: true,
+          eventsCount: result.eventsCount,
+          streamersCount: result.streamersCount,
+          message: `Generated ${result.eventsCount} events and ${result.streamersCount} streamers`
+        });
+      } catch (error: any) {
+        logger.error('Error filling test data:', error);
+        res.status(500).json({ 
+          success: false,
+          error: error.message || 'Unknown error' 
+        });
       }
     });
 
@@ -765,27 +861,235 @@ export class WebServer {
   }
 
   /**
-   * Запускает веб-сервер
+   * Получает статус инициализации приложения
    */
-  start(): void {
-    if (this.server) {
+  getInitializationStatus(): {
+    isInitialized: boolean;
+    currentAction: string;
+    progress: number;
+  } {
+    if (!this.statisticsProvider) {
+      return {
+        isInitialized: false,
+        currentAction: 'Waiting for application to start...',
+        progress: 0
+      };
+    }
+
+    const streamWatcher = this.statisticsProvider as any;
+    if (streamWatcher && typeof streamWatcher.getInitializationStatus === 'function') {
+      const status = streamWatcher.getInitializationStatus();
+      if (status && typeof status === 'object') {
+        if (status.isInitialized || status.progress >= 100) {
+          return {
+            isInitialized: true,
+            currentAction: status.currentAction || 'Application ready',
+            progress: Math.max(status.progress || 0, 100),
+          };
+        }
+        return status;
+      }
+    }
+
+    // Watcher уже отдаёт статистику — считаем готовым (дашборд не зависает на 0%)
+    try {
+      const stats = this.statisticsProvider.getStatistics(true);
+      if (Array.isArray(stats) && stats.length > 0) {
+        // Если можем получить статистику, значит приложение готово
+        return {
+          isInitialized: true,
+          currentAction: 'Ready',
+          progress: 100
+        };
+      }
+    } catch (e) {
+      // Игнорируем ошибки
+    }
+
+    // По умолчанию считаем что инициализация завершена
+    return {
+      isInitialized: true,
+      currentAction: 'Ready',
+      progress: 100
+    };
+  }
+
+  /**
+   * Проверяет, слушает ли веб-сервер порт
+   */
+  isRunning(): boolean {
+    return this.server != null && this.server.listening === true;
+  }
+
+  /**
+   * Освобождает ссылку на сервер после неудачного listen
+   */
+  private cleanupFailedStart(): void {
+    if (!this.server) {
+      return;
+    }
+    this.server.removeAllListeners();
+    try {
+      this.server.close();
+    } catch {
+      // Сервер мог не успеть перейти в состояние listening
+    }
+    this.server = null;
+  }
+
+  /**
+   * Запускает веб-сервер (Promise отклоняется при EADDRINUSE и других ошибках listen)
+   */
+  async start(): Promise<void> {
+    if (this.isRunning()) {
       logger.warn('Web server is already running');
       return;
     }
 
-    this.server = this.app.listen(this.port, () => {
-      logger.info(`Web server started on port ${this.port}`);
-      logger.verbose(`Dashboard: http://localhost:${this.port}`);
-      logger.verbose(`API: http://localhost:${this.port}/api`);
-    });
+    const scheme = getWebServerScheme();
+    const httpsEnv = process.env.WEB_SERVER_HTTPS ?? '(not set)';
+    console.log(`[WebServer] WEB_SERVER_HTTPS=${httpsEnv} → ${scheme.toUpperCase()} on port ${this.port}`);
 
-    this.server.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${this.port} is already in use`);
+    if (isWebServerHttpsEnabled()) {
+      const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      logger.info(`🔐  WEB_SERVER_HTTPS=${httpsEnv} — дашборд только по HTTPS`);
+      logger.verbose(`    cert: ${certPath}`);
+      logger.verbose(`    key:  ${keyPath}`);
+    } else if (httpsEnv !== '(not set)' && httpsEnv.trim() !== '') {
+      logger.warn(`⚠️  WEB_SERVER_HTTPS=${httpsEnv} не распознан — используется HTTP`);
+      console.log('[WebServer] ⚠️  HTTPS не включён — открывайте http://, не https://');
+    }
+
+    const logListening = () => {
+      logger.info(`Web server started on port ${this.port} (${scheme.toUpperCase()})`);
+      console.log(`[WebServer] ✅  Listening ${scheme}://0.0.0.0:${this.port}`);
+      logger.verbose(`Dashboard: ${scheme}://0.0.0.0:${this.port}`);
+      logger.verbose(`API: ${scheme}://0.0.0.0:${this.port}/api`);
+      if (isWebServerHttpsEnabled()) {
+        logger.verbose('   Откройте https://<IP>:3001 (не http). Подтвердите самоподписанный сертификат.');
       } else {
-        logger.error('Web server error:', error);
+        logger.warn('   HTTPS выключен: https:// в браузере даст ERR_SSL_PROTOCOL_ERROR');
+      }
+    };
+
+    const logPortInUse = () => {
+      logger.error(`Port ${this.port} is already in use — остановите старый процесс: fuser -k ${this.port}/tcp`);
+      console.log(`[WebServer] ❌  Порт ${this.port} занят. Termux: fuser -k ${this.port}/tcp`);
+    };
+
+    return new Promise<void>((resolve, reject) => {
+      const onListening = () => {
+        logListening();
+        resolve();
+      };
+
+      const onError = (error: NodeJS.ErrnoException) => {
+        this.cleanupFailedStart();
+        if (error.code === 'EADDRINUSE') {
+          logPortInUse();
+        } else {
+          logger.error('Web server error:', error);
+        }
+        reject(error);
+      };
+
+      const bindServer = () => {
+        this.server!.once('error', onError);
+        this.server!.once('listening', onListening);
+        this.server!.listen(this.port, '0.0.0.0');
+      };
+
+      try {
+        if (isWebServerHttpsEnabled()) {
+          ensureHttpsCredentials()
+            .then(({ cert, key }) => {
+              this.server = https.createServer({ cert, key }, this.app);
+              bindServer();
+            })
+            .catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Failed to start web server with HTTPS: ${message}`);
+              console.log(`[WebServer] ❌  HTTPS startup failed: ${message}`);
+              reject(error instanceof Error ? error : new Error(message));
+            });
+        } else {
+          this.server = http.createServer(this.app);
+          bindServer();
+        }
+      } catch (error: unknown) {
+        this.cleanupFailedStart();
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to start web server: ${message}`);
+        reject(error instanceof Error ? error : new Error(message));
       }
     });
+  }
+
+  /**
+   * Запускает веб-сервер с повторными попытками при занятом порте
+   * @param options Максимум попыток и пауза между ними (переопределяют env)
+   * @returns true если сервер успешно запущен
+   */
+  async startWithRetry(options?: { maxAttempts?: number; retryDelayMs?: number }): Promise<boolean> {
+    const maxAttempts = options?.maxAttempts
+      ?? parseInt(process.env.WEB_SERVER_START_MAX_ATTEMPTS || '12', 10);
+    const retryDelayMs = options?.retryDelayMs
+      ?? parseInt(process.env.WEB_SERVER_START_RETRY_DELAY_MS || '5000', 10);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.start();
+        return true;
+      } catch (error: unknown) {
+        const err = error as NodeJS.ErrnoException;
+        const isPortInUse = err.code === 'EADDRINUSE';
+        const isLastAttempt = attempt >= maxAttempts;
+
+        if (!isPortInUse) {
+          const message = err.message || String(error);
+          logger.error(`❌  Web server failed to start: ${message}`);
+          return false;
+        }
+
+        if (isLastAttempt) {
+          logger.error(
+            `❌  Web server: port ${this.port} still in use after ${maxAttempts} attempts`
+          );
+          return false;
+        }
+
+        logger.warn(
+          `⚠️  Port ${this.port} busy (attempt ${attempt}/${maxAttempts}), retry in ${retryDelayMs / 1000}s...`
+        );
+        logger.verbose(`   Подсказка: fuser -k ${this.port}/tcp`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Повторяет запуск до успеха (для режима только dashboard без watcher)
+   */
+  async startUntilSuccess(): Promise<void> {
+    const backgroundDelayMs = parseInt(
+      process.env.WEB_SERVER_BACKGROUND_RETRY_DELAY_MS || '30000',
+      10
+    );
+    let cycle = 0;
+
+    while (true) {
+      cycle++;
+      const started = await this.startWithRetry();
+      if (started) {
+        return;
+      }
+      logger.warn(
+        `⚠️  Dashboard недоступен — повторный цикл запуска (#${cycle}) через ${backgroundDelayMs / 1000}s`
+      );
+      await new Promise((resolve) => setTimeout(resolve, backgroundDelayMs));
+    }
   }
 
   /**

@@ -48,9 +48,22 @@ export const GQL_OPERATIONS = {
   },
 
   /**
-   * Получение контекста баллов канала
+   * Получение контекста баллов канала (актуальный persisted query, 2025+)
    */
   ChannelPointsContext: {
+    operationName: 'ChannelPointsContext',
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: '1530a003a7d374b0380b79db0be0534f30ff46e61cffa2bc0e2468a909fbc024',
+      },
+    },
+  },
+
+  /**
+   * Устаревший persisted query ChannelPointsContext (fallback)
+   */
+  ChannelPointsContextLegacy: {
     operationName: 'ChannelPointsContext',
     extensions: {
       persistedQuery: {

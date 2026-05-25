@@ -79,6 +79,12 @@ vi.mock('../configLoader', () => ({
 
 describe('WebSocketManager', () => {
   let manager: WebSocketManager;
+  let mockEventHandlers: {
+    onPointsEarned: ReturnType<typeof vi.fn>;
+    onClaimAvailable: ReturnType<typeof vi.fn>;
+    onStreamUp: ReturnType<typeof vi.fn>;
+    onStreamDown: ReturnType<typeof vi.fn>;
+  };
   const mockGraphQLClient = {
     getChannelPoints: vi.fn(),
     claimBonus: vi.fn(),
@@ -93,6 +99,7 @@ describe('WebSocketManager', () => {
       onStreamUp: vi.fn(),
       onStreamDown: vi.fn(),
     };
+    mockEventHandlers = eventHandlers;
     
     manager = new WebSocketManager(
       'test_token',
@@ -128,6 +135,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -166,6 +174,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: null, // Не установлен
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -207,6 +216,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -234,6 +244,52 @@ describe('WebSocketManager', () => {
     });
   });
 
+  describe('handleCommunityPointsMessage - claim-available', () => {
+    it('должен вызвать onClaimAvailable только для стримера с channel_id из события', () => {
+      const targetStreamer: StreamerInfo = {
+        username: 'exmagistr',
+        channelId: '40459081',
+        channelPoints: 1000,
+        isOnline: true,
+        broadcastId: '456',
+        game: 'Test Game',
+        title: 'Test Title',
+        tags: [],
+        spadeUrl: null,
+        startTime: Date.now(),
+        initialChannelPoints: 1000,
+        lastChannelPoints: 1000,
+        streamPointsEarned: 0,
+      };
+      const otherStreamer: StreamerInfo = {
+        ...targetStreamer,
+        username: 'alena4p',
+        channelId: '72717097',
+      };
+
+      (manager as any).streamers.set('40459081', targetStreamer);
+      (manager as any).streamers.set('72717097', otherStreamer);
+
+      const message = {
+        type: 'claim-available',
+        data: {
+          claim: {
+            id: '15068382-f366-4a77-8648-ec1b08d208db',
+            channel_id: '40459081',
+          },
+        },
+      };
+
+      (manager as any).handleCommunityPointsMessage(message);
+
+      expect(mockEventHandlers.onClaimAvailable).toHaveBeenCalledTimes(1);
+      expect(mockEventHandlers.onClaimAvailable).toHaveBeenCalledWith(
+        targetStreamer,
+        '15068382-f366-4a77-8648-ec1b08d208db'
+      );
+    });
+  });
+
   describe('handleVideoPlaybackMessage', () => {
     it('должен обработать событие stream-up', () => {
       const streamerInfo: StreamerInfo = {
@@ -249,6 +305,7 @@ describe('WebSocketManager', () => {
         startTime: 0,
         initialChannelPoints: null,
         lastChannelPoints: null,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);
@@ -277,6 +334,7 @@ describe('WebSocketManager', () => {
         startTime: Date.now(),
         initialChannelPoints: 1000,
         lastChannelPoints: 1000,
+        streamPointsEarned: 0,
       };
       
       (manager as any).streamers.set('123', streamerInfo);

@@ -2,13 +2,23 @@
  * Клиент для работы с GraphQL API Twitch
  */
 
-import { GraphQLOperation, GraphQLResponse } from './types';
-import { GQL_URL, CLIENT_ID } from './constants';
+import { ClaimBonusResult, GraphQLOperation, GraphQLResponse } from './types';
+import { GQL_URL, CLIENT_ID, GQL_OPERATIONS } from './constants';
 import { logger } from './logger';
 import { retryWithExponentialBackoff, RetryConfig } from './retry';
 import { CircuitBreaker } from './CircuitBreaker';
 import { loadRetryConfig } from './configLoader';
-import { shouldRetry } from './errorUtils';
+import { shouldRetry, isNetworkError } from './errorUtils';
+import { TwitchIntegrityProvider } from './TwitchIntegrity';
+import { buildTwitchGqlHeaders } from './twitchGqlContext';
+
+/** Коды ClaimCommunityPoints, при которых повтор бесполезен */
+const PERMANENT_CLAIM_ERROR_CODES = new Set([
+  'FORBIDDEN',
+  'CLAIM_ALREADY_CLAIMED',
+  'UNAUTHORIZED',
+  'NOT_FOUND',
+]);
 
 /**
  * Клиент для выполнения GraphQL запросов к Twitch
@@ -18,6 +28,17 @@ export class GraphQLClient {
   private userAgent: string;
   private circuitBreaker: CircuitBreaker;
   private retryConfig: RetryConfig;
+  private integrityProvider: TwitchIntegrityProvider;
+  /** Время последней сетевой ошибки (для защиты от ложного OFFLINE) */
+  private lastNetworkFailureAt = 0;
+  /** Некритичные операции — баллы/статус дублируются через WebSocket */
+  private static readonly NON_CRITICAL_OPERATIONS = [
+    'ChannelPointsContext',
+    'VideoPlayerStreamInfoOverlayChannel',
+  ];
+  /** Троттлинг повторяющихся сетевых ошибок в логах (мс) */
+  private lastNetworkErrorLogAt = new Map<string, number>();
+  private static readonly NETWORK_ERROR_LOG_THROTTLE_MS = 120000;
 
   /**
    * Создает экземпляр GraphQL клиента
@@ -39,6 +60,86 @@ export class GraphQLClient {
       halfOpenMaxAttempts: 1,
     };
     this.circuitBreaker = new CircuitBreaker('GraphQL', cbConfig);
+    this.integrityProvider = new TwitchIntegrityProvider(authToken, userAgent);
+  }
+
+  /**
+   * Получает состояние CircuitBreaker
+   * @returns Состояние CircuitBreaker ('CLOSED', 'OPEN', 'HALF_OPEN')
+   */
+  getCircuitBreakerState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN' {
+    return this.circuitBreaker.getState();
+  }
+
+  /**
+   * Была ли недавно сетевая ошибка при запросах к GraphQL
+   * @param withinMs Окно в миллисекундах (по умолчанию 2 минуты)
+   */
+  hadRecentNetworkFailure(withinMs: number = 120000): boolean {
+    return this.lastNetworkFailureAt > 0 && Date.now() - this.lastNetworkFailureAt < withinMs;
+  }
+
+  private markNetworkFailure(error: any): void {
+    if (isNetworkError(error)) {
+      this.lastNetworkFailureAt = Date.now();
+    }
+  }
+
+  private clearNetworkFailure(): void {
+    this.lastNetworkFailureAt = 0;
+  }
+
+  /**
+   * Логирует ошибку GraphQL без спама (некритичные операции — кратко, с троттлингом)
+   */
+  private logGraphQLError(operationName: string, error: any): void {
+    const isNonCritical = GraphQLClient.NON_CRITICAL_OPERATIONS.includes(operationName);
+    const errorMessage = error.message || String(error);
+    const now = Date.now();
+    const lastLogged = this.lastNetworkErrorLogAt.get(operationName) || 0;
+    const shouldLog = now - lastLogged >= GraphQLClient.NETWORK_ERROR_LOG_THROTTLE_MS;
+
+    if (isNetworkError(error)) {
+      if (isNonCritical) {
+        if (shouldLog) {
+          this.lastNetworkErrorLogAt.set(operationName, now);
+          logger.verbose(
+            `⚠️  [GraphQL:${operationName}] Кратковременный сбой gql.twitch.tv (${errorMessage}) — баллы/статус через WebSocket`
+          );
+        }
+        return;
+      }
+      if (!shouldLog) {
+        return;
+      }
+      this.lastNetworkErrorLogAt.set(operationName, now);
+      logger.warn(`⚠️  [GraphQL:${operationName}] Сетевая ошибка gql.twitch.tv: ${errorMessage}`);
+      if (error.code) {
+        logger.verbose(`   Код ошибки: ${error.code}`);
+      }
+      return;
+    }
+
+    if (errorMessage.includes('timeout')) {
+      if (isNonCritical) {
+        if (shouldLog) {
+          this.lastNetworkErrorLogAt.set(operationName, now);
+          logger.verbose(`⚠️  [GraphQL:${operationName}] Таймаут gql.twitch.tv — не критично`);
+        }
+        return;
+      }
+      if (shouldLog) {
+        this.lastNetworkErrorLogAt.set(operationName, now);
+        logger.warn(`⚠️  [GraphQL:${operationName}] Таймаут при запросе к gql.twitch.tv`);
+      }
+      return;
+    }
+
+    if (isNonCritical) {
+      logger.verbose(`⚠️  [GraphQL:${operationName}] ${errorMessage}`);
+      return;
+    }
+    logger.error(`Error with GraphQL operation (${operationName}):`, errorMessage);
   }
 
   /**
@@ -46,21 +147,36 @@ export class GraphQLClient {
    * @param operation GraphQL операция
    * @returns Ответ от сервера
    */
-  async postRequest(operation: GraphQLOperation): Promise<GraphQLResponse> {
+  async postRequest(
+    operation: GraphQLOperation,
+    options?: { requireIntegrity?: boolean }
+  ): Promise<GraphQLResponse> {
     // Используем Circuit Breaker для защиты от каскадных сбоев
     return this.circuitBreaker.execute(async () => {
       // Используем retry с экспоненциальной задержкой
       return retryWithExponentialBackoff(
         async () => {
+          const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
+          let integrityToken: string | undefined;
+          if (options?.requireIntegrity) {
+            integrityToken = await this.integrityProvider.getToken();
+          }
+
+          const headers = await buildTwitchGqlHeaders({
+            authToken: this.authToken,
+            userAgent: this.userAgent,
+            clientId: CLIENT_ID,
+            deviceId: options?.requireIntegrity
+              ? this.integrityProvider.getDeviceId()
+              : undefined,
+            integrityToken,
+          });
+
           const response = await fetch(GQL_URL, {
             method: 'POST',
-            headers: {
-              'Authorization': `OAuth ${this.authToken}`,
-              'Client-Id': CLIENT_ID,
-              'User-Agent': this.userAgent,
-              'Content-Type': 'application/json',
-            },
+            headers,
             body: JSON.stringify(operation),
+            signal: AbortSignal.timeout(fetchTimeoutMs),
           });
 
           // Проверяем статус ответа
@@ -79,7 +195,8 @@ export class GraphQLClient {
           }
 
           const data = await response.json();
-          
+          this.clearNetworkFailure();
+
           // Логируем ошибки из ответа
           if (data.errors && data.errors.length > 0) {
             for (const error of data.errors) {
@@ -94,8 +211,7 @@ export class GraphQLClient {
                 // PersistedQueryNotFound - это не критичная ошибка
                 // Для ChannelPointsContext и VideoPlayerStreamInfoOverlayChannel логируем только в verbose,
                 // так как эти данные обновляются через WebSocket в реальном времени
-                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
-                if (nonCriticalOperations.includes(operation.operationName)) {
+                if (GraphQLClient.NON_CRITICAL_OPERATIONS.includes(operation.operationName)) {
                   logger.verbose(`⚠️  PersistedQueryNotFound for ${operation.operationName} - данные обновляются через WebSocket`);
                 } else {
                   logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
@@ -103,8 +219,7 @@ export class GraphQLClient {
               } else if (error.message && error.message.includes('Cannot query field')) {
                 // Ошибка "Cannot query field" означает, что структура API изменилась
                 // Это не критично для операций, которые имеют альтернативные источники данных
-                const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
-                if (nonCriticalOperations.includes(operation.operationName)) {
+                if (GraphQLClient.NON_CRITICAL_OPERATIONS.includes(operation.operationName)) {
                   logger.verbose(`⚠️  GraphQL API changed for ${operation.operationName}: ${error.message} - используем альтернативные источники`);
                 } else {
                   logger.error(`❌  GraphQL error for ${operation.operationName}: ${error.message}`);
@@ -138,53 +253,26 @@ export class GraphQLClient {
         `GraphQL:${operation.operationName}`
       );
     }).catch((error: any) => {
+      this.markNetworkFailure(error);
+
       // Если Circuit Breaker открыт, логируем это
       if (error.circuitBreakerOpen) {
         logger.warn(`⚠️  [GraphQL:${operation.operationName}] Circuit Breaker OPEN, запрос заблокирован`);
         return { errors: [] };
       }
       
-      // Для некритичных операций не логируем как ошибку
-      const nonCriticalOperations = ['ChannelPointsContext', 'VideoPlayerStreamInfoOverlayChannel'];
-      const isNonCritical = nonCriticalOperations.includes(operation.operationName);
-      
-      // Проверяем, является ли ошибка некритичной
+      const isNonCritical = GraphQLClient.NON_CRITICAL_OPERATIONS.includes(operation.operationName);
       const isNonCriticalError = error.message && (
         error.message.includes('PersistedQueryNotFound') ||
         error.message.includes('Cannot query field')
       );
-      
+
       if (isNonCritical && isNonCriticalError) {
-        // Для некритичных операций с некритичными ошибками не логируем
-        logger.verbose(`⚠️  [GraphQL:${operation.operationName}] ${error.message} - данные обновляются через альтернативные источники`);
+        logger.verbose(
+          `⚠️  [GraphQL:${operation.operationName}] ${error.message} - данные обновляются через альтернативные источники`
+        );
       } else {
-        // Для других ошибок логируем
-        const errorMessage = error.message || String(error);
-        
-        // Детальная диагностика сетевых ошибок
-        if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
-          logger.error(`❌  [GraphQL:${operation.operationName}] Сетевая ошибка при подключении к gql.twitch.tv`);
-          logger.error(`   Возможные причины:`);
-          logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
-          logger.error(`   - Проблемы с интернет-соединением`);
-          logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
-          logger.error(`   - Таймаут соединения`);
-          if (error.code) {
-            logger.error(`   Код ошибки: ${error.code}`);
-          }
-          if (error.syscall) {
-            logger.error(`   Системный вызов: ${error.syscall}`);
-          }
-          if (error.hostname) {
-            logger.error(`   Хост: ${error.hostname}`);
-          }
-          logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
-        } else if (errorMessage.includes('timeout')) {
-          logger.error(`❌  [GraphQL:${operation.operationName}] Таймаут при запросе к gql.twitch.tv`);
-          logger.error(`   Возможные причины: медленное соединение или перегрузка сервера`);
-        } else {
-          logger.error(`Error with GraphQL operation (${operation.operationName}):`, errorMessage);
-        }
+        this.logGraphQLError(operation.operationName, error);
       }
       
       return { errors: [{ message: error.message || 'Unknown error' }] };
@@ -261,7 +349,8 @@ export class GraphQLClient {
       logger.error(`❌  [Helix API] Error getting channel ID: ${errorMessage}`);
       
       // Детальная диагностика сетевых ошибок
-      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || errorMessage.includes('EAI_AGAIN')) {
+      if (isNetworkError(error)) {
+        this.lastNetworkFailureAt = Date.now();
         logger.error(`❌  [Helix API] Сетевая ошибка при подключении к api.twitch.tv`);
         logger.error(`   Возможные причины:`);
         logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
@@ -555,6 +644,53 @@ export class GraphQLClient {
   }
 
   /**
+   * Извлекает баланс и доступный бонус из ответа ChannelPointsContext
+   */
+  private static parseChannelPointsData(
+    data: Record<string, unknown> | undefined
+  ): { balance: number; availableClaim: { id: string } | null } | null {
+    if (!data) {
+      return null;
+    }
+
+    const communityPoints = (data as any).community?.channel?.self?.communityPoints;
+    if (communityPoints != null && typeof communityPoints.balance === 'number') {
+      return {
+        balance: communityPoints.balance,
+        availableClaim: communityPoints.availableClaim ?? null,
+      };
+    }
+
+    const userChannelPoints =
+      (data as any).user?.channel?.self?.communityPoints ??
+      (data as any).user?.self?.communityPoints;
+    if (userChannelPoints != null && typeof userChannelPoints.balance === 'number') {
+      return {
+        balance: userChannelPoints.balance,
+        availableClaim: userChannelPoints.availableClaim ?? null,
+      };
+    }
+
+    const currentUserPoints = (data as any).currentUser?.communityPoints;
+    if (currentUserPoints != null && typeof currentUserPoints.balance === 'number') {
+      return {
+        balance: currentUserPoints.balance,
+        availableClaim: currentUserPoints.availableClaim ?? null,
+      };
+    }
+
+    return null;
+  }
+
+  private static hasPersistedQueryNotFound(response: GraphQLResponse): boolean {
+    return Boolean(
+      response.errors?.some(
+        (e: { message?: string }) => e.message?.includes('PersistedQueryNotFound')
+      )
+    );
+  }
+
+  /**
    * Получает информацию о баллах канала
    * @param username Имя пользователя (channelLogin)
    * @returns Информация о баллах или null
@@ -563,88 +699,63 @@ export class GraphQLClient {
     balance: number;
     availableClaim: { id: string } | null;
   } | null> {
-    // Сначала пробуем с persisted query
-    const operation = {
-      operationName: 'ChannelPointsContext',
-      variables: { channelLogin: username },
-      extensions: {
-        persistedQuery: {
-          version: 1,
-          sha256Hash: '9988086babc615a918a1e9a722ff41d98847acac822645209ac7379eecb27152',
-        },
-      },
-    };
+    const persistedVariants = [
+      GQL_OPERATIONS.ChannelPointsContext,
+      GQL_OPERATIONS.ChannelPointsContextLegacy,
+    ];
 
-    let response = await this.postRequest(operation);
-    
-    // Проверяем на ошибку PersistedQueryNotFound - пробуем отправить полный запрос
-    if (response.errors && response.errors.length > 0) {
-      const hasPersistedQueryError = response.errors.some((e: any) => 
-        e.message && e.message.includes('PersistedQueryNotFound')
-      );
-      
-      if (hasPersistedQueryError) {
-        // Пробуем отправить полный GraphQL запрос без persisted query
-        logger.verbose(`⚠️  PersistedQueryNotFound for ChannelPointsContext, trying full query`);
-        const fullOperation = {
-          operationName: 'ChannelPointsContext',
-          variables: { channelLogin: username },
-          query: `query ChannelPointsContext($channelLogin: String!) {
-            community {
-              channel(login: $channelLogin) {
-                self {
-                  communityPoints {
-                    balance
-                    availableClaim {
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-        };
-        
-        response = await this.postRequest(fullOperation);
+    let lastResponse: GraphQLResponse | null = null;
+
+    for (const template of persistedVariants) {
+      const response = await this.postRequest({
+        operationName: template.operationName,
+        variables: { channelLogin: username },
+        extensions: template.extensions,
+      });
+      lastResponse = response;
+
+      if (response.data && (response.data as any).community === null) {
+        return null;
       }
+
+      const parsed = GraphQLClient.parseChannelPointsData(
+        response.data as Record<string, unknown> | undefined
+      );
+      if (parsed) {
+        return parsed;
+      }
+
+      if (!GraphQLClient.hasPersistedQueryNotFound(response)) {
+        break;
+      }
+
+      logger.verbose(
+        `⚠️  PersistedQueryNotFound for ChannelPointsContext, trying legacy persisted query`
+      );
     }
-    
-    // Пробуем стандартный путь: community.channel.self.communityPoints
-    if (response.data?.community?.channel?.self?.communityPoints) {
-      const points = response.data.community.channel.self.communityPoints;
-      return {
-        balance: points.balance || 0,
-        availableClaim: points.availableClaim || null,
-      };
+
+    const response = lastResponse;
+    if (!response) {
+      return null;
     }
-    
-    // Пробуем альтернативный путь: currentUser.communityPoints (для некоторых случаев)
-    if (response.data?.currentUser?.communityPoints) {
-      const points = response.data.currentUser.communityPoints;
-      return {
-        balance: points.balance || 0,
-        availableClaim: points.availableClaim || null,
-      };
-    }
-    
-    // Логируем, если структура ответа неожиданная (только в verbose, так как баллы обновляются через WebSocket)
+
     if (response.data) {
-      logger.verbose(`⚠️  Unexpected response structure for getChannelPoints(${username}):`, JSON.stringify(response.data).substring(0, 200));
+      logger.verbose(
+        `⚠️  Unexpected response structure for getChannelPoints(${username}):`,
+        JSON.stringify(response.data).substring(0, 200)
+      );
     } else if (response.errors && response.errors.length > 0) {
-      // Не логируем ошибки для getChannelPoints - это опциональная операция
-      // Баллы обновляются через WebSocket в реальном времени
-      const hasPersistedQueryError = response.errors.some((e: any) => 
-        e.message && e.message.includes('PersistedQueryNotFound')
+      const onlyPersistedNotFound = response.errors.every((e: any) =>
+        e.message?.includes('PersistedQueryNotFound')
       );
-      const hasCannotQueryFieldError = response.errors.some((e: any) => 
-        e.message && e.message.includes('Cannot query field')
-      );
-      // Логируем только в verbose режиме для некритичных ошибок
-      if (!hasPersistedQueryError && !hasCannotQueryFieldError) {
-        logger.verbose(`⚠️  GraphQL errors for getChannelPoints(${username}):`, response.errors.map((e: any) => e.message).join(', '));
+      if (!onlyPersistedNotFound) {
+        logger.verbose(
+          `⚠️  GraphQL errors for getChannelPoints(${username}):`,
+          response.errors.map((e: any) => e.message).join(', ')
+        );
       }
     }
-    
+
     return null;
   }
 
@@ -654,7 +765,7 @@ export class GraphQLClient {
    * @param claimId ID бонуса
    * @returns true если успешно
    */
-  async claimBonus(channelId: string, claimId: string): Promise<boolean> {
+  async claimBonus(channelId: string, claimId: string): Promise<ClaimBonusResult> {
     const operation = {
       operationName: 'ClaimCommunityPoints',
       variables: {
@@ -671,38 +782,62 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    // Проверяем, что запрос выполнен успешно
-    // Если есть ошибка "failed integrity check", это означает, что бонус уже собран или недоступен
-    if (response.errors && response.errors.length > 0) {
-      const hasIntegrityError = response.errors.some((e: any) => e.message === 'failed integrity check');
-      if (hasIntegrityError) {
-        // Бонус уже собран или недоступен - это нормально
-        // API может показывать availableClaim, но бонус уже был собран между проверкой и попыткой
-        return false;
-      }
+    let response = await this.postRequest(operation, { requireIntegrity: true });
+
+    if (GraphQLClient.hasIntegrityError(response)) {
+      logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
+      this.integrityProvider.invalidate();
+      response = await this.postRequest(operation, { requireIntegrity: true });
     }
-    
-    // Проверяем результат операции
-    const claimResult = response.data?.claimCommunityPoints;
-    
-    // Если claimResult не null и не undefined, значит операция выполнена
-    // В Channel Points Miner они просто отправляют запрос и не проверяют результат
-    // Но мы проверяем, чтобы знать, успешно ли собрали
+
+    return GraphQLClient.parseClaimBonusResult(response);
+  }
+
+  /**
+   * @param response Ответ ClaimCommunityPoints
+   */
+  private static hasIntegrityError(response: GraphQLResponse): boolean {
+    return Boolean(
+      response.errors?.some((e: { message?: string }) => e.message === 'failed integrity check')
+    );
+  }
+
+  private static parseClaimBonusResult(response: GraphQLResponse): ClaimBonusResult {
+    if (GraphQLClient.hasIntegrityError(response)) {
+      logger.verbose(
+        '⚠️  ClaimCommunityPoints: failed integrity check — обновите TWITCH_CLIENT_INTEGRITY из DevTools'
+      );
+      return { success: false, failureKind: 'integrity' };
+    }
+
+    const claimResult = (response.data as any)?.claimCommunityPoints;
+    const claimError = claimResult?.error;
+
+    if (claimError?.code) {
+      logger.verbose(`⚠️  ClaimCommunityPoints error: ${claimError.code}`);
+      const failureKind = PERMANENT_CLAIM_ERROR_CODES.has(claimError.code)
+        ? 'permanent'
+        : undefined;
+      return { success: false, failureKind };
+    }
+
+    if (claimResult?.status === 'SUCCESS') {
+      return { success: true };
+    }
+
     if (claimResult !== null && claimResult !== undefined) {
-      // Если есть поле status, проверяем его
-      if (claimResult.status === 'SUCCESS') {
-        return true;
-      }
-      // Если это объект с данными (не null), считаем успехом
       if (typeof claimResult === 'object' && Object.keys(claimResult).length > 0) {
-        return true;
+        return { success: true };
       }
     }
-    
-    // Если claimResult === null, значит операция не выполнена (бонус уже собран или недоступен)
-    return false;
+
+    if (response.errors?.length) {
+      logger.verbose(
+        `⚠️  ClaimCommunityPoints gql errors: ${response.errors.map((e: any) => e.message).join(', ')}`
+      );
+    }
+
+    return { success: false };
   }
 
   /**
@@ -726,22 +861,20 @@ export class GraphQLClient {
       },
     };
 
-    const response = await this.postRequest(operation);
-    
-    // Проверяем успешность операции
-    // В Channel Points Miner они просто отправляют запрос без проверки результата
-    // Но мы проверяем, чтобы знать, успешно ли присоединились
+    let response = await this.postRequest(operation, { requireIntegrity: true });
+
+    if (GraphQLClient.hasIntegrityError(response)) {
+      this.integrityProvider.invalidate();
+      response = await this.postRequest(operation, { requireIntegrity: true });
+    }
+
     if (response.errors && response.errors.length > 0) {
-      // Если есть ошибки, логируем их, но не считаем критичными
-      const hasIntegrityError = response.errors.some((e: any) => e.message === 'failed integrity check');
-      if (!hasIntegrityError) {
-        // Для других ошибок логируем
+      if (!GraphQLClient.hasIntegrityError(response)) {
         logger.error(`❌  Error joining raid ${raidId}:`, response.errors[0].message);
       }
       return false;
     }
-    
-    // Если нет ошибок, считаем успехом
+
     return true;
   }
 }

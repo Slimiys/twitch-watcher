@@ -5,6 +5,48 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.6.0] - 2026-05-25
+
+### Добавлено
+- Client-Integrity для сбора бонусов и рейдов: режим **manual** (`TWITCH_CLIENT_INTEGRITY` из DevTools) и **api** (`POST /integrity`)
+- Заголовки GraphQL как у веб-клиента: `Client-Version`, `Client-Session-Id`, опционально `Cookie` (`twitchGqlContext.ts`)
+- Режим просмотра **per-channel** (отдельный таймер minute-watched на каждый онлайн-канал)
+- Периодический опрос GraphQL на `availableClaim` (дополнение к WebSocket `claim-available`)
+- HTTPS для веб-дашборда (самоподписанные сертификаты, `WEB_SERVER_HTTPS`)
+- Уведомления дашборда: toast, OS, звук; онлайн/офлайн стримеров
+- Ping-pong ротация логов (`logs/twitch-watcher.*.log`, до 100 MB)
+- Отдельный `crash.log` для фатальных ошибок и аварийных выходов
+- Лог версии при старте (`semver.hash` из `package.json` и git)
+- Накопление баллов за текущий стрим (`streamPointsEarned`) с сохранением после офлайна
+
+### Изменено
+- Удалены Playwright и browser/manual integrity — только API-режим
+- Blocklist `claimId` только при постоянных ошибках (FORBIDDEN, уже собран); при `failed integrity check` — повтор
+- `last_stream_start` / `last_stream_end` сохраняются и по событиям WebSocket (`stream-up` / `stream-down`)
+- Улучшены устойчивость WebSocket (reconnect, health-check), безопасные async-интервалы, resume просмотра
+
+### Исправлено
+- Сбор бонусов: корректные `channel_id` / `claim_id` из WebSocket, fallback через GraphQL
+- ChannelPointsContext: актуальный persisted query и legacy fallback
+- Стабильность long-running: таймауты watch, защита от ложного OFFLINE при сетевых сбоях
+- Docker/Termux: документация manual integrity в `ANDROID_SETUP.md`
+
+## [0.5.2] - 2026-01-07
+
+### Изменено
+- Заменена база данных `better-sqlite3` на `sql.js` (WebAssembly-based SQLite)
+- Упрощен Dockerfile - удалены зависимости для компиляции нативных модулей (Python, make, g++)
+
+### Исправлено
+- База данных теперь работает на всех платформах без компиляции, включая Android
+- Устранена необходимость в Python и build tools для работы базы данных
+- Добавлены TypeScript типы для `sql.js`
+
+### Технические детали
+- `sql.js` использует WebAssembly и не требует компиляции нативных модулей
+- Полная совместимость с SQLite API
+- Автоматическое сохранение базы данных в файл после изменений
+
 ## [0.5.1] - 2026-01-07
 
 ### Добавлено
@@ -120,6 +162,8 @@
 - Добавлен веб-интерфейс для мониторинга и статистики
 - Добавлена поддержка сохранения статистики в файл
 
+[0.6.0]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Slimiys/twitch-watcher/compare/v0.4.1...v0.4.2

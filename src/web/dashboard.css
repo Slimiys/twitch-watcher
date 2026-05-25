@@ -61,6 +61,23 @@ body.density-spacious td {
 .container {
     max-width: 1400px;
     margin: 0 auto;
+    /* Убеждаемся, что нет overflow, который блокирует sticky */
+    overflow: visible;
+}
+
+/* Одноколоночный макет */
+.main-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+
+/* Адаптация для мобильных устройств */
+@media (max-width: 1200px) {
+    .main-layout {
+        gap: 15px;
+    }
 }
 
 header {
@@ -102,6 +119,81 @@ h1 {
     to {
         transform: rotate(360deg);
     }
+}
+
+/* Экран загрузки */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #0e0e10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    transition: opacity 0.5s ease-out;
+}
+
+.loading-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    text-align: center;
+    max-width: 400px;
+    padding: 40px;
+}
+
+.loading-logo h1 {
+    color: #9147ff;
+    font-size: 32px;
+    margin-bottom: 30px;
+    font-weight: 600;
+}
+
+.loading-spinner-large {
+    width: 60px;
+    height: 60px;
+    border: 4px solid #26262c;
+    border-top-color: #9147ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 30px;
+}
+
+.loading-status {
+    margin-top: 30px;
+}
+
+.loading-status-text {
+    color: #efeff1;
+    font-size: 16px;
+    margin-bottom: 20px;
+    min-height: 24px;
+}
+
+.loading-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #26262c;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.loading-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #9147ff, #772ce8);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.loading-progress-text {
+    color: #adadb8;
+    font-size: 14px;
 }
 
 .connection-status {
@@ -261,10 +353,24 @@ h1 {
     border: 1px solid #26262c;
 }
 
+/* Для правой колонки section не должен иметь margin-bottom, чтобы растягиваться */
+.sidebar-content .section {
+    margin-bottom: 0;
+}
+
+/* Для grid-item-events section должен растягиваться на всю высоту */
+.grid-item-events.section {
+    margin-bottom: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
 .section h2 {
     color: #efeff1;
     margin-bottom: 20px;
     font-size: 20px;
+    flex-shrink: 0;
 }
 
 .section-header-clickable {
@@ -341,8 +447,34 @@ th {
     text-transform: uppercase;
 }
 
+/* Стили для сортируемых заголовков */
+th.sortable {
+    position: relative;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+th.sortable:hover {
+    background-color: rgba(145, 71, 255, 0.1);
+    color: #9147ff;
+}
+
+th.sortable.sort-asc,
+th.sortable.sort-desc {
+    color: #9147ff;
+    background-color: rgba(145, 71, 255, 0.15);
+}
+
 td {
     color: #efeff1;
+}
+
+/* Стиль для некорректного времени (когда время окончания меньше времени начала) */
+td.invalid-time {
+    opacity: 0.5;
+}
+
+td.invalid-time span {
+    opacity: 1;
 }
 
 .streamer-name {
@@ -548,6 +680,19 @@ td {
     overflow-y: auto;
 }
 
+/* Для grid-item-events events-list должен занимать всю доступную высоту */
+.grid-item-events .events-list {
+    max-height: none;
+    flex: 1 1 auto; /* Растягиваемся и занимаем все доступное пространство */
+    min-height: 0; /* Позволяем сжиматься при необходимости */
+}
+
+/* Для правой колонки events-list должен занимать всю высоту */
+.sidebar-content .events-list {
+    max-height: none;
+    flex: 1;
+}
+
 .event-item {
     padding: 10px;
     border-bottom: 1px solid #26262c;
@@ -659,6 +804,7 @@ td {
     background: #18181b;
     border-radius: 6px;
     border: 1px solid #26262c;
+    flex-shrink: 0;
 }
 
 .filter-label {
@@ -1232,6 +1378,62 @@ td {
     border-color: #9147ff;
 }
 
+.colorize-toggle-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #26262c;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #adadb8;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: #9147ff;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+    background-color: white;
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 1px #9147ff;
+}
+
 /* Анимации обновления */
 @keyframes fadeIn {
     from {
@@ -1311,6 +1513,80 @@ td {
 
 .toast-notification.warning {
     background: #f59e0b;
+}
+
+.toast-notification.stream-up {
+    background: linear-gradient(135deg, #9147ff 0%, #00d166 100%);
+}
+
+.toast-notification.stream-down {
+    background: #464649;
+    border: 1px solid #adadb8;
+}
+
+/* Колонка уведомлений: заголовок и ячейки с одним выравниванием */
+th.notify-header,
+td.notify-cell {
+    width: 36px;
+    min-width: 36px;
+    max-width: 36px;
+    text-align: center;
+    vertical-align: middle;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+th.notify-header {
+    text-transform: none;
+    font-size: 16px;
+}
+
+th.notify-header-clickable:hover {
+    opacity: 0.85;
+    transform: scale(1.08);
+}
+
+th.notify-header-clickable:active {
+    transform: scale(1);
+}
+
+.streamer-notify-toggle {
+    display: inline-block;
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    margin: 0;
+    vertical-align: middle;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity 0.2s, transform 0.15s;
+}
+
+.streamer-notify-toggle:hover,
+.streamer-notify-toggle:focus,
+.streamer-notify-toggle:focus-visible,
+.streamer-notify-toggle:active {
+    background: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    transform: scale(1.1);
+}
+
+.streamer-notify-toggle.streamer-notify-off {
+    opacity: 0.45;
+}
+
+.streamer-notify-toggle.streamer-notify-on {
+    opacity: 1;
 }
 
 .toast-icon {
@@ -1517,10 +1793,42 @@ td {
     border-color: #9147ff;
 }
 
-.settings-modal-content {
+.settings-modal-content,
+.test-modal-content {
     max-width: 600px;
     max-height: 90vh;
     overflow-y: auto;
+}
+
+.test-modal-content {
+    max-width: 520px;
+}
+
+.test-notify-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.test-notify-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.test-notify-label {
+    flex: 0 0 100%;
+    color: #adadb8;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.test-notify-group .modal-btn {
+    flex: 1;
+    min-width: 120px;
 }
 
 .settings-modal-body {
@@ -2019,29 +2327,48 @@ td {
     transition: all 0.3s ease;
 }
 
-.points-badge.low {
+/* Tier 1: 0 - 1000 */
+.points-badge.tier-1 {
     background: rgba(239, 68, 68, 0.15);
     color: #ff6b6b;
     border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
-.points-badge.medium {
+/* Tier 2: 1001 - 10000 */
+.points-badge.tier-2 {
     background: rgba(245, 158, 11, 0.15);
     color: #fbbf24;
     border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
-.points-badge.high {
+/* Tier 3: 10001 - 100000 */
+.points-badge.tier-3 {
     background: rgba(0, 209, 102, 0.15);
     color: #00d166;
     border: 1px solid rgba(0, 209, 102, 0.3);
 }
 
-.points-badge.very-high {
+/* Tier 4: 100001 - 1000000 */
+.points-badge.tier-4 {
     background: rgba(145, 71, 255, 0.15);
     color: #9147ff;
     border: 1px solid rgba(145, 71, 255, 0.3);
     box-shadow: 0 0 8px rgba(145, 71, 255, 0.3);
+}
+
+/* Стили для отображения разницы баллов */
+.points-diff {
+    font-size: 0.85em;
+    font-weight: 500;
+    margin-left: 4px;
+}
+
+.points-diff.diff-positive {
+    color: #00d166;
+}
+
+.points-diff.diff-negative {
+    color: #ef4444;
 }
 
 /* Иконки для типов событий */
