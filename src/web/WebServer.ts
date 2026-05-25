@@ -15,6 +15,17 @@ import {
   resolveHttpsCredentialPaths,
 } from './httpsCredentials';
 import { createDashboardApiKeyMiddleware } from './apiAuth';
+import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
+import { getAppVersionParts } from '../appVersion';
+import {
+  isDashboardUpdateEnabled,
+  isDashboardUpdateInProgress,
+  triggerDashboardUpdate,
+  triggerDashboardRestart,
+  triggerDashboardStop,
+  validateDashboardUpdateRequest,
+} from './appUpdate';
+import { buildAppUpdateStatus } from './appUpdateStatus';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -50,6 +61,7 @@ export interface StatisticsProvider {
     activeWatches: number;
     totalPointsEarned: number;
     lastActivity: number;
+    lastOnlineStreamer: string | null;
     streamersCount: number;
   };
 
@@ -131,6 +143,11 @@ export interface StatisticsProvider {
    * Заполняет приложение тестовыми данными
    */
   fillTestData?(): Promise<{ eventsCount: number; streamersCount: number }>;
+
+  /**
+   * Снимок здоровья бота (WebSocket, integrity, claim, GraphQL)
+   */
+  getBotHealth?(): BotHealthSnapshot;
 }
 
 /**
@@ -187,6 +204,8 @@ export class WebServer {
     // Эндпоинт для проверки статуса инициализации
     this.app.get('/api/server-info', (_req: Request, res: Response) => {
       const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      const { semver, revision, label } = getAppVersionParts();
+      const dashboardUpdateCheck = validateDashboardUpdateRequest();
       res.json({
         scheme: getWebServerScheme(),
         httpsEnabled: isWebServerHttpsEnabled(),
@@ -197,7 +216,92 @@ export class WebServer {
         certExists: fs.existsSync(certPath),
         keyExists: fs.existsSync(keyPath),
         pid: process.pid,
+        appVersion: label,
+        appSemver: semver,
+        gitRevision: revision,
+        dashboardUpdateEnabled: isDashboardUpdateEnabled(),
+        dashboardUpdateCanTrigger: dashboardUpdateCheck.ok,
+        dashboardUpdateBlockedReason:
+          dashboardUpdateCheck.ok === false ? dashboardUpdateCheck.error : null,
+        dashboardUpdateInProgress: isDashboardUpdateInProgress(),
       });
+    });
+
+    this.app.get('/api/app-update-check', (req: Request, res: Response) => {
+      try {
+        const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+        res.json(buildAppUpdateStatus(forceRefresh));
+      } catch (error: any) {
+        logger.error('Error checking app update:', error);
+        res.status(500).json({
+          error: error.message || 'Unknown error',
+          updateAvailable: false,
+          uiState: 'error',
+          indicatorLabel: 'Ошибка проверки',
+        });
+      }
+    });
+
+    this.app.post('/api/app-update', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardUpdate();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app update:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/app-stop', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardStop();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app stop:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/app-restart', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardRestart();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app restart:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/bot-health', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider?.getBotHealth) {
+          const { semver, revision, label } = getAppVersionParts();
+          res.status(503).json({
+            error: 'Watcher is not running',
+            appVersion: label,
+            appSemver: semver,
+            gitRevision: revision,
+            watcherRunning: false,
+          });
+          return;
+        }
+        res.json(this.statisticsProvider.getBotHealth());
+      } catch (error: any) {
+        logger.error('Error getting bot health:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
     });
 
     this.app.get('/api/initialization-status', (req: Request, res: Response) => {
@@ -332,6 +436,9 @@ export class WebServer {
         }
 
         const stats = this.statisticsProvider.getOverallStats();
+        logger.verbose(
+          `GET /api/overall: activeWatches=${stats.activeWatches} totalPoints=${stats.totalPointsEarned} streamers=${stats.streamersCount} lastOnline=${stats.lastOnlineStreamer ?? '—'} agoMs=${stats.lastActivity}`
+        );
         res.json(stats);
       } catch (error: any) {
         logger.error('Error getting overall stats:', error);
@@ -906,11 +1013,10 @@ export class WebServer {
       // Игнорируем ошибки
     }
 
-    // По умолчанию считаем что инициализация завершена
     return {
-      isInitialized: true,
-      currentAction: 'Ready',
-      progress: 100
+      isInitialized: false,
+      currentAction: 'Initializing application...',
+      progress: 0,
     };
   }
 

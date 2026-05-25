@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from './modes/api/logger';
+import { removePidFile } from './pidFile';
 
 /** Разделитель записей в crash.log */
 const CRASH_REPORT_SEPARATOR = '\n========== CRASH REPORT ==========\n';
@@ -206,6 +207,7 @@ export function registerProcessGuards(): void {
   });
 
   process.on('exit', (code: number) => {
+    removePidFile();
     if (code === 0) {
       return;
     }

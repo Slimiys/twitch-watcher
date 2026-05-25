@@ -8,16 +8,22 @@ const projectRoot = path.join(__dirname, '..');
 let cachedVersionLabel: string | null = null;
 
 /**
+ * Semver, git revision и полная метка версии
+ */
+export function getAppVersionParts(): { semver: string; revision: string; label: string } {
+  const semver = readPackageVersion();
+  const revision = resolveGitRevision();
+  return { semver, revision, label: `${semver}.${revision}` };
+}
+
+/**
  * Возвращает метку версии приложения: semver и короткий hash коммита (например 0.5.2.a1b2c3d4e5f6).
  */
 export function getAppVersionLabel(): string {
   if (cachedVersionLabel) {
     return cachedVersionLabel;
   }
-
-  const semver = readPackageVersion();
-  const revision = resolveGitRevision();
-  cachedVersionLabel = `${semver}.${revision}`;
+  cachedVersionLabel = getAppVersionParts().label;
   return cachedVersionLabel;
 }
 

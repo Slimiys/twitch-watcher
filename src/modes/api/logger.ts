@@ -23,15 +23,16 @@ class Logger {
       ? (envLevel as LogLevel)
       : LogLevel.VERBOSE;
 
-    this.fileLogger = createPingPongFileLoggerFromEnv();
+    const fileSetup = createPingPongFileLoggerFromEnv();
+    this.fileLogger = fileSetup.logger;
+    if (fileSetup.clearedFiles > 0) {
+      console.log(
+        `🗑️  Log directory cleared on startup (${fileSetup.clearedFiles} file(s)): ${fileSetup.logDir}`
+      );
+    }
     if (this.fileLogger) {
       const [p1, p2] = this.fileLogger.getLogPaths();
-      const cleared = process.env.LOG_CLEAR_ON_START !== 'false'
-        && process.env.LOG_CLEAR_ON_START !== '0';
       console.log(`📝  File logging enabled (max ${process.env.LOG_FILE_MAX_MB || '100'} MB per file, ping-pong):`);
-      if (cleared) {
-        console.log('🗑️  Previous log files cleared on startup');
-      }
       console.log(`    ${p1}`);
       console.log(`    ${p2}`);
     }

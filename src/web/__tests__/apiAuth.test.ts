@@ -48,7 +48,9 @@ describe('apiAuth', () => {
     const middleware = createDashboardApiKeyMiddleware();
     const next = vi.fn();
     middleware(mockReq('/api/server-info'), mockRes(), next as NextFunction);
-    expect(next).toHaveBeenCalled();
+    middleware(mockReq('/api/app-update-check'), mockRes(), next as NextFunction);
+    middleware(mockReq('/api/overall'), mockRes(), next as NextFunction);
+    expect(next).toHaveBeenCalledTimes(3);
   });
 
   it('rejects protected path without key', () => {

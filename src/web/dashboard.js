@@ -35,17 +35,9 @@ let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000
 let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
 let eventSource = null; // Для Server-Sent Events
 let lastEventCheckTimestamp = 0; // Timestamp последнего проверенного события
+/** Полное обновление UI после инициализации уже выполнено */
+let applicationDataRefreshStarted = false;
 let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
-
-let selectedEventTags = new Set();
-try {
-    const tags = safeGetLocalStorage('selectedEventTags') || '[]';
-    selectedEventTags = new Set(JSON.parse(tags));
-} catch (e) {
-    selectedEventTags = new Set();
-}
-
-let availableEventTags = new Set(); // Доступные теги из событий
 
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
@@ -111,52 +103,17 @@ try {
     lastCurrentPoints = {};
 }
 
-// Пагинация событий
-let eventsPageSize = 20; // Количество событий на странице
-let eventsOffset = 0; // Текущий offset для загрузки старых событий при прокрутке
-let allLoadedEvents = []; // Все загруженные события
-let isLoadingEvents = false; // Флаг загрузки событий
-let hasMoreEvents = true; // Есть ли еще события для загрузки
-
-// Ленивая инициализация плагина зума Chart.js
-function getZoomPlugin() {
-    if (zoomPlugin !== null) return zoomPlugin;
-
-    let plugin = null;
-    if (typeof ChartZoom !== 'undefined') {
-        plugin = ChartZoom;
-    } else if (typeof window !== 'undefined') {
-        if (window.ChartZoom) {
-            plugin = window.ChartZoom;
-        } else if (window.Chart && window.Chart.registry && window.Chart.registry.plugins) {
-            const registeredPlugins = Array.from(window.Chart.registry.plugins.values());
-            plugin = registeredPlugins.find(p => p.id === 'zoom');
-        }
+/**
+ * Last Activity: последний стример, перешедший в онлайн, и сколько времени назад
+ * @param {{ lastActivity?: number, lastOnlineStreamer?: string|null }} stats
+ */
+function formatOverallLastActivity(stats) {
+    const streamer = stats?.lastOnlineStreamer;
+    const ms = stats?.lastActivity;
+    if (!streamer || !Number.isFinite(ms) || ms <= 0) {
+        return '—';
     }
-
-    zoomPlugin = plugin;
-
-    // Пытаемся зарегистрировать плагин, если он найден и еще не зарегистрирован
-    if (zoomPlugin && window.Chart) {
-        try {
-            const registeredPlugins = window.Chart.registry?.plugins
-                ? Array.from(window.Chart.registry.plugins.values())
-                : [];
-            const isRegistered = registeredPlugins.some(p =>
-                p.id === 'zoom' ||
-                p === zoomPlugin ||
-                (zoomPlugin.id && p.id === zoomPlugin.id)
-            );
-
-            if (!isRegistered) {
-                window.Chart.register(zoomPlugin);
-            }
-        } catch (e) {
-            // Игнорируем ошибки регистрации (например, если плагин уже зарегистрирован)
-        }
-    }
-
-    return zoomPlugin;
+    return `${streamer} · ${formatTime(ms)} ago`;
 }
 
 function formatTime(ms) {
@@ -263,38 +220,6 @@ function generatePointsBadgeWithDiff(currentPoints, previousPoints) {
     return `<span class="points-badge ${category}">${currentFormatted}</span>${diffHtml}`;
 }
 
-/**
- * Получает иконку для типа события
- * @param {string} eventType Тип события
- * @returns {string} Эмодзи иконка
- */
-function getEventIcon(eventType) {
-    const iconMap = {
-        'points-earned': '💰',
-        'claim-earned': '🎁',
-        'claim-success': '✅',
-        'stream-up': '📺',
-        'stream-down': '📴',
-        'token-expired': '⏰',
-        'token-invalid': '❌',
-        'raid-joined': '⚔️',
-        'bonus-claimed': '🎯',
-        'error': '⚠️',
-        'warning': '🔔',
-        'info': 'ℹ️',
-        'success': '✓'
-    };
-    
-    // Ищем точное совпадение или частичное
-    for (const [key, icon] of Object.entries(iconMap)) {
-        if (eventType.toLowerCase().includes(key.toLowerCase())) {
-            return icon;
-        }
-    }
-    
-    return '📌'; // Иконка по умолчанию
-}
-
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
@@ -388,17 +313,17 @@ function formatTimeWithColors(timestamp, timeColor) {
  * @returns {string} HTML код skeleton loader
  */
 function generateStatsSkeleton() {
-    return `
-        <div class="stats-grid">
-            ${Array.from({ length: 4 }).map(() => `
+    return Array.from({ length: 4 })
+        .map(
+            () => `
                 <div class="skeleton-stat-card">
                     <div class="skeleton skeleton-stat-title"></div>
                     <div class="skeleton skeleton-stat-value"></div>
                     <div class="skeleton skeleton-stat-label"></div>
                 </div>
-            `).join('')}
-        </div>
-    `;
+            `
+        )
+        .join('');
 }
 
 /**
@@ -419,30 +344,6 @@ function generateTableSkeleton(rows = 5) {
                     ${Array.from({ length: 6 }).map(() => `
                         <div class="skeleton skeleton-table-cell"></div>
                     `).join('')}
-                </div>
-            `).join('')}
-        </div>
-    `;
-}
-
-/**
- * Генерирует skeleton loader для графика
- * @returns {string} HTML код skeleton loader
- */
-/**
- * Генерирует skeleton loader для списка событий
- * @param {number} items Количество элементов
- * @returns {string} HTML код skeleton loader
- */
-function generateEventsSkeleton(items = 5) {
-    return `
-        <div class="events-list">
-            ${Array.from({ length: items }).map(() => `
-                <div class="skeleton-event-item">
-                    <div class="skeleton skeleton-event-time"></div>
-                    <div class="skeleton skeleton-event-icon"></div>
-                    <div class="skeleton skeleton-event-type"></div>
-                    <div class="skeleton skeleton-event-content"></div>
                 </div>
             `).join('')}
         </div>
@@ -546,6 +447,738 @@ async function fetchData(endpoint) {
     }
 }
 
+/**
+ * POST к API dashboard (с API-ключом)
+ */
+async function postApi(endpoint, body = {}) {
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const msg = data.message || data.error || `HTTP ${response.status}`;
+            return { ok: false, message: msg, data };
+        }
+        return { ok: true, message: data.message || 'OK', data };
+    } catch (error) {
+        console.error(`Error POST ${endpoint}:`, error);
+        return { ok: false, message: error.message || String(error) };
+    }
+}
+
+/** Опрос обновлений и карточка «Версия» */
+const VERSION_UPDATE_POLL_MS = 60_000;
+/** Опрос после stop/restart/update (Termux: npm install может занять несколько минут) */
+const RECONNECT_POLL_MS = 3_000;
+const RECONNECT_MAX_ATTEMPTS = 200;
+let versionUpdatePollTimer = null;
+let versionUpdateFastPollTimer = null;
+let versionUpdateStatus = null;
+let lastBotHealthForVersion = null;
+let versionCardBusy = false;
+/** Режим ожидания перезапуска: update | restart */
+let lifecycleWaitMode = null;
+/** PID бота до update/restart (новый процесс = другой pid) */
+let lifecycleWaitPreviousPid = null;
+/** Время начала ожидания lifecycle (для сброса зависшего «Обновление…») */
+let lifecycleWaitStartedAt = 0;
+/** Если скрипт завершился, а PID бота не сменился — сброс UI через это время */
+const LIFECYCLE_SAME_PID_ABORT_MS = 45_000;
+/** Сервер дашборда был недоступен во время update/restart (бот перезапускался) */
+let lifecycleServerWasDown = false;
+
+/**
+ * Кнопка «Обновиться» в шапке скрыта — обновление через карточку «Версия»
+ */
+async function initAppUpdateButton() {
+    const btn = document.getElementById('appUpdateBtn');
+    if (btn) {
+        btn.style.display = 'none';
+    }
+}
+
+/**
+ * Кнопки «Остановить» и «Перезапустить» (Termux, DASHBOARD_UPDATE_ENABLED)
+ */
+async function initProcessControlButtons() {
+    const stopBtn = document.getElementById('appStopBtn');
+    const restartBtn = document.getElementById('appRestartBtn');
+    if (!stopBtn && !restartBtn) {
+        return;
+    }
+
+    const info = await fetchData('/server-info');
+    const enabled = info?.dashboardUpdateEnabled === true;
+    const inProgress = info?.dashboardUpdateInProgress === true;
+    const blocked = info?.dashboardUpdateBlockedReason;
+
+    if (stopBtn) {
+        stopBtn.style.display = enabled ? '' : 'none';
+        stopBtn.disabled = inProgress;
+        stopBtn.title = blocked || 'Остановить бота (завершить процесс)';
+        if (!stopBtn.dataset.bound) {
+            stopBtn.dataset.bound = '1';
+            stopBtn.addEventListener('click', () => {
+                if (stopBtn.disabled) {
+                    return;
+                }
+                showConfirmModal(
+                    'Остановить бота?',
+                    'Процесс twitch-watcher будет завершён. Дашборд отключится. Продолжить?',
+                    () => triggerDashboardStop()
+                );
+            });
+        }
+    }
+
+    if (restartBtn) {
+        restartBtn.style.display = enabled ? '' : 'none';
+        restartBtn.disabled = inProgress;
+        restartBtn.title = blocked || 'Перезапуск: stop + npm start (как после обновления)';
+        if (!restartBtn.dataset.bound) {
+            restartBtn.dataset.bound = '1';
+            restartBtn.addEventListener('click', () => {
+                if (restartBtn.disabled) {
+                    return;
+                }
+                showConfirmModal(
+                    'Перезапустить бота?',
+                    'Будет выполнено: остановка процесса → npm start в фоне. ' +
+                        'Дашборд отключится на 1–2 минуты. Продолжить?',
+                    () => triggerDashboardRestart()
+                );
+            });
+        }
+    }
+}
+
+async function triggerDashboardStop() {
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Остановка…');
+    }
+    const result = await postApi('/app-stop', {});
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        updateConnectionStatus(false);
+        const statusText = document.getElementById('statusText');
+        if (statusText) {
+            statusText.textContent = 'Остановка…';
+        }
+    } else if (typeof showNotification === 'function') {
+        showNotification('error', result.message || 'Не удалось остановить');
+    }
+}
+
+async function captureLifecycleWaitPid() {
+    const info = await fetchServerInfoForReconnect();
+    lifecycleWaitPreviousPid = info?.pid ?? null;
+}
+
+async function triggerDashboardRestart() {
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Перезапуск…');
+    }
+    await captureLifecycleWaitPid();
+    const result = await postApi('/app-restart', {});
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        beginLifecycleWaitUi('restart');
+        startDashboardReconnectWatch('Перезапуск завершён. Перезагрузка страницы…', 'restart');
+    } else {
+        resetDashboardLifecycleUi('Disconnected');
+        if (typeof showNotification === 'function') {
+            showNotification('error', result.message || 'Не удалось перезапустить');
+        }
+    }
+}
+
+/**
+ * Локальный UI «идёт перезапуск/обновление» до ответа нового процесса
+ */
+function shouldAbortStaleLifecycleWait(data) {
+    if (!lifecycleWaitMode || !data) {
+        return false;
+    }
+    if (data.dashboardUpdateInProgress || data.uiState === 'updating') {
+        return false;
+    }
+    if (hasNewBotPidAfterLifecycle(data.serverPid)) {
+        return false;
+    }
+    if (!lifecycleWaitStartedAt) {
+        return false;
+    }
+    return Date.now() - lifecycleWaitStartedAt >= LIFECYCLE_SAME_PID_ABORT_MS;
+}
+
+/**
+ * Сброс UI, если обновление на сервере завершилось, но бот не перезапустился (типично: ошибка kill в логе)
+ */
+function recoverStaleLifecycleIfNeeded(data) {
+    if (!shouldAbortStaleLifecycleWait(data)) {
+        return false;
+    }
+    resetDashboardLifecycleUi('Обновление прервано — обновите страницу (F5)');
+    if (typeof showNotification === 'function') {
+        showNotification(
+            'warn',
+            'Скрипт обновления завершился, но бот не перезапустился. См. logs/dashboard-update.log'
+        );
+    }
+    void pollVersionUpdateStatus(true);
+    return true;
+}
+
+function beginLifecycleWaitUi(mode) {
+    lifecycleWaitMode = mode;
+    lifecycleWaitStartedAt = Date.now();
+    lifecycleServerWasDown = false;
+    versionCardBusy = true;
+    const label = mode === 'update' ? 'Обновление' : 'Перезапуск';
+    versionUpdateStatus = {
+        ...(versionUpdateStatus || {}),
+        uiState: 'updating',
+        indicatorLabel: `${label}…`,
+        dashboardUpdateInProgress: true,
+    };
+    if (lastBotHealthForVersion) {
+        patchBotHealthVersionCard(lastBotHealthForVersion);
+    }
+    updateConnectionStatus(false);
+    setLifecycleHeaderText(`${label}…`);
+}
+
+/**
+ * Опрос статуса обновления (ветка dev на origin)
+ */
+async function pollVersionUpdateStatus(forceRefresh = false) {
+    if (!forceRefresh && !lifecycleWaitMode) {
+        versionUpdateStatus = {
+            ...(versionUpdateStatus || {}),
+            uiState: 'checking',
+            indicatorLabel: 'Проверка…',
+        };
+        if (lastBotHealthForVersion) {
+            patchBotHealthVersionCard(lastBotHealthForVersion);
+        }
+    }
+
+    const query = forceRefresh ? '?refresh=1' : '';
+    const data = await fetchData(`/app-update-check${query}`);
+    if (!data) {
+        return null;
+    }
+    if (tryFinishLifecycleIfReady(data)) {
+        return data;
+    }
+    if (recoverStaleLifecycleIfNeeded(data)) {
+        return data;
+    }
+    if (!lifecycleWaitMode && data.uiState !== 'updating') {
+        versionCardBusy = false;
+    }
+    versionUpdateStatus = data;
+    if (lastBotHealthForVersion) {
+        patchBotHealthVersionCard(lastBotHealthForVersion);
+    }
+    return data;
+}
+
+function versionCardDotKind(uiState) {
+    switch (uiState) {
+        case 'available':
+            return 'warn';
+        case 'updating':
+        case 'checking':
+            return 'off';
+        case 'error':
+            return 'err';
+        case 'unavailable':
+            return 'off';
+        case 'current':
+        default:
+            return 'ok';
+    }
+}
+
+/**
+ * Карточка «Версия» с индикатором состояния обновления
+ */
+function renderVersionHealthCard(health) {
+    const st = versionUpdateStatus;
+    const uiState = st?.uiState || 'checking';
+    const dotKind = versionCardDotKind(uiState);
+    const indicatorLabel = st?.indicatorLabel || 'Проверка…';
+
+    let title = 'Нажмите, чтобы проверить обновление';
+    if (uiState === 'available') {
+        title = 'Доступно обновление с dev — нажмите для установки';
+    } else if (uiState === 'current') {
+        title = 'Версия совпадает с origin/dev';
+    } else if (uiState === 'updating') {
+        title = 'Идёт обновление…';
+    } else if (uiState === 'error') {
+        title = 'Ошибка проверки — нажмите повторить';
+    }
+
+    let valueHtml = escapeHtml(health.appVersion || '—');
+    if (uiState === 'available') {
+        valueHtml += '<span class="bot-health-update-badge">NEW</span>';
+    }
+
+    const detailParts = [
+        `<span class="version-status-pill version-status-pill--${uiState}">${escapeHtml(indicatorLabel)}</span>`,
+        `Локально: git ${escapeHtml(health.gitRevision || st?.localRevision || '—')}`,
+    ];
+
+    if (st?.remoteRevision && uiState === 'available') {
+        detailParts.push(
+            `${escapeHtml(st.remote || 'origin')}/${escapeHtml(st.branch || 'dev')}: ` +
+                `<strong>${escapeHtml(st.remoteRevision)}</strong>`
+        );
+    }
+    if (st?.error) {
+        detailParts.push(escapeHtml(st.error));
+    }
+    if (st?.checkSkippedReason) {
+        detailParts.push(escapeHtml(st.checkSkippedReason));
+    }
+    if (st?.dashboardUpdateEnabled === false && uiState === 'available') {
+        detailParts.push('Для установки: DASHBOARD_UPDATE_ENABLED=true в .env');
+    }
+
+    const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
+    const busyAttr = versionCardBusy || uiState === 'updating' ? ' aria-busy="true"' : '';
+
+    return `
+        <div class="bot-health-card bot-health-card-version" id="botHealthVersionCard" data-state="${escapeHtml(uiState)}" role="button" tabindex="0" title="${escapeHtml(title)}"${busyAttr}>
+            <div class="bot-health-card-title">Версия</div>
+            <div class="bot-health-card-value">${dot}${valueHtml}</div>
+            <div class="bot-health-card-detail">${detailParts.join('<br>')}</div>
+        </div>
+    `;
+}
+
+function bindBotHealthVersionCardClick() {
+    const card = document.getElementById('botHealthVersionCard');
+    if (!card || card.dataset.bound === '1') {
+        return;
+    }
+    card.dataset.bound = '1';
+    const activate = () => {
+        handleVersionCardClick();
+    };
+    card.addEventListener('click', activate);
+    card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activate();
+        }
+    });
+}
+
+function patchBotHealthVersionCard(health) {
+    const grid = document.getElementById('botHealthGrid');
+    const existing = document.getElementById('botHealthVersionCard');
+    if (!grid || !existing) {
+        return;
+    }
+    const wrap = document.createElement('div');
+    wrap.innerHTML = renderVersionHealthCard(health).trim();
+    const newCard = wrap.firstElementChild;
+    if (newCard) {
+        grid.replaceChild(newCard, existing);
+        bindBotHealthVersionCardClick();
+    }
+}
+
+/**
+ * Клик по «Версия»: проверка и установка последней ревизии dev
+ */
+async function handleVersionCardClick() {
+    if (versionCardBusy) {
+        return;
+    }
+
+    const st = versionUpdateStatus;
+    if (st?.uiState === 'updating' || st?.dashboardUpdateInProgress) {
+        if (typeof showNotification === 'function') {
+            showNotification('info', 'Обновление уже выполняется. Лог: logs/dashboard-update.log');
+        }
+        return;
+    }
+
+    if (st?.uiState === 'available' && st.updateAvailable) {
+        promptInstallAppUpdate(st);
+        return;
+    }
+
+    versionCardBusy = true;
+    try {
+        const fresh = await pollVersionUpdateStatus(true);
+        if (!fresh) {
+            if (typeof showNotification === 'function') {
+                showNotification('error', 'Не удалось проверить обновления');
+            }
+            return;
+        }
+        if (fresh.checkSkippedReason) {
+            if (typeof showNotification === 'function') {
+                showNotification('info', fresh.checkSkippedReason);
+            }
+            return;
+        }
+        if (fresh.error) {
+            if (typeof showNotification === 'function') {
+                showNotification('error', fresh.error);
+            }
+            return;
+        }
+        if (fresh.uiState === 'available' && fresh.updateAvailable) {
+            promptInstallAppUpdate(fresh);
+            return;
+        }
+        if (typeof showNotification === 'function') {
+            showNotification('success', `Версия актуальна (${fresh.remote}/${fresh.branch})`);
+        }
+    } finally {
+        versionCardBusy = false;
+    }
+}
+
+function promptInstallAppUpdate(st) {
+    if (!st.dashboardUpdateEnabled) {
+        if (typeof showNotification === 'function') {
+            showNotification(
+                'warn',
+                `На ${st.remote}/${st.branch} есть ${st.remoteRevision}. Включите DASHBOARD_UPDATE_ENABLED=true в .env`
+            );
+        }
+        return;
+    }
+    if (!st.dashboardUpdateCanTrigger) {
+        const msg = st.dashboardUpdateBlockedReason || 'Обновление сейчас недоступно';
+        if (typeof showNotification === 'function') {
+            showNotification('warn', msg);
+        }
+        return;
+    }
+
+    showConfirmModal(
+        'Обновить до последней версии dev?',
+        `Будет выполнено: git fetch → reset на origin/${st.branch} (${st.remoteRevision}) → ` +
+            'npm install → build → перезапуск. Локальные изменения в репозитории будут сброшены. ' +
+            'Дашборд отключится на 1–3 минуты. Продолжить?',
+        () => triggerDashboardAppUpdate()
+    );
+}
+
+function startVersionUpdatePolling() {
+    if (versionUpdatePollTimer) {
+        clearInterval(versionUpdatePollTimer);
+    }
+    pollVersionUpdateStatus(false);
+    versionUpdatePollTimer = setInterval(() => pollVersionUpdateStatus(false), VERSION_UPDATE_POLL_MS);
+}
+
+function setLifecycleHeaderText(text) {
+    const statusText = document.getElementById('statusText');
+    if (statusText) {
+        statusText.textContent = text;
+    }
+}
+
+/**
+ * server-info без кэша (пока бот перезапускается)
+ */
+async function fetchServerInfoForReconnect() {
+    try {
+        const headers = {};
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+        const response = await fetch(`${API_BASE}/server-info?_=${Date.now()}`, {
+            headers,
+            cache: 'no-store',
+        });
+        if (!response.ok) {
+            return null;
+        }
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
+
+function hasNewBotPidAfterLifecycle(serverPid) {
+    if (serverPid == null || lifecycleWaitPreviousPid == null) {
+        return false;
+    }
+    return Number(serverPid) !== Number(lifecycleWaitPreviousPid);
+}
+
+function isServerReadyAfterLifecycle(info) {
+    if (!info?.pid) {
+        return false;
+    }
+    if (info.dashboardUpdateInProgress === true) {
+        return false;
+    }
+    if (!lifecycleWaitMode) {
+        return true;
+    }
+    if (lifecycleWaitPreviousPid == null) {
+        return false;
+    }
+    if (hasNewBotPidAfterLifecycle(info.pid)) {
+        return true;
+    }
+    return lifecycleServerWasDown;
+}
+
+function isUpdateCheckReadyAfterLifecycle(data) {
+    if (!data || !lifecycleWaitMode) {
+        return false;
+    }
+    if (lifecycleWaitPreviousPid == null) {
+        return false;
+    }
+    if (data.dashboardUpdateInProgress === true || data.uiState === 'updating') {
+        return false;
+    }
+    if (hasNewBotPidAfterLifecycle(data.serverPid)) {
+        return true;
+    }
+    return lifecycleServerWasDown;
+}
+
+/**
+ * Завершение ожидания: карточка «Версия» + перезагрузка страницы
+ */
+function finishLifecycleFromServer(data, successMessage) {
+    stopDashboardReconnectWatch();
+    versionCardBusy = false;
+    lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
+    lifecycleWaitStartedAt = 0;
+    if (data) {
+        versionUpdateStatus = data;
+        if (lastBotHealthForVersion) {
+            patchBotHealthVersionCard(lastBotHealthForVersion);
+        }
+    }
+    scheduleDashboardReload(successMessage);
+}
+
+function tryFinishLifecycleIfReady(data) {
+    if (!lifecycleWaitMode || !data) {
+        return false;
+    }
+    if (!isUpdateCheckReadyAfterLifecycle(data)) {
+        return false;
+    }
+    const msg =
+        lifecycleWaitMode === 'update'
+            ? 'Обновление завершено. Перезагрузка страницы…'
+            : 'Перезапуск завершён. Перезагрузка страницы…';
+    finishLifecycleFromServer(data, msg);
+    return true;
+}
+
+/** Сброс «зависшего» Обновление… на карточке и в шапке */
+function resetDashboardLifecycleUi(headerText) {
+    versionCardBusy = false;
+    lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
+    lifecycleWaitStartedAt = 0;
+    lifecycleServerWasDown = false;
+    updateConnectionStatus(false);
+    setLifecycleHeaderText(headerText || 'Disconnected');
+    pollVersionUpdateStatus(true);
+}
+
+/**
+ * Ждёт ответа нового процесса бота перед перезагрузкой страницы
+ */
+async function waitForNewBotApiReady(maxWaitMs = 120_000) {
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+        const info = await fetchServerInfoForReconnect();
+        if (!info?.pid || info.dashboardUpdateInProgress === true) {
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+        }
+        if (
+            lifecycleWaitPreviousPid != null &&
+            !hasNewBotPidAfterLifecycle(info.pid) &&
+            !lifecycleServerWasDown
+        ) {
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+        }
+        const remaining = deadline - Date.now();
+        if (remaining > 0 && (await waitForBotDashboardDataReady(Math.min(remaining, 15_000)))) {
+            return true;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    return false;
+}
+
+function scheduleDashboardReload(successMessage) {
+    stopDashboardReconnectWatch();
+    versionCardBusy = false;
+    lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
+    lifecycleWaitStartedAt = 0;
+    lifecycleServerWasDown = false;
+    if (typeof showNotification === 'function') {
+        showNotification('success', successMessage || 'Бот снова online. Перезагрузка страницы…');
+    }
+    setLifecycleHeaderText('Перезагрузка страницы…');
+
+    void (async () => {
+        await waitForNewBotApiReady();
+        const url = new URL(window.location.href);
+        url.searchParams.set('_', String(Date.now()));
+        window.location.replace(url.toString());
+    })();
+}
+
+/**
+ * Ожидание поднятия бота после перезапуска / обновления
+ * @param successMessage Текст уведомления перед reload
+ * @param mode 'update' | 'restart'
+ */
+let reconnectWatchAttempts = 0;
+let reconnectWatchSuccessMessage = '';
+let reconnectWatchLabel = 'Перезапуск';
+
+async function runReconnectLifecycleTick() {
+    if (!lifecycleWaitMode) {
+        return;
+    }
+
+    reconnectWatchAttempts += 1;
+    setLifecycleHeaderText(
+        `${reconnectWatchLabel}… ожидание бота (${reconnectWatchAttempts}/${RECONNECT_MAX_ATTEMPTS})`
+    );
+
+    const info = await fetchServerInfoForReconnect();
+    if (!info?.pid) {
+        lifecycleServerWasDown = true;
+    } else if (isServerReadyAfterLifecycle(info)) {
+        const upd = await fetchData(`/app-update-check?_=${Date.now()}`);
+        finishLifecycleFromServer(
+            upd || null,
+            reconnectWatchSuccessMessage || 'Бот снова online. Перезагрузка страницы…'
+        );
+        return;
+    }
+
+    const updCheck = await fetchData(`/app-update-check?_=${Date.now()}`);
+    if (!updCheck) {
+        lifecycleServerWasDown = true;
+    }
+    if (tryFinishLifecycleIfReady(updCheck)) {
+        return;
+    }
+    if (recoverStaleLifecycleIfNeeded(updCheck)) {
+        return;
+    }
+
+    if (reconnectWatchAttempts >= RECONNECT_MAX_ATTEMPTS) {
+        stopDashboardReconnectWatch();
+        resetDashboardLifecycleUi('Обновите страницу (F5)');
+        if (typeof showNotification === 'function') {
+            showNotification(
+                'warn',
+                'Бот долго не отвечает. Обновите страницу (F5) или откройте дашборд заново.'
+            );
+        }
+        setTimeout(async () => {
+            const late = await fetchServerInfoForReconnect();
+            if (isServerReadyAfterLifecycle(late)) {
+                const upd = await fetchData(`/app-update-check?_=${Date.now()}`);
+                finishLifecycleFromServer(
+                    upd || null,
+                    reconnectWatchSuccessMessage || 'Бот снова online. Перезагрузка страницы…'
+                );
+            } else if (tryFinishLifecycleIfReady(await fetchData(`/app-update-check?_=${Date.now()}`))) {
+                // завершено через app-update-check
+            }
+        }, 2000);
+    }
+}
+
+async function startDashboardReconnectWatch(successMessage, mode = 'restart') {
+    lifecycleWaitMode = mode;
+    reconnectWatchSuccessMessage = successMessage;
+    reconnectWatchLabel = mode === 'update' ? 'Обновление' : 'Перезапуск';
+    reconnectWatchAttempts = 0;
+    lifecycleServerWasDown = false;
+    stopDashboardReconnectWatch();
+
+    if (lifecycleWaitPreviousPid == null) {
+        await captureLifecycleWaitPid();
+    }
+
+    versionUpdateFastPollTimer = setInterval(runReconnectLifecycleTick, RECONNECT_POLL_MS);
+    void runReconnectLifecycleTick();
+}
+
+function onDashboardVisibilityForLifecycle() {
+    if (document.visibilityState === 'visible' && lifecycleWaitMode) {
+        runReconnectLifecycleTick();
+    }
+}
+
+function stopDashboardReconnectWatch() {
+    if (versionUpdateFastPollTimer) {
+        clearInterval(versionUpdateFastPollTimer);
+        versionUpdateFastPollTimer = null;
+    }
+}
+
+async function triggerDashboardAppUpdate() {
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Запуск обновления…');
+    }
+
+    await captureLifecycleWaitPid();
+    const result = await postApi('/app-update', {});
+
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        beginLifecycleWaitUi('update');
+        startDashboardReconnectWatch('Обновление завершено. Перезагрузка страницы…', 'update');
+    } else {
+        resetDashboardLifecycleUi('Disconnected');
+        if (typeof showNotification === 'function') {
+            showNotification('error', result.message || 'Не удалось запустить обновление');
+        } else {
+            alert(result.message || 'Не удалось запустить обновление');
+        }
+    }
+}
+
 function updateConnectionStatus(connected) {
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -561,16 +1194,262 @@ function updateConnectionStatus(connected) {
     }
 }
 
+/**
+ * Форматирует интервал (мс) для панели здоровья
+ */
+function formatHealthDuration(ms) {
+    if (ms == null || Number.isNaN(ms)) {
+        return '—';
+    }
+    if (ms <= 0) {
+        return 'истёк';
+    }
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) {
+        return `${sec} с`;
+    }
+    const min = Math.floor(sec / 60);
+    if (min < 60) {
+        return `${min} мин`;
+    }
+    const hours = Math.floor(min / 60);
+    if (hours < 48) {
+        return `${hours} ч ${min % 60} мин`;
+    }
+    const days = Math.floor(hours / 24);
+    return `${days} д ${hours % 24} ч`;
+}
+
+function formatHealthTimeAgo(timestamp) {
+    if (!timestamp) {
+        return '—';
+    }
+    return formatHealthDuration(Date.now() - timestamp) + ' назад';
+}
+
+function healthStatusDotClass(kind) {
+    if (kind === 'ok') return 'ok';
+    if (kind === 'warn') return 'warn';
+    if (kind === 'err') return 'err';
+    return 'off';
+}
+
+function renderBotHealthCard(title, valueHtml, detailHtml, dotKind) {
+    const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
+    return `
+        <div class="bot-health-card">
+            <div class="bot-health-card-title">${escapeHtml(title)}</div>
+            <div class="bot-health-card-value">${dot}${valueHtml}</div>
+            ${detailHtml ? `<div class="bot-health-card-detail">${detailHtml}</div>` : ''}
+        </div>
+    `;
+}
+
+function describeWebSocketHealth(ws) {
+    if (!ws) {
+        return { label: '—', kind: 'off', detail: '' };
+    }
+    const labels = {
+        connected: 'Подключён',
+        reconnecting: 'Переподключение',
+        disconnected: 'Отключён',
+        stopped: 'Остановлен',
+    };
+    let kind = 'off';
+    if (ws.status === 'connected') kind = 'ok';
+    else if (ws.status === 'reconnecting') kind = 'warn';
+    else if (ws.status === 'disconnected') kind = 'err';
+
+    let detail = `Состояние: ${escapeHtml(ws.connectionState || '—')}`;
+    if (ws.status === 'reconnecting' && ws.maxReconnectAttempts > 0) {
+        detail += `<br>Попытка ${ws.reconnectAttempt}/${ws.maxReconnectAttempts}`;
+    }
+    if (ws.hasCriticalErrors && ws.lastCriticalError) {
+        detail += `<br><span style="color:#ef4444">${escapeHtml(ws.lastCriticalError.error)}</span>`;
+        kind = 'err';
+    }
+    return { label: labels[ws.status] || ws.status, kind, detail };
+}
+
+function describeIntegrityHealth(integrity) {
+    if (!integrity) {
+        return { label: '—', kind: 'off', detail: '' };
+    }
+    const sourceLabel = integrity.source === 'manual' ? 'manual (DevTools)' : 'api (POST /integrity)';
+    let kind = 'off';
+    let label = 'Не настроен';
+    if (!integrity.configured) {
+        label = integrity.source === 'manual' ? 'Токен не задан' : '—';
+    } else if (integrity.valid) {
+        kind = 'ok';
+        label = 'Действует';
+    } else {
+        kind = 'warn';
+        label = 'Истёк / недействителен';
+    }
+    let detail = `Режим: ${escapeHtml(sourceLabel)}`;
+    if (integrity.expiresInMs != null) {
+        detail += `<br>Истекает через: ${escapeHtml(formatHealthDuration(integrity.expiresInMs))}`;
+    }
+    detail += `<br>Device: ${escapeHtml(integrity.deviceIdPrefix || '—')}…`;
+    if (integrity.fallbackApiEnabled) {
+        detail += '<br>Fallback API: включён';
+    }
+    return { label, kind, detail };
+}
+
+function describeCircuitBreaker(graphql) {
+    const state = graphql?.circuitBreaker || 'CLOSED';
+    const labels = { CLOSED: 'Закрыт (OK)', OPEN: 'Открыт (блокировка)', HALF_OPEN: 'Полуоткрыт' };
+    let kind = 'ok';
+    if (state === 'OPEN') kind = 'err';
+    else if (state === 'HALF_OPEN') kind = 'warn';
+    let detail = '';
+    if (graphql?.hadRecentNetworkFailure) {
+        detail = 'Недавние сетевые ошибки GraphQL';
+        if (kind === 'ok') kind = 'warn';
+    }
+    return { label: labels[state] || state, kind, detail };
+}
+
+/**
+ * Обновляет панель «Статус бота»
+ */
+async function updateBotHealth() {
+    const grid = document.getElementById('botHealthGrid');
+    const claimsEl = document.getElementById('botHealthClaims');
+    if (!grid) {
+        return;
+    }
+
+    const health = await fetchData('/bot-health');
+    if (!health || health.error) {
+        grid.innerHTML = `<p class="bot-health-empty">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
+        if (claimsEl) {
+            claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
+        }
+        updateConnectionStatus(false);
+        return;
+    }
+
+    updateConnectionStatus(health.websocket?.status === 'connected');
+    lastBotHealthForVersion = health;
+
+    const ws = describeWebSocketHealth(health.websocket);
+    const integrity = describeIntegrityHealth(health.integrity);
+    const gql = describeCircuitBreaker(health.graphql);
+
+    let watcherKind = health.watcherRunning ? 'ok' : 'err';
+    const watcherLabel = health.watcherRunning ? 'Работает' : 'Остановлен';
+
+    let integrityFailDetail = '';
+    if (health.lastIntegrityFailure) {
+        integrityFailDetail = `Последний integrity: ${escapeHtml(health.lastIntegrityFailure.streamer)} — ${escapeHtml(formatHealthTimeAgo(health.lastIntegrityFailure.timestamp))}`;
+    }
+
+    const cards = [
+        renderVersionHealthCard(health),
+        renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
+        renderBotHealthCard('WebSocket', escapeHtml(ws.label), ws.detail, ws.kind),
+        renderBotHealthCard('Integrity', escapeHtml(integrity.label), integrity.detail, integrity.kind),
+        renderBotHealthCard('GraphQL CB', escapeHtml(gql.label), gql.detail, gql.kind),
+    ];
+
+    if (integrityFailDetail) {
+        cards.push(
+            renderBotHealthCard(
+                'Integrity ошибка',
+                'failed integrity check',
+                integrityFailDetail,
+                'warn'
+            )
+        );
+    }
+
+    grid.innerHTML = cards.join('');
+    bindBotHealthVersionCardClick();
+
+    if (!claimsEl) {
+        return;
+    }
+
+    const claims = health.claimByStreamer || [];
+    if (claims.length === 0) {
+        claimsEl.innerHTML = '<p class="bot-health-empty">Пока нет попыток сбора бонусов в этой сессии</p>';
+        return;
+    }
+
+    claimsEl.innerHTML = claims
+        .map((c) => {
+            const outcomeClass = c.outcome === 'success' ? 'success' : 'failed';
+            const outcomeText = c.outcome === 'success' ? 'Успех' : 'Ошибка';
+            let extraBadge = '';
+            if (c.failureKind === 'integrity') {
+                extraBadge = '<span class="bot-health-badge integrity">integrity</span>';
+            } else if (c.failureKind === 'permanent') {
+                extraBadge = '<span class="bot-health-badge permanent">permanent</span>';
+            }
+            return `
+                <div class="bot-health-claim-row">
+                    <span class="bot-health-claim-streamer">${escapeHtml(c.streamer)}</span>
+                    <span class="bot-health-badge ${outcomeClass}">${outcomeText}</span>
+                    ${extraBadge}
+                    <span style="color:#adadb8">${escapeHtml(formatHealthTimeAgo(c.timestamp))}</span>
+                    <span style="color:#6b6b7a;flex:1;min-width:120px">${escapeHtml(c.message)}</span>
+                </div>
+            `;
+        })
+        .join('');
+}
+
 // Сохраняем предыдущие значения для анимации изменений
 let previousStats = {
     activeWatches: 0,
     totalPointsEarned: 0,
     streamersCount: 0,
-    lastActivity: 0
+    lastActivity: 0,
+    lastOnlineStreamer: null,
+    lastActivityLabel: '—',
 };
 
+/**
+ * Контейнер карточек сводной статистики (только основной дашборд)
+ */
+function getOverallStatsContainer() {
+    return (
+        document.getElementById('overallStatsGrid') ||
+        document.querySelector('#mainContainer .stats-grid')
+    );
+}
+
+/**
+ * Записывает значения /api/overall в карточки заголовка
+ */
+function applyOverallStatsToDom(stats) {
+    const root = getOverallStatsContainer();
+    const resolveEl = (id) => (root ? root.querySelector(`#${id}`) : null) || document.getElementById(id);
+
+    const activeEl = resolveEl('activeWatches');
+    const pointsEl = resolveEl('totalPoints');
+    const streamersEl = resolveEl('streamersCount');
+    const activityEl = resolveEl('lastActivity');
+
+    if (activeEl) {
+        activeEl.textContent = (stats.activeWatches || 0).toLocaleString();
+    }
+    if (pointsEl) {
+        pointsEl.textContent = (stats.totalPointsEarned || 0).toLocaleString();
+    }
+    if (streamersEl) {
+        streamersEl.textContent = (stats.streamersCount || 0).toLocaleString();
+    }
+    if (activityEl) {
+        activityEl.textContent = formatOverallLastActivity(stats);
+    }
+}
+
 async function updateOverallStats() {
-    const statsContainer = document.querySelector('.stats-grid');
+    const statsContainer = getOverallStatsContainer();
     const hasContent = statsContainer && statsContainer.querySelector('.stat-card');
     const hasSkeleton = statsContainer && statsContainer.querySelector('.skeleton-stat-card');
     
@@ -595,50 +1474,58 @@ async function updateOverallStats() {
     }
 
     updateConnectionStatus(true);
-    lastDataUpdate.overall = Date.now();
-    updateStaleDataIndicator('overall', statsContainer);
 
     // Если был skeleton, заменяем плавно
     if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
         const newContent = `
-            <div class="stat-card">
-                <h3>Active Watches</h3>
-                <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
-                <div class="label">Currently watching</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Active Watches</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
+                    <div class="label">Currently watching</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Total Points</h3>
-                <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
-                <div class="label">Points earned</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Total Points</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
+                    <div class="label">Points earned this session</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Streamers</h3>
-                <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
-                <div class="label">Total streamers</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Streamers</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
+                    <div class="label">Total streamers</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Last Activity</h3>
-                <div class="value" id="lastActivity">${formatTime(stats.lastActivity || 0)}</div>
-                <div class="label">Time ago</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Last Online</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="lastActivity">${formatOverallLastActivity(stats)}</div>
+                    <div class="label">Last streamer went live</div>
+                </div>
             </div>
         `;
         replaceSkeletonWithContent(statsContainer, newContent);
     } else {
-        // Обычное обновление с анимацией
-        const cards = document.querySelectorAll('.stat-card');
-        cards.forEach(card => {
+        const cards = statsContainer
+            ? statsContainer.querySelectorAll('.stat-card')
+            : document.querySelectorAll('#mainContainer .stat-card');
+        cards.forEach((card) => {
             card.classList.add('updating');
             setTimeout(() => card.classList.remove('updating'), 300);
         });
 
-        // Обновляем значения с анимацией изменений
         updateValueWithAnimation('activeWatches', stats.activeWatches || 0, previousStats.activeWatches);
         updateValueWithAnimation('totalPoints', stats.totalPointsEarned || 0, previousStats.totalPointsEarned);
         updateValueWithAnimation('streamersCount', stats.streamersCount || 0, previousStats.streamersCount);
-        
-        const lastActivityEl = document.getElementById('lastActivity');
+
+        const lastActivityEl =
+            (statsContainer && statsContainer.querySelector('#lastActivity')) ||
+            document.getElementById('lastActivity');
         if (lastActivityEl) {
-            const newValue = formatTime(stats.lastActivity || 0);
+            const newValue = formatOverallLastActivity(stats);
             if (lastActivityEl.textContent !== newValue) {
                 lastActivityEl.classList.add('value-change');
                 lastActivityEl.textContent = newValue;
@@ -646,15 +1533,23 @@ async function updateOverallStats() {
             } else {
                 lastActivityEl.textContent = newValue;
             }
+        } else {
+            applyOverallStatsToDom(stats);
         }
     }
 
+    lastDataUpdate.overall = Date.now();
+    updateStaleDataIndicator('overall', statsContainer);
+
     // Сохраняем текущие значения
+    const lastActivityLabel = formatOverallLastActivity(stats);
     previousStats = {
         activeWatches: stats.activeWatches || 0,
         totalPointsEarned: stats.totalPointsEarned || 0,
         streamersCount: stats.streamersCount || 0,
-        lastActivity: stats.lastActivity || 0
+        lastActivity: stats.lastActivity || 0,
+        lastOnlineStreamer: stats.lastOnlineStreamer || null,
+        lastActivityLabel,
     };
 }
 
@@ -665,7 +1560,9 @@ async function updateOverallStats() {
  * @param {number} oldValue Старое значение
  */
 function updateValueWithAnimation(elementId, newValue, oldValue) {
-    const element = document.getElementById(elementId);
+    const root = getOverallStatsContainer();
+    const element =
+        (root && root.querySelector(`#${elementId}`)) || document.getElementById(elementId);
     if (!element) return;
 
     if (newValue !== oldValue) {
@@ -685,6 +1582,62 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
 let initializationPollCount = 0;
 
 /**
+ * Базовая метка для режима Event: после первого полного refresh не дергаем UI старыми событиями
+ */
+async function primeEventUpdateBaseline() {
+    try {
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response?.events?.length > 0) {
+            lastEventCheckTimestamp = response.events[0].timestamp;
+        }
+    } catch {
+        // оставляем 0 — следующее событие вызовет updateAll
+    }
+}
+
+/**
+ * Ждёт полной инициализации бота и непустой статистики стримеров
+ * @param {number} maxWaitMs Максимальное время ожидания
+ * @returns {Promise<boolean>}
+ */
+async function waitForBotDashboardDataReady(maxWaitMs = 120_000) {
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+        const status = await fetchData(`/initialization-status?_=${Date.now()}`);
+        const initDone =
+            status?.isInitialized === true || (Number(status?.progress) || 0) >= 100;
+        const stats = await fetchData(`/statistics?includeOffline=true&_=${Date.now()}`);
+        if (initDone && Array.isArray(stats) && stats.length > 0) {
+            return true;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+}
+
+/**
+ * Полное обновление дашборда после готовности бота (инициализация / перезагрузка страницы)
+ */
+async function onApplicationInitializationComplete() {
+    if (applicationDataRefreshStarted) {
+        return;
+    }
+
+    const dataReady = await waitForBotDashboardDataReady(120_000);
+    if (!dataReady) {
+        console.warn('Dashboard data not ready after timeout; refreshing with best effort');
+    }
+
+    applicationDataRefreshStarted = true;
+    await updateAll();
+
+    if (updateMode === 'event') {
+        await primeEventUpdateBaseline();
+        checkForNewEvents();
+    }
+}
+
+/**
  * Скрывает экран загрузки и показывает дашборд
  */
 function hideLoadingScreen() {
@@ -695,27 +1648,12 @@ function hideLoadingScreen() {
     }
     loadingScreen.classList.add('hidden');
     mainContainer.style.display = 'block';
+    void onApplicationInitializationComplete();
     setTimeout(() => {
         if (loadingScreen.parentNode) {
             loadingScreen.remove();
         }
     }, 500);
-}
-
-/**
- * Проверяет, отвечает ли API статистикой (приложение уже работает)
- */
-async function isApplicationReadyViaStats() {
-    try {
-        const response = await fetch(`${API_BASE}/statistics?includeOffline=true`);
-        if (!response.ok) {
-            return false;
-        }
-        const stats = await response.json();
-        return Array.isArray(stats) && stats.length > 0;
-    } catch {
-        return false;
-    }
 }
 
 /**
@@ -742,10 +1680,6 @@ async function checkInitializationStatus() {
             } else {
                 statusText.textContent = 'Waiting for server...';
             }
-            if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
-                hideLoadingScreen();
-                return;
-            }
             setTimeout(checkInitializationStatus, 1000);
             return;
         }
@@ -759,23 +1693,15 @@ async function checkInitializationStatus() {
         progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
         
         if (isReady) {
-            setTimeout(hideLoadingScreen, 300);
-            return;
-        }
-
-        // Fallback: бэкенд уже отдаёт стримеров, но progress не обновился
-        if (initializationPollCount >= 3 && await isApplicationReadyViaStats()) {
-            hideLoadingScreen();
+            setTimeout(() => {
+                hideLoadingScreen();
+            }, 300);
             return;
         }
 
         setTimeout(checkInitializationStatus, 500);
     } catch (error) {
         statusText.textContent = 'Connecting to server...';
-        if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
-            hideLoadingScreen();
-            return;
-        }
         setTimeout(checkInitializationStatus, 1000);
     }
 }
@@ -1262,645 +2188,33 @@ async function updateStatistics() {
     // Это гарантирует, что при следующем обновлении previous будет равен текущему значению
 }
 
-let pointsHistoryCache = []; // Кэш для доступа к истории в tooltip
-
-// Функции графика удалены - раздел Points History временно отключен
-async function updatePointsChart() {
-    // Функция отключена - раздел Points History временно удален
-    return;
-}
-
-/**
- * Обновляет индикатор устаревших данных
-        const canvas = document.getElementById('pointsChart');
-        if (canvas && canvas.parentElement) {
-            canvas.parentElement.innerHTML = generateChartSkeleton();
-        }
-    }
-    
-    const history = await fetchData('/points-history?limit=200');
-    pointsHistoryCache = history || []; // Сохраняем в кэш для tooltip
-    
-    // Получаем текущую статистику для добавления актуальных значений в график
-    const currentStats = await fetchData('/statistics?includeOffline=true');
-    
-    // Если был skeleton, восстанавливаем canvas (даже если данных нет)
-    if (chartContainer && chartContainer.querySelector('.skeleton-chart')) {
-        chartContainer.innerHTML = '<canvas id="pointsChart"></canvas>';
-    }
-    
-    // Убеждаемся, что canvas существует
-    const canvas = document.getElementById('pointsChart');
-    if (!canvas) {
-        console.error('Canvas element not found');
-        return;
-    }
-    
-    // Инициализируем плагин зума один раз перед созданием графика
-    const zoomPluginInstance = getZoomPlugin();
-
-    // Если данных нет, создаем или обновляем пустой график
-    if (!history || history.length === 0) {
-        // Скрываем статистику
-        const statsGrid = document.getElementById('chartStatsGrid');
-        if (statsGrid) statsGrid.style.display = 'none';
-        
-        // Если график еще не создан, создаем его с пустыми данными
-        if (!pointsChart) {
-            // Создаем пустой график
-            pointsChart = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    datasets: []
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        intersect: false,
-                        mode: 'index'
-                    },
-                    animation: {
-                        duration: 0
-                    },
-                    plugins: {
-                        legend: {
-                            labels: { 
-                                color: '#efeff1',
-                                usePointStyle: true,
-                                padding: 15
-                            },
-                            position: 'top'
-                        },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                            titleColor: '#efeff1',
-                            bodyColor: '#efeff1',
-                            borderColor: '#26262c',
-                            borderWidth: 1
-                        }
-                    },
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: {
-                                unit: 'day',
-                                displayFormats: {
-                                    day: 'MMM dd',
-                                    week: 'MMM dd',
-                                    month: 'MMM yyyy'
-                                },
-                                tooltipFormat: 'MMM dd, yyyy'
-                            },
-                            ticks: { 
-                                color: '#adadb8',
-                                maxTicksLimit: 15,
-                                source: 'data'
-                            },
-                            grid: { 
-                                color: '#26262c' 
-                            },
-                            title: {
-                                display: true,
-                                text: 'Date',
-                                color: '#adadb8'
-                            },
-                            bounds: 'data',
-                            offset: true
-                        },
-                        y: { 
-                            ticks: { 
-                                color: '#adadb8' 
-                            }, 
-                            grid: { 
-                                color: '#26262c' 
-                            },
-                            title: {
-                                display: true,
-                                text: chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day',
-                                color: '#adadb8'
-                            },
-                            beginAtZero: true
-                        }
-                    },
-                    plugins: {
-                        zoom: {
-                            pan: {
-                                enabled: true,
-                                mode: 'x',
-                                modifierKey: null
-                            },
-                            zoom: {
-                                wheel: {
-                                    enabled: true,
-                                    modifierKey: 'ctrl'
-                                },
-                                pinch: {
-                                    enabled: true
-                                },
-                                mode: 'x',
-                                limits: {
-                                    x: {
-                                        min: 'original',
-                                        max: 'original'
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                plugins: zoomPluginInstance ? [zoomPluginInstance] : []
-            });
-        } else {
-            // Если график уже создан, очищаем данные
-            pointsChart.data.labels = [];
-            pointsChart.data.datasets = [];
-            pointsChart.update();
-        }
-        
-        lastDataUpdate.chart = Date.now();
-        if (chartContainer) {
-            updateStaleDataIndicator('chart', chartContainer);
-        }
-        return;
-    }
-    
-    // Фильтруем по периоду
-    let filteredHistory = filterHistoryByPeriod(history, chartPeriod);
-    
-    // Добавляем текущие значения из статистики как последнюю точку для каждого стримера
-    if (currentStats && currentStats.length > 0) {
-        const now = new Date();
-        
-        currentStats.forEach(stat => {
-            if (stat.status === 'ONLINE' && stat.pointsEarned > 0) {
-                // Находим последнюю точку в истории для этого стримера
-                const streamerHistory = filteredHistory.filter(h => h.streamer === stat.streamerName);
-                const lastHistoryPoint = streamerHistory.length > 0 
-                    ? streamerHistory[streamerHistory.length - 1]
-                    : null;
-                
-                // Проверяем, нужно ли добавить текущую точку
-                // Добавляем, если последней точки нет или она старше 30 секунд
-                const shouldAdd = !lastHistoryPoint || 
-                    (now.getTime() - new Date(lastHistoryPoint.timestamp).getTime() > 30000);
-                
-                if (shouldAdd) {
-                    // Вычисляем разницу баллов для добавления в историю
-                    let pointsToAdd = 0;
-                    if (chartMode === 'accumulated') {
-                        // В режиме накопленных баллов вычисляем разницу от последней точки
-                        const lastTotal = lastHistoryPoint ? (lastHistoryPoint.totalPoints || 0) : 0;
-                        pointsToAdd = stat.pointsEarned - lastTotal;
-                    } else {
-                        // В режиме дневных баллов вычисляем баллы за сегодня
-                        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                        const todayPoints = streamerHistory
-                            .filter(h => {
-                                const hDate = new Date(h.timestamp);
-                                return hDate >= todayStart;
-                            })
-                            .reduce((sum, h) => sum + h.points, 0);
-                        // Вычисляем разницу от уже учтенных баллов за сегодня
-                        pointsToAdd = Math.max(0, stat.pointsEarned - todayPoints);
-                    }
-                    
-                    // Добавляем точку только если есть изменение
-                    if (pointsToAdd > 0 || !lastHistoryPoint) {
-                        filteredHistory.push({
-                            timestamp: now.getTime(),
-                            streamer: stat.streamerName,
-                            points: pointsToAdd,
-                            totalPoints: chartMode === 'accumulated' ? stat.pointsEarned : undefined
-                        });
-                    }
-                }
-            }
-        });
-        
-        // Сортируем историю по времени после добавления новых точек
-        filteredHistory.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    }
-    
-    // Вычисляем статистику
-    const stats = calculateChartStats(filteredHistory, chartMode);
-    updateChartStats(stats);
-    
-    // Группируем по стримерам и дням, суммируя баллы за каждый день
-    const streamersMap = new Map();
-    
-    filteredHistory.forEach(entry => {
-        const date = new Date(entry.timestamp);
-        // Нормализуем дату до начала дня (00:00:00)
-        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-        const dayKey = dayStart.toISOString().split('T')[0]; // YYYY-MM-DD
-        
-        if (!streamersMap.has(entry.streamer)) {
-            streamersMap.set(entry.streamer, new Map());
-        }
-        
-        const daysMap = streamersMap.get(entry.streamer);
-        if (!daysMap.has(dayKey)) {
-            daysMap.set(dayKey, {
-                date: dayStart,
-                points: 0
-            });
-        }
-        
-        // Суммируем баллы за день
-        daysMap.get(dayKey).points += entry.points;
-    });
-    
-    // Преобразуем в формат для графика
-    const datasetsData = new Map();
-    streamersMap.forEach((daysMap, streamer) => {
-        // Преобразуем Map в массив и сортируем по дате
-        const daysArray = Array.from(daysMap.entries())
-            .map(([dayKey, data]) => ({
-                x: data.date,
-                y: data.points,
-                dayKey: dayKey
-            }))
-            .sort((a, b) => a.x.getTime() - b.x.getTime());
-        
-        // В зависимости от режима вычисляем накопленную сумму или оставляем дневные значения
-        let processedData;
-        if (chartMode === 'accumulated') {
-            let accumulatedPoints = 0;
-            processedData = daysArray.map(point => {
-                accumulatedPoints += point.y;
-                return {
-                    x: point.x,
-                    y: accumulatedPoints,
-                    dayKey: point.dayKey
-                };
-            });
-        } else {
-            // Режим дневных баллов
-            processedData = daysArray.map(point => ({
-                x: point.x,
-                y: point.y,
-                dayKey: point.dayKey
-            }));
-        }
-        
-        datasetsData.set(streamer, processedData);
-    });
-
-    // Создаем цвета для каждого стримера
-    const colors = [
-        '#9147ff', '#00d166', '#ffc107', '#ff6b6b', '#4ecdc4',
-        '#45b7d1', '#f7b731', '#5f27cd', '#00d2d3', '#ff6348'
-    ];
-    let colorIndex = 0;
-
-    const datasets = Array.from(datasetsData.entries()).map(([streamer, data]) => {
-        const color = colors[colorIndex % colors.length];
-        colorIndex++;
-        return {
-            label: streamer,
-            data: data,
-            borderColor: color,
-            backgroundColor: color + '40', // Добавляем прозрачность
-            tension: 0.4,
-            fill: false,
-            pointRadius: 3,
-            pointHoverRadius: 5
-        };
-    });
-
-    if (!pointsChart) {
-        pointsChart = new Chart(canvas, {
-            type: 'line',
-            data: {
-                datasets: datasets
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
-                },
-                animation: {
-                    duration: 0
-                },
-                plugins: {
-                    legend: {
-                        labels: { 
-                            color: '#efeff1',
-                            usePointStyle: true,
-                            padding: 15
-                        },
-                        position: 'top',
-                        onClick: function(e, legendItem, legend) {
-                            // Переключаем видимость линии при клике на легенду
-                            const index = legendItem.datasetIndex;
-                            const chart = legend.chart;
-                            const meta = chart.getDatasetMeta(index);
-                            
-                            meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
-                            chart.update();
-                            
-                            // Показываем кнопку Reset Zoom если график изменен
-                            const resetBtn = document.getElementById('resetZoomBtn');
-                            if (resetBtn) {
-                                resetBtn.style.display = 'flex';
-                            }
-                        }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        titleColor: '#efeff1',
-                        bodyColor: '#efeff1',
-                        borderColor: '#26262c',
-                        borderWidth: 1,
-                        callbacks: {
-                            title: function(context) {
-                                const date = new Date(context[0].parsed.x);
-                                return date.toLocaleDateString('ru-RU', { 
-                                    year: 'numeric', 
-                                    month: 'long', 
-                                    day: 'numeric' 
-                                });
-                            },
-                            label: function(context) {
-                                const pointIndex = context.dataIndex;
-                                const dataset = context.dataset;
-                                const dataPoint = dataset.data[pointIndex];
-                                
-                                // Находим все события за этот день для этого стримера
-                                const dayStart = new Date(dataPoint.x);
-                                dayStart.setHours(0, 0, 0, 0);
-                                const dayEnd = new Date(dayStart);
-                                dayEnd.setHours(23, 59, 59, 999);
-                                
-                                const dayEvents = pointsHistoryCache.filter(e => 
-                                    e.streamer === dataset.label && 
-                                    new Date(e.timestamp) >= dayStart &&
-                                    new Date(e.timestamp) <= dayEnd
-                                );
-                                
-                                const pointsGained = dayEvents.reduce((sum, e) => sum + e.points, 0);
-                                
-                                if (chartMode === 'accumulated') {
-                                    return `${dataset.label}: ${context.parsed.y.toLocaleString()} total (+${pointsGained.toLocaleString()} this day)`;
-                                } else {
-                                    return `${dataset.label}: ${context.parsed.y.toLocaleString()} points`;
-                                }
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            unit: 'day',
-                            displayFormats: {
-                                day: 'MMM dd',
-                                week: 'MMM dd',
-                                month: 'MMM yyyy'
-                            },
-                            tooltipFormat: 'MMM dd, yyyy'
-                        },
-                        ticks: { 
-                            color: '#adadb8',
-                            maxTicksLimit: 15,
-                            source: 'data'
-                        },
-                        grid: { 
-                            color: '#26262c' 
-                        },
-                        title: {
-                            display: true,
-                            text: 'Date',
-                            color: '#adadb8'
-                        },
-                        bounds: 'data',
-                        offset: true
-                    },
-                    y: { 
-                        ticks: { 
-                            color: '#adadb8' 
-                        }, 
-                        grid: { 
-                            color: '#26262c' 
-                        },
-                        title: {
-                            display: true,
-                            text: chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day',
-                            color: '#adadb8'
-                        },
-                        beginAtZero: true
-                    }
-                },
-                plugins: {
-                    zoom: {
-                        pan: {
-                            enabled: true,
-                            mode: 'x',
-                            modifierKey: null
-                        },
-                        zoom: {
-                            wheel: {
-                                enabled: true,
-                                modifierKey: 'ctrl'
-                            },
-                            pinch: {
-                                enabled: true
-                            },
-                            mode: 'x',
-                            limits: {
-                                x: {
-                                    min: 'original',
-                                    max: 'original'
-                                }
-                            },
-                            onZoomComplete: function({ chart }) {
-                                // Показываем кнопку Reset Zoom после зума
-                                const resetBtn = document.getElementById('resetZoomBtn');
-                                if (resetBtn) {
-                                    resetBtn.style.display = 'flex';
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            plugins: zoomPluginInstance ? [zoomPluginInstance] : []
-        });
-    } else {
-        // Сохраняем старые данные для проверки появления нового дня
-        const oldDatasets = pointsChart.data.datasets.map(ds => ({
-            label: ds.label,
-            data: ds.data ? ds.data.map(p => ({ x: new Date(p.x), y: p.y })) : []
-        }));
-        
-        // Обновляем данные
-        pointsChart.data.datasets = datasets;
-        
-        // Обновляем заголовок оси Y в зависимости от режима
-        if (pointsChart.options.scales && pointsChart.options.scales.y && pointsChart.options.scales.y.title) {
-            pointsChart.options.scales.y.title.text = chartMode === 'accumulated' ? 'Total Points Earned' : 'Points per Day';
-        }
-        
-        // Проверяем, появился ли новый день
-        const hasNewDay = checkForNewDay(oldDatasets, datasets);
-        
-        if (hasNewDay) {
-            // Если появился новый день, сбрасываем зум и границы масштаба
-            if (pointsChart.resetZoom && typeof pointsChart.resetZoom === 'function') {
-                try {
-                    pointsChart.resetZoom();
-                    const resetBtn = document.getElementById('resetZoomBtn');
-                    if (resetBtn) {
-                        resetBtn.style.display = 'none';
-                    }
-                } catch (e) {
-                    // Игнорируем ошибки сброса зума
-                }
-            }
-            
-            // Сбрасываем границы масштаба, чтобы Chart.js пересчитал их на основе новых данных
-            if (pointsChart.options.scales && pointsChart.options.scales.x) {
-                delete pointsChart.options.scales.x.min;
-                delete pointsChart.options.scales.x.max;
-            }
-        }
-        
-        // Обновляем график без анимации для мгновенного отображения изменений
-        pointsChart.update('none');
-    }
-    
-    lastDataUpdate.chart = Date.now();
-    // Используем уже объявленную переменную chartContainer из начала функции
-    if (chartContainer) {
-        updateStaleDataIndicator('chart', chartContainer);
-    }
-}
-
-/**
- * Обновляет индикатор устаревших данных
- * @param {string} type Тип данных (stats, events, chart, overall)
- * @param {HTMLElement} container Контейнер для индикатора
- */
-function updateStaleDataIndicator(type, container) {
-    if (!container) return;
-    
-    const timestamp = lastDataUpdate[type] || 0;
-    const age = Date.now() - timestamp;
-    const isStale = age > STALE_DATA_THRESHOLD;
-    
-    // Удаляем существующий индикатор
-    const existing = container.querySelector('.stale-data-indicator');
-    if (existing) {
-        existing.remove();
-    }
-    
-    if (isStale && timestamp > 0) {
-        const indicator = document.createElement('div');
-        indicator.className = 'stale-data-indicator';
-        indicator.title = `Данные обновлены ${Math.round(age / 1000)} секунд назад. Кликните для обновления.`;
-        indicator.innerHTML = '⚠️ Устаревшие данные';
-        indicator.style.cssText = `
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(239, 68, 68, 0.9);
-            color: white;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            z-index: 100;
-            animation: pulse 2s infinite;
-        `;
-        
-        indicator.addEventListener('click', () => {
-            if (type === 'stats') updateStatistics();
-            else if (type === 'overall') updateOverallStats();
-        });
-        
-        if (container.style.position !== 'relative' && container.style.position !== 'absolute') {
-            container.style.position = 'relative';
-        }
-        
-        container.appendChild(indicator);
-    }
-}
-
-/**
- * Проверяет, появился ли новый день в данных графика
- * @param {Array} oldDatasets Старые наборы данных
- * @param {Array} newDatasets Новые наборы данных
- * @returns {boolean} true если появился новый день
- */
-function checkForNewDay(oldDatasets, newDatasets) {
-    if (!oldDatasets || oldDatasets.length === 0) return false;
-    
-    // Находим максимальную дату в старых данных
-    let maxOldDate = null;
-    oldDatasets.forEach(dataset => {
-        if (dataset.data && dataset.data.length > 0) {
-            dataset.data.forEach(point => {
-                const date = point.x instanceof Date ? point.x : new Date(point.x);
-                if (!maxOldDate || date > maxOldDate) {
-                    maxOldDate = date;
-                }
-            });
-        }
-    });
-    
-    if (!maxOldDate) return false;
-    
-    // Нормализуем до начала дня
-    const maxOldDay = new Date(maxOldDate.getFullYear(), maxOldDate.getMonth(), maxOldDate.getDate());
-    
-    // Находим максимальную дату в новых данных
-    let maxNewDate = null;
-    newDatasets.forEach(dataset => {
-        if (dataset.data && dataset.data.length > 0) {
-            dataset.data.forEach(point => {
-                const date = point.x instanceof Date ? point.x : new Date(point.x);
-                if (!maxNewDate || date > maxNewDate) {
-                    maxNewDate = date;
-                }
-            });
-        }
-    });
-    
-    if (!maxNewDate) return false;
-    
-    // Нормализуем до начала дня
-    const maxNewDay = new Date(maxNewDate.getFullYear(), maxNewDate.getMonth(), maxNewDate.getDate());
-    
-    // Если новый день больше старого, значит появился новый день
-    return maxNewDay.getTime() > maxOldDay.getTime();
-}
-
-let lastEventTimestamp = 0;
-let cachedEvents = []; // Кэш последних загруженных событий
 
 // Timestamp последнего обновления данных
 let lastDataUpdate = {
     stats: 0,
-    events: 0,
-    chart: 0,
     overall: 0
 };
 
 const STALE_DATA_THRESHOLD = 30000; // 30 секунд
 
+/**
+ * Помечает контейнер, если данные давно не обновлялись
+ * @param {'stats'|'overall'} key Ключ в lastDataUpdate
+ * @param {Element|null} container DOM-контейнер
+ */
+function updateStaleDataIndicator(key, container) {
+    if (!container) {
+        return;
+    }
+    const ts = lastDataUpdate[key] || 0;
+    const stale = ts > 0 && Date.now() - ts > STALE_DATA_THRESHOLD;
+    container.classList.toggle('stale-data', stale);
+}
+
 // Настройки приложения
 const defaultSettings = {
     fontSize: 'medium',
     density: 'normal',
-    autoScrollEvents: false,
-    eventsPageSize: 20,
-    saveChartZoom: false,
-    autoUpdateChart: true,
     showToastNotifications: true,
     osNotifications: false,
     soundNotifications: false
@@ -1948,142 +2262,11 @@ function applySettings(settings) {
     }
     
     // Количество событий на странице
-    eventsPageSize = parseInt(settings.eventsPageSize) || 20;
-    
-    // Автопрокрутка к новым событиям
-    // Будет применена в функции renderFilteredEvents
 }
 
 /**
  * Обновляет список доступных тегов из событий
  * @param events Массив событий
- */
-function updateAvailableTags(events) {
-    const newTags = new Set();
-    events.forEach(event => {
-        if (event.type && event.type !== 'minute-watched') {
-            newTags.add(event.type);
-        }
-    });
-    
-    // Обновляем доступные теги (заменяем, а не добавляем)
-    const oldAvailableTags = availableEventTags;
-    availableEventTags = newTags;
-    
-    // Очищаем выбранные теги, которых больше нет в доступных тегах
-    // Это предотвращает ситуацию, когда выбраны теги, которых нет в текущих событиях
-    const tagsToRemove = [];
-    selectedEventTags.forEach(tag => {
-        if (!availableEventTags.has(tag)) {
-            tagsToRemove.push(tag);
-        }
-    });
-    
-    if (tagsToRemove.length > 0) {
-        tagsToRemove.forEach(tag => selectedEventTags.delete(tag));
-        // Сохраняем обновленные теги в localStorage
-        safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
-        // Обновляем UI фильтров
-        updateFiltersUI();
-    } else if (oldAvailableTags.size === 0 && newTags.size > 0) {
-        // При первой загрузке (когда старых тегов не было) обновляем UI
-        updateFiltersUI();
-    }
-}
-
-/**
- * Обновляет UI фильтров тегов
- */
-function updateFiltersUI() {
-    const filtersContainer = document.getElementById('eventFilters');
-    if (!filtersContainer) return;
-    
-    // Сортируем теги для консистентности
-    const sortedTags = Array.from(availableEventTags).sort();
-    
-    // Если тегов нет, скрываем контейнер фильтров
-    if (sortedTags.length === 0) {
-        filtersContainer.style.display = 'none';
-        return;
-    }
-    
-    filtersContainer.style.display = 'flex';
-    
-    // Сохраняем label
-    const label = filtersContainer.querySelector('.filter-label');
-    const existingTags = filtersContainer.querySelectorAll('.filter-tag');
-    
-    // Удаляем старые теги
-    existingTags.forEach(tag => tag.remove());
-    
-    // Добавляем новые теги
-    sortedTags.forEach(tag => {
-        const tagElement = document.createElement('label');
-        tagElement.className = `filter-tag ${selectedEventTags.has(tag) ? 'active' : ''}`;
-        tagElement.innerHTML = `
-            <input type="checkbox" value="${tag}" ${selectedEventTags.has(tag) ? 'checked' : ''}>
-            ${tag}
-        `;
-        
-        tagElement.addEventListener('click', (e) => {
-            e.preventDefault();
-            toggleEventTag(tag);
-        });
-        
-        filtersContainer.appendChild(tagElement);
-    });
-}
-
-/**
- * Переключает выбранный тег
- * @param tag Тег для переключения
- */
-function toggleEventTag(tag) {
-    if (selectedEventTags.has(tag)) {
-        selectedEventTags.delete(tag);
-    } else {
-        selectedEventTags.add(tag);
-    }
-    
-    // Сохраняем в localStorage
-    safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
-    
-    // Обновляем UI
-    updateFiltersUI();
-    
-    // Временно отключаем observer при фильтрации, чтобы избежать бесконечного обновления
-    if (window.eventsScrollObserver) {
-        window.eventsScrollObserver.disconnect();
-    }
-    
-    // Перефильтровываем кэшированные события без нового запроса
-    // Используем allLoadedEvents вместо cachedEvents для консистентности
-    const eventsToFilter = allLoadedEvents.length > 0 ? allLoadedEvents : cachedEvents;
-    if (eventsToFilter.length > 0) {
-        renderFilteredEvents(eventsToFilter, false);
-    }
-    
-    // Восстанавливаем observer после небольшой задержки
-    setTimeout(() => {
-        setupInfiniteScroll();
-    }, 100);
-}
-
-/**
- * Определяет, является ли событие важным
- * @param event Событие
- * @returns true если событие важное
- */
-function isImportantEvent(event) {
-    const importantTypes = [
-        'token-expired', 'token-invalid', 'stream-up', 'stream-down', 'claim-success',
-        'raid-joined', 'points-earned', 'claim-earned'
-    ];
-    return importantTypes.includes(event.type);
-}
-
-/**
- * Экранирование HTML
  */
 function escapeHtml(text) {
     if (text == null) {
@@ -2436,540 +2619,6 @@ function detectStreamerStatusChanges(stats) {
  * @param events Массив событий
  * @returns Map с ключами-днями (timestamp начала дня) и массивами событий
  */
-function groupEventsByTime(events) {
-    const groups = new Map();
-    
-    events.forEach(event => {
-        const eventDate = new Date(event.timestamp);
-        // Нормализуем дату до начала дня (00:00:00)
-        const dayStart = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-        const groupKey = dayStart.getTime();
-        
-        if (!groups.has(groupKey)) {
-            groups.set(groupKey, []);
-        }
-        groups.get(groupKey).push(event);
-    });
-    
-    return groups;
-}
-
-/**
- * Форматирует дату группы событий
- * @param timestamp Timestamp начала дня группы
- * @returns Отформатированная строка даты
- */
-function formatGroupTime(timestamp) {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    
-    if (eventDate.getTime() === today.getTime()) {
-        return 'Today';
-    } else if (eventDate.getTime() === yesterday.getTime()) {
-        return 'Yesterday';
-    } else {
-        return date.toLocaleDateString('ru-RU', { 
-            day: '2-digit', 
-            month: '2-digit',
-            year: 'numeric'
-        });
-    }
-}
-
-/**
- * Отображает отфильтрованные события с группировкой
- * @param events Массив событий для отображения
- * @param shouldSetupScroll Нужно ли настраивать бесконечную прокрутку (по умолчанию true)
- */
-function renderFilteredEvents(events, shouldSetupScroll = true) {
-    const list = document.getElementById('eventsList');
-    if (!list) {
-        console.error('eventsList element not found');
-        return;
-    }
-    
-    const hasContent = list && (list.querySelector('.event-group') || list.querySelector('table'));
-    const hasSkeleton = list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'));
-    
-    // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
-    if (!hasContent && !hasSkeleton && list) {
-        list.innerHTML = generateEventsSkeleton(5);
-    }
-    
-    if (events.length === 0) {
-        const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
-        if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
-            replaceSkeletonWithContent(list, emptyMessage);
-        } else {
-            list.innerHTML = emptyMessage;
-        }
-        return;
-    }
-
-    // Удаляем дубликаты перед фильтрацией
-    const uniqueEventsMap = new Map();
-    events.forEach(event => {
-        const key = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
-        if (!uniqueEventsMap.has(key)) {
-            uniqueEventsMap.set(key, event);
-        }
-    });
-    const uniqueEvents = Array.from(uniqueEventsMap.values());
-
-    // Фильтруем события по выбранным тегам и исключаем технические события
-    let filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
-    const eventsBeforeFilter = filteredEvents.length;
-    
-    // Если выбраны теги, фильтруем по ним
-    if (selectedEventTags.size > 0) {
-        filteredEvents = filteredEvents.filter(event => selectedEventTags.has(event.type));
-        
-        // Если после фильтрации событий не осталось, но были события до фильтрации,
-        // это означает, что выбранные теги не соответствуют ни одному событию
-        // В этом случае очищаем selectedEventTags и показываем все события
-        if (filteredEvents.length === 0 && eventsBeforeFilter > 0) {
-            // Очищаем selectedEventTags, так как выбранные теги не соответствуют событиям
-            selectedEventTags.clear();
-            safeSetLocalStorage('selectedEventTags', JSON.stringify(Array.from(selectedEventTags)));
-            // Обновляем UI фильтров
-            updateFiltersUI();
-            // Показываем все события (без фильтра)
-            filteredEvents = uniqueEvents.filter(event => event.type !== 'minute-watched');
-        }
-    }
-
-    if (filteredEvents.length === 0) {
-        if (uniqueEvents.length === 0) {
-            // Событий вообще нет
-            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
-        } else if (selectedEventTags.size > 0) {
-            // Есть события, но они не соответствуют выбранным фильтрам
-            // Это не должно происходить, так как мы уже очистили фильтры выше,
-            // но на всякий случай показываем сообщение
-            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events match selected filters</p>';
-        } else {
-            // События есть, но после фильтрации их не осталось (не должно происходить)
-            list.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">No events yet</p>';
-        }
-        return;
-    }
-
-    // Сортируем события по времени (новые сверху)
-    filteredEvents.sort((a, b) => b.timestamp - a.timestamp);
-
-    // Определяем новые события (из отфильтрованных)
-    // Используем timestamp только если он был установлен (не 0)
-    // При фильтрации не помечаем события как новые, чтобы избежать дублирования
-    const newEvents = lastEventTimestamp > 0 && !list.querySelector('.event-group')
-        ? filteredEvents.filter(e => e.timestamp > lastEventTimestamp)
-        : [];
-    
-    // Автопрокрутка к новым событиям, если включена в настройках
-    const settings = loadSettings();
-    const shouldAutoScroll = settings.autoScrollEvents && newEvents.length > 0;
-
-    // Группируем события по дням
-    const eventGroups = groupEventsByTime(filteredEvents);
-    
-    // Используем DocumentFragment для оптимизации рендеринга
-    const fragment = document.createDocumentFragment();
-    // Сортируем группы по дате (новые дни сверху)
-    const sortedGroups = Array.from(eventGroups.entries()).sort((a, b) => b[0] - a[0]);
-
-    let html = '';
-    sortedGroups.forEach(([groupTimestamp, groupEvents]) => {
-        // Сортируем события внутри группы по времени (новые сверху)
-        const sortedGroupEvents = [...groupEvents].sort((a, b) => b.timestamp - a.timestamp);
-        const groupId = `event-group-${groupTimestamp}`;
-        const hasImportantEvents = groupEvents.some(e => isImportantEvent(e));
-        const groupClass = hasImportantEvents ? 'event-group-important' : '';
-        
-        html += `
-            <div class="event-group ${groupClass}" data-group-id="${groupId}">
-                <div class="event-group-header" onclick="toggleEventGroup('${groupId}')">
-                    <span class="event-group-time">${formatGroupTime(groupTimestamp)}</span>
-                    <span class="event-group-count">${groupEvents.length} event(s)</span>
-                    <span class="event-group-toggle" id="toggle-${groupId}">▼</span>
-                </div>
-                <div class="event-group-content" id="content-${groupId}">
-                    ${sortedGroupEvents.map((event, index) => {
-                        const typeClass = event.type.includes('point') ? 'event-type-points' :
-                                         event.type.includes('stream') ? 'event-type-stream' :
-                                         event.type.includes('claim') ? 'event-type-claim' : '';
-                        
-                        // Если нет специального класса, генерируем цвет на основе типа события
-                        let styleAttr = '';
-                        if (!typeClass) {
-                            const bgColor = generateColorFromText(event.type);
-                            const textColor = '#ffffff';
-                            styleAttr = `style="background: ${bgColor}; color: ${textColor};"`;
-                        }
-                        
-                        // Проверяем, является ли событие новым (только при первой загрузке, не при фильтрации)
-                        const isNew = newEvents.length > 0 && newEvents.some(ne => 
-                            ne.timestamp === event.timestamp && 
-                            ne.streamer === event.streamer && 
-                            ne.type === event.type &&
-                            ne.message === event.message
-                        );
-                        const isImportant = isImportantEvent(event);
-                        const importantClass = isImportant ? 'event-item-important' : '';
-                        
-                        const eventIcon = getEventIcon(event.type);
-                        // Используем уникальный ключ для предотвращения дублирования в DOM
-                        const eventKey = `${event.timestamp}-${event.type}-${event.streamer}-${event.message}`;
-                        return `
-                            <div class="event-item ${isNew ? 'new' : ''} ${importantClass}" data-timestamp="${event.timestamp}" data-event-key="${eventKey}">
-                                <span class="event-time">${formatTimestamp(event.timestamp)}</span>
-                                <span class="event-icon">${eventIcon}</span>
-                                <span class="event-type ${typeClass}" ${styleAttr}>${event.type}</span>
-                                <strong><a href="https://www.twitch.tv/${event.streamer}" target="_blank" rel="noopener noreferrer" class="streamer-link">${event.streamer}</a></strong>: ${event.message}
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        `;
-    });
-
-    // Если был skeleton, заменяем плавно
-    if (list && (list.querySelector('.skeleton-event-item') || list.querySelector('.loading'))) {
-        // Добавляем триггер для бесконечной прокрутки перед заменой только если нужно
-        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
-            html += '<div id="loadMoreTrigger" style="height: 20px; width: 100%;"></div>';
-        } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
-            html += '<div style="text-align: center; padding: 20px; color: #adadb8; font-size: 14px;">All events loaded</div>';
-        }
-        replaceSkeletonWithContent(list, html);
-        
-        // Устанавливаем observer после замены только если нужно
-        if (shouldSetupScroll) {
-            setTimeout(() => {
-                const loadMoreTrigger = document.getElementById('loadMoreTrigger');
-                if (loadMoreTrigger && window.eventsScrollObserver) {
-                    window.eventsScrollObserver.observe(loadMoreTrigger);
-                }
-            }, 500);
-        }
-    } else {
-        // Сохраняем состояние свернутых групп перед заменой содержимого
-        const collapsedGroups = new Set();
-        list.querySelectorAll('.event-group-content').forEach(content => {
-            if (content.style.display === 'none') {
-                const groupId = content.id.replace('content-', '');
-                collapsedGroups.add(groupId);
-            }
-        });
-        
-        // Перед заменой содержимого удаляем старые элементы, чтобы избежать дублирования
-        // Используем data-event-key для проверки уникальности
-        const existingEventKeys = new Set();
-        list.querySelectorAll('[data-event-key]').forEach(el => {
-            const key = el.getAttribute('data-event-key');
-            if (key) {
-                existingEventKeys.add(key);
-            }
-        });
-        
-        // Создаем временный контейнер для нового HTML
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = html;
-        
-        // Удаляем дубликаты из нового HTML
-        const newEventElements = tempDiv.querySelectorAll('[data-event-key]');
-        newEventElements.forEach(el => {
-            const key = el.getAttribute('data-event-key');
-            if (key && existingEventKeys.has(key)) {
-                el.remove();
-            } else if (key) {
-                existingEventKeys.add(key);
-            }
-        });
-        
-        // Заменяем содержимое
-        list.innerHTML = tempDiv.innerHTML;
-        
-        // Восстанавливаем состояние свернутых групп
-        collapsedGroups.forEach(groupId => {
-            const content = document.getElementById(`content-${groupId}`);
-            const toggle = document.getElementById(`toggle-${groupId}`);
-            if (content && toggle) {
-                content.style.display = 'none';
-                toggle.textContent = '▶';
-            }
-        });
-        
-        // Добавляем триггер для бесконечной прокрутки в конец списка только если нужно
-        if (shouldSetupScroll && hasMoreEvents && !isLoadingEvents) {
-            const loadMoreTrigger = document.createElement('div');
-            loadMoreTrigger.id = 'loadMoreTrigger';
-            loadMoreTrigger.style.height = '20px';
-            loadMoreTrigger.style.width = '100%';
-            list.appendChild(loadMoreTrigger);
-            
-            // Устанавливаем observer для нового триггера
-            if (window.eventsScrollObserver) {
-                window.eventsScrollObserver.observe(loadMoreTrigger);
-            }
-        } else if (!hasMoreEvents && allLoadedEvents.length > 0) {
-            // Показываем сообщение, что все события загружены
-            const endMarker = document.createElement('div');
-            endMarker.style.cssText = 'text-align: center; padding: 20px; color: #adadb8; font-size: 14px;';
-            endMarker.textContent = 'All events loaded';
-            list.appendChild(endMarker);
-        }
-    }
-
-    // Убираем класс new после анимации
-    setTimeout(() => {
-        document.querySelectorAll('.event-item.new').forEach(item => {
-            item.classList.remove('new');
-        });
-    }, 400);
-}
-
-/**
- * Переключает видимость группы событий
- * @param groupId ID группы
- */
-function toggleEventGroup(groupId) {
-    const content = document.getElementById(`content-${groupId}`);
-    const toggle = document.getElementById(`toggle-${groupId}`);
-    
-    if (content && toggle) {
-        if (content.style.display === 'none') {
-            content.style.display = 'block';
-            toggle.textContent = '▼';
-        } else {
-            content.style.display = 'none';
-            toggle.textContent = '▶';
-        }
-    }
-}
-
-async function updateEvents(reset = false, loadMore = false) {
-    if (reset) {
-        eventsOffset = 0;
-        allLoadedEvents = [];
-        hasMoreEvents = true;
-        lastEventTimestamp = 0; // Сбрасываем timestamp при полном сбросе
-    }
-    
-    if (isLoadingEvents) return;
-    
-    // Определяем, что нужно делать:
-    // - reset=true: полный сброс и загрузка с начала
-    // - loadMore=true: загрузка старых событий при прокрутке
-    // - иначе: проверка новых событий при автообновлении
-    const isCheckingNew = !reset && !loadMore;
-    const isLoadingMore = !reset && loadMore;
-    
-    // При загрузке старых событий проверяем, есть ли еще события
-    if (isLoadingMore && !hasMoreEvents) {
-        return;
-    }
-    
-    // Определяем offset для запроса
-    const currentOffset = isCheckingNew ? 0 : eventsOffset;
-    
-    isLoadingEvents = true;
-    
-    try {
-        const response = await fetchData(`/events?limit=${eventsPageSize}&offset=${currentOffset}`);
-        if (!response || !response.events) {
-            isLoadingEvents = false;
-            return;
-        }
-
-        const fetchedEvents = response.events;
-        
-        if (reset) {
-            // При сбросе загружаем все события постепенно
-            // Сначала загружаем первую порцию
-            allLoadedEvents = fetchedEvents;
-            eventsOffset = fetchedEvents.length;
-            hasMoreEvents = response.hasMore;
-            
-            // Если есть еще события, загружаем их сразу (до разумного лимита, например 200)
-            if (hasMoreEvents && fetchedEvents.length < 200) {
-                // Загружаем еще события, чтобы показать события от всех стримеров
-                let continueLoading = true;
-                while (continueLoading && eventsOffset < 200 && hasMoreEvents) {
-                    const nextResponse = await fetchData(`/events?limit=${eventsPageSize}&offset=${eventsOffset}`);
-                    if (nextResponse && nextResponse.events && nextResponse.events.length > 0) {
-                        // Используем Map для предотвращения дубликатов
-                        const existingEventsMap = new Map();
-                        allLoadedEvents.forEach(e => {
-                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                            existingEventsMap.set(key, e);
-                        });
-                        
-                        // Добавляем только уникальные события
-                        const uniqueNewEvents = nextResponse.events.filter(e => {
-                            const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                            return !existingEventsMap.has(key);
-                        });
-                        
-                        allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
-                        eventsOffset += uniqueNewEvents.length;
-                        hasMoreEvents = nextResponse.hasMore;
-                    } else {
-                        continueLoading = false;
-                        hasMoreEvents = false;
-                    }
-                }
-            }
-        } else if (isCheckingNew) {
-            // При проверке новых событий объединяем их с уже загруженными
-            // Создаем Map для быстрого поиска дубликатов
-            const existingEventsMap = new Map();
-            allLoadedEvents.forEach(e => {
-                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                existingEventsMap.set(key, e);
-            });
-            
-            // Добавляем только новые события (которых еще нет)
-            const trulyNewEvents = fetchedEvents.filter(e => {
-                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                return !existingEventsMap.has(key);
-            });
-
-            const streamEvents = trulyNewEvents.filter(
-                (e) => e.type === 'stream-up' || e.type === 'stream-down'
-            );
-            if (streamEvents.length > 0) {
-                processStreamStatusNotifications(
-                    streamEvents.map((e) => ({ streamer: e.streamer, type: e.type }))
-                );
-            }
-            
-            // Объединяем: новые события в начале, затем уже загруженные
-            allLoadedEvents = [...trulyNewEvents, ...allLoadedEvents];
-            
-            // Обновляем hasMoreEvents для возможности загрузки старых событий при прокрутке
-            hasMoreEvents = response.hasMore;
-            // eventsOffset не меняется при проверке новых событий
-        } else {
-            // При прокрутке вниз добавляем старые события в конец
-            // Проверяем на дубликаты перед добавлением
-            const existingEventsMap = new Map();
-            allLoadedEvents.forEach(e => {
-                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                existingEventsMap.set(key, e);
-            });
-            
-            const uniqueNewEvents = fetchedEvents.filter(e => {
-                const key = `${e.timestamp}-${e.type}-${e.streamer}-${e.message}`;
-                return !existingEventsMap.has(key);
-            });
-            
-            allLoadedEvents = [...allLoadedEvents, ...uniqueNewEvents];
-            eventsOffset += uniqueNewEvents.length;
-            hasMoreEvents = response.hasMore;
-        }
-
-        // Сохраняем события в кэш
-        cachedEvents = allLoadedEvents;
-
-        // Обновляем доступные теги
-        updateAvailableTags(allLoadedEvents);
-
-        // Обновляем timestamp для определения новых событий (самое новое событие)
-        if (allLoadedEvents.length > 0) {
-            // Сортируем по timestamp для определения самого нового
-            const sortedEvents = [...allLoadedEvents].sort((a, b) => b.timestamp - a.timestamp);
-            lastEventTimestamp = sortedEvents[0].timestamp;
-        }
-
-        // Отображаем отфильтрованные события
-        renderFilteredEvents(allLoadedEvents);
-        
-        // Устанавливаем observer для бесконечной прокрутки
-        setupInfiniteScroll();
-        
-        lastDataUpdate.events = Date.now();
-        const eventsList = document.getElementById('eventsList');
-        if (eventsList) {
-            updateStaleDataIndicator('events', eventsList);
-        }
-    } finally {
-        isLoadingEvents = false;
-    }
-}
-
-/**
- * Настраивает бесконечную прокрутку для событий
- */
-function setupInfiniteScroll() {
-    const eventsList = document.getElementById('eventsList');
-    if (!eventsList) return;
-    
-    // Удаляем старый observer, если есть
-    if (window.eventsScrollObserver) {
-        window.eventsScrollObserver.disconnect();
-    }
-    
-    // Если больше нет событий для загрузки, не создаем триггер
-    if (!hasMoreEvents || isLoadingEvents) {
-        // Удаляем существующий триггер, если есть
-        const existingTrigger = document.getElementById('loadMoreTrigger');
-        if (existingTrigger) {
-            existingTrigger.remove();
-        }
-        return;
-    }
-    
-    // Создаем элемент-триггер для загрузки
-    let loadMoreTrigger = document.getElementById('loadMoreTrigger');
-    if (!loadMoreTrigger) {
-        loadMoreTrigger = document.createElement('div');
-        loadMoreTrigger.id = 'loadMoreTrigger';
-        loadMoreTrigger.style.height = '20px';
-        loadMoreTrigger.style.width = '100%';
-        eventsList.appendChild(loadMoreTrigger);
-    }
-    
-    // Проверяем, виден ли триггер сразу после создания
-    // Если да, то добавляем небольшую задержку перед наблюдением, чтобы избежать немедленной загрузки
-    setTimeout(() => {
-        // Проверяем еще раз, что триггер существует и условия все еще выполняются
-        const trigger = document.getElementById('loadMoreTrigger');
-        if (!trigger || !hasMoreEvents || isLoadingEvents) {
-            return;
-        }
-        
-        // Проверяем, виден ли триггер в viewport
-        const rect = trigger.getBoundingClientRect();
-        const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
-        
-        // Если триггер виден сразу, это означает, что контента мало и прокрутка не нужна
-        // В этом случае не наблюдаем за триггером, чтобы избежать бесконечной загрузки
-        if (isVisible && eventsList.scrollHeight <= eventsList.clientHeight) {
-            // Контент помещается на экране, не нужно наблюдать за триггером
-            return;
-        }
-        
-        // Создаем Intersection Observer только если триггер не виден сразу
-        window.eventsScrollObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting && hasMoreEvents && !isLoadingEvents) {
-                    updateEvents(false, true); // loadMore=true для загрузки старых событий
-                }
-            });
-        }, {
-            root: eventsList, // Используем eventsList как root для правильного определения видимости
-            rootMargin: '100px',
-            threshold: 0.1
-        });
-        
-        window.eventsScrollObserver.observe(trigger);
-    }, 100); // Небольшая задержка для проверки видимости
-}
-
 async function updateTokenInfo() {
     const tokenInfo = await fetchData('/token-info');
     if (!tokenInfo) return;
@@ -3131,6 +2780,7 @@ async function updateAll() {
         await Promise.all([
             updateOverallStats(),
             updateStatistics(),
+            updateBotHealth(),
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()
@@ -3231,20 +2881,8 @@ function setUpdateInterval(seconds) {
 }
 
 async function startEventBasedUpdate() {
-    // Загружаем начальные данные
     await updateAll();
-    
-    // Инициализируем timestamp последнего события
-    try {
-        const response = await fetchData(`/events?limit=1&offset=0`);
-        if (response && response.events && response.events.length > 0) {
-            lastEventCheckTimestamp = response.events[0].timestamp;
-        }
-    } catch (error) {
-        // Игнорируем ошибки
-    }
-    
-    // Начинаем проверку новых событий
+    await primeEventUpdateBaseline();
     checkForNewEvents();
 }
 
@@ -3275,17 +2913,15 @@ async function checkForNewEvents() {
 }
 
 function startAutoUpdate() {
-    updateAll();
-    
-    // Проверка подключения при старте
     updateConnectionStatus(false);
-    
-    // Запускаем обновление в зависимости от режима
+
+    // Данные подгружаются в onApplicationInitializationComplete после init.
+    // В режиме Event опрос событий тоже стартует только после готовности бота.
     if (updateMode === 'event') {
-        startEventBasedUpdate();
-    } else {
-        updateInterval = setInterval(updateAll, updateIntervalMs);
+        return;
     }
+
+    updateInterval = setInterval(updateAll, updateIntervalMs);
 }
 
 function toggleOfflineStreamers() {
@@ -3394,7 +3030,14 @@ function startDashboardCore() {
     }
     dashboardCoreStarted = true;
     checkInitializationStatus();
+    initAppUpdateButton();
+    initProcessControlButtons();
+    startVersionUpdatePolling();
     startAutoUpdate();
+    if (!document.documentElement.dataset.lifecycleVisibilityBound) {
+        document.documentElement.dataset.lifecycleVisibilityBound = '1';
+        document.addEventListener('visibilitychange', onDashboardVisibilityForLifecycle);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', startDashboardCore);
@@ -3570,57 +3213,6 @@ window.addEventListener('load', () => {
             e.stopPropagation();
             toggleColumnSettings();
         });
-    }
-    
-    // Инициализация событий отключена
-    
-    // Обработчики для управления графиком
-    // Переключатель режима отображения
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const mode = btn.dataset.mode;
-            chartMode = mode;
-            safeSetLocalStorage('chartMode', mode);
-            
-            // Обновляем активную кнопку
-            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            
-            // Обновляем график
-            updatePointsChart();
-        });
-    });
-    
-    // Восстанавливаем активный режим
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-        if (btn.dataset.mode === chartMode) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
-    
-    // Фильтр по периодам
-    const periodSelect = document.getElementById('chartPeriod');
-    if (periodSelect) {
-        periodSelect.value = chartPeriod;
-        periodSelect.addEventListener('change', (e) => {
-            chartPeriod = e.target.value;
-            safeSetLocalStorage('chartPeriod', chartPeriod);
-            updatePointsChart();
-        });
-    }
-    
-    // Кнопка сброса зума
-    const resetZoomBtn = document.getElementById('resetZoomBtn');
-    if (resetZoomBtn) {
-        resetZoomBtn.addEventListener('click', resetChartZoom);
-    }
-    
-    // Кнопка экспорта графика
-    const exportChartBtn = document.getElementById('exportChartBtn');
-    if (exportChartBtn) {
-        exportChartBtn.addEventListener('click', exportChart);
     }
 });
 

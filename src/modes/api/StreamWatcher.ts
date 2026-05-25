@@ -5,6 +5,9 @@
 import { TwitchAPI } from './TwitchAPI';
 import { WebSocketManager, WebSocketEventHandler } from './WebSocketManager';
 import { ClaimBonusResult, StreamerInfo, WatchStatistics } from './types';
+import { BotHealthSnapshot, StreamerClaimHealth } from './botHealthTypes';
+import { getAppVersionParts } from '../../appVersion';
+import { allowApiIntegrityFallback, getManualIntegrityFromEnv, resolveIntegritySource } from './integrityConfig';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
@@ -84,6 +87,16 @@ export class StreamWatcher {
   private claimIdBlocklist = new ClaimIdBlocklist(
     parseInt(process.env.CLAIM_FAILED_BLOCK_MS || '86400000', 10)
   );
+  /** Сколько последних claim показывать в /api/bot-health */
+  private static readonly CLAIM_HEALTH_RECENT_MAX = 5;
+  /** Последние попытки claim (для dashboard), не более CLAIM_HEALTH_RECENT_MAX */
+  private claimHealthRecent: StreamerClaimHealth[] = [];
+  /** Последняя ошибка integrity при claim */
+  private lastIntegrityFailure: { timestamp: number; streamer: string } | null = null;
+  /** Время последней активности бота (minute-watched, баллы) */
+  private lastGlobalActivityAt = 0;
+  /** Последний переход стримера в онлайн (для Last Activity на dashboard) */
+  private lastOnlineTransition: { username: string; at: number } | null = null;
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
   private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
@@ -654,6 +667,7 @@ export class StreamWatcher {
     return {
       onPointsEarned: (streamerInfo, points, reason) => {
         logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+        this.touchGlobalActivity();
 
         let eventType: string;
         if (reason === 'CLAIM') {
@@ -695,8 +709,10 @@ export class StreamWatcher {
         this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
       onStreamUp: async (streamerInfo) => {
         logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+        const onlineAt = Date.now();
+        this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
         this.resetStreamSessionPoints(streamerInfo);
-        streamerInfo.startTime = Date.now();
+        streamerInfo.startTime = onlineAt;
         this.persistLastStreamStart(streamerInfo.username, streamerInfo.startTime);
         this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
 
@@ -844,6 +860,43 @@ export class StreamWatcher {
   }
 
   /**
+   * Гарантирует startTime для онлайн-стримера (счётчик Active Watches в dashboard)
+   */
+  private ensureWatchSessionStarted(streamerInfo: StreamerInfo): void {
+    if (!streamerInfo.isOnline || streamerInfo.startTime > 0) {
+      return;
+    }
+    streamerInfo.startTime = Date.now();
+    logger.verbose(`⏱️  [${streamerInfo.username}] Сессия просмотра: startTime установлен`);
+  }
+
+  /**
+   * Отмечает активность бота (minute-watched, баллы)
+   */
+  private touchGlobalActivity(): void {
+    this.lastGlobalActivityAt = Date.now();
+  }
+
+  /**
+   * Запоминает переход стримера в онлайн для Last Activity на dashboard
+   */
+  private recordLastOnlineTransition(username: string, at: number = Date.now()): void {
+    this.lastOnlineTransition = { username, at };
+  }
+
+  /**
+   * Количество активных просмотров для /api/overall
+   */
+  getActiveWatchCount(): number {
+    for (const info of this.streamers.values()) {
+      if (info.isOnline && info.startTime <= 0) {
+        this.ensureWatchSessionStarted(info);
+      }
+    }
+    return this.getStatistics(false).length;
+  }
+
+  /**
    * Базовая запись стримера при сбое инициализации
    */
   private createFallbackStreamerInfo(username: string): StreamerInfo {
@@ -934,12 +987,21 @@ export class StreamWatcher {
         this.claimIdBlocklist.clear(id);
       }
       logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран!`);
+      this.recordClaimHealth(streamerInfo.username, {
+        outcome: 'success',
+        message: 'Bonus chest claimed',
+      });
       this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
       return;
     }
 
     const hadIntegrityFailure = attemptResults.some((r) => r.failureKind === 'integrity');
     const hadPermanentFailure = attemptResults.some((r) => r.failureKind === 'permanent');
+    const failureKind = hadIntegrityFailure
+      ? 'integrity'
+      : hadPermanentFailure
+        ? 'permanent'
+        : lastResult.failureKind ?? 'unknown';
 
     if (hadPermanentFailure) {
       this.claimIdBlocklist.markPermanent(...attemptedIds);
@@ -953,7 +1015,44 @@ export class StreamWatcher {
     } else {
       logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус — повторим при следующем опросе`);
     }
-    this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+
+    const failMessage = hadIntegrityFailure
+      ? 'Failed integrity check — update TWITCH_CLIENT_INTEGRITY'
+      : 'Failed to claim bonus';
+    this.recordClaimHealth(streamerInfo.username, {
+      outcome: 'failed',
+      failureKind,
+      message: failMessage,
+    });
+    this.addEvent('claim-failed', streamerInfo.username, failMessage);
+  }
+
+  /**
+   * Сохраняет результат claim для панели здоровья бота (хранятся только последние 5 по времени)
+   */
+  private recordClaimHealth(
+    streamer: string,
+    data: {
+      outcome: 'success' | 'failed';
+      failureKind?: StreamerClaimHealth['failureKind'];
+      message: string;
+    }
+  ): void {
+    const entry: StreamerClaimHealth = {
+      streamer,
+      outcome: data.outcome,
+      failureKind: data.failureKind,
+      timestamp: Date.now(),
+      message: data.message,
+    };
+    this.claimHealthRecent.push(entry);
+    this.claimHealthRecent.sort((a, b) => b.timestamp - a.timestamp);
+    if (this.claimHealthRecent.length > StreamWatcher.CLAIM_HEALTH_RECENT_MAX) {
+      this.claimHealthRecent.length = StreamWatcher.CLAIM_HEALTH_RECENT_MAX;
+    }
+    if (data.failureKind === 'integrity') {
+      this.lastIntegrityFailure = { timestamp: entry.timestamp, streamer };
+    }
   }
 
   /**
@@ -988,6 +1087,11 @@ export class StreamWatcher {
     }
     if (this.channelWatchActive.has(username)) {
       return;
+    }
+
+    const streamerInfo = this.streamers.get(username);
+    if (streamerInfo) {
+      this.ensureWatchSessionStarted(streamerInfo);
     }
 
     this.channelWatchActive.add(username);
@@ -1097,6 +1201,7 @@ export class StreamWatcher {
 
       if (success) {
         logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+        this.touchGlobalActivity();
         if (this.graphqlClient) {
           runSafeAsync(`claim-after-watch-${streamerInfo.username}`, () =>
             this.tryClaimBonusForStreamer(streamerInfo)
@@ -1384,20 +1489,37 @@ export class StreamWatcher {
 
     if (stats.length === 0) {
       logger.important('📊  Currently watching: none');
-      return;
+    } else {
+      logger.important(`\n📊  Currently watching (${stats.length}):`);
+      for (const stat of stats) {
+        const elapsed = formatElapsedTime(stat.elapsedTime);
+        const pointsDisplay = stat.pointsEarned >= 0
+          ? `+${stat.pointsEarned}`
+          : `${stat.pointsEarned}`;
+
+        logger.important(
+          `   • ${stat.streamerName}: ${elapsed} | Points: ${stat.currentPoints} | Earned: ${pointsDisplay} | Status: ${stat.status}`
+        );
+      }
     }
 
-    logger.important(`\n📊  Currently watching (${stats.length}):`);
-    for (const stat of stats) {
-      const elapsed = formatElapsedTime(stat.elapsedTime);
-      const pointsDisplay = stat.pointsEarned >= 0 
-        ? `+${stat.pointsEarned}` 
-        : `${stat.pointsEarned}`;
-      
-      logger.important(
-        `   • ${stat.streamerName}: ${elapsed} | Points: ${stat.currentPoints} | Earned: ${pointsDisplay} | Status: ${stat.status}`
-      );
+    this.logOverallDashboardStats();
+  }
+
+  /**
+   * Логирует сводку метрик дашборда (Active Watches, Total Points, Streamers, Last Activity).
+   */
+  private logOverallDashboardStats(): void {
+    const { activeWatches, totalPointsEarned, streamersCount, lastActivity, lastOnlineStreamer } =
+      this.getOverallStats();
+    let lastActivityLabel = '—';
+    if (lastOnlineStreamer && lastActivity > 0) {
+      lastActivityLabel = `${lastOnlineStreamer} · ${formatElapsedTime(lastActivity)} ago`;
     }
+
+    logger.important(
+      `📊  Dashboard: Active Watches=${activeWatches} | Total Points=+${totalPointsEarned} | Streamers=${streamersCount} | Last Online=${lastActivityLabel}`
+    );
   }
 
   /**
@@ -1577,8 +1699,9 @@ export class StreamWatcher {
         if (!wasOnline && streamerInfo.isOnline) {
           // Стример перешел из офлайн в онлайн
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
-          this.resetStreamSessionPoints(streamerInfo);
           const streamStartTime = Date.now();
+          this.recordLastOnlineTransition(streamerInfo.username, streamStartTime);
+          this.resetStreamSessionPoints(streamerInfo);
           streamerInfo.startTime = streamStartTime;
           this.persistLastStreamStart(streamerInfo.username, streamStartTime);
           
@@ -1847,6 +1970,7 @@ export class StreamWatcher {
         };
       },
       getMetrics: async () => {
+        const activeWatches = this.getActiveWatchCount();
         const stats = this.getStatistics();
         const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
         const lastActivity = stats.length > 0 
@@ -1854,7 +1978,7 @@ export class StreamWatcher {
           : 0;
 
         return {
-          activeWatches: stats.length,
+          activeWatches,
           totalPointsEarned,
           lastActivity,
           streamersCount: this.streamers.size
@@ -2103,6 +2227,64 @@ export class StreamWatcher {
     }
   }
 
+  /**
+   * Снимок здоровья бота для dashboard (/api/bot-health)
+   */
+  getBotHealth(): BotHealthSnapshot {
+    const { semver, revision, label } = getAppVersionParts();
+    const graphqlClient = this.graphqlClient;
+
+    const integrity = graphqlClient
+      ? graphqlClient.getIntegrityProvider().getHealthSnapshot()
+      : (() => {
+          const manual = getManualIntegrityFromEnv();
+          const now = Date.now();
+          const expiresAtMs = manual?.expiresAtMs ?? null;
+          return {
+            source: resolveIntegritySource(),
+            configured: Boolean(manual?.token),
+            valid: manual ? now < manual.expiresAtMs - 60_000 : false,
+            expiresAtMs,
+            expiresInMs:
+              expiresAtMs != null && expiresAtMs > now ? expiresAtMs - now : expiresAtMs != null ? 0 : null,
+            fallbackApiEnabled: allowApiIntegrityFallback(),
+            deviceIdPrefix: (process.env.TWITCH_DEVICE_ID?.trim() || '—').slice(0, 8),
+          };
+        })();
+
+    const websocket = this.wsManager
+      ? this.wsManager.getHealthSnapshot()
+      : {
+          status: 'stopped' as const,
+          connectionState: 'CLOSED',
+          reconnectAttempt: 0,
+          maxReconnectAttempts: 0,
+          hasCriticalErrors: false,
+          lastCriticalError: null,
+        };
+
+    const graphql = graphqlClient
+      ? graphqlClient.getHealthSnapshot()
+      : { circuitBreaker: 'CLOSED' as const, hadRecentNetworkFailure: false };
+
+    const claimByStreamer = [...this.claimHealthRecent];
+
+    return {
+      timestamp: Date.now(),
+      appVersion: label,
+      appSemver: semver,
+      gitRevision: revision,
+      watcherRunning: this.isRunning,
+      websocket,
+      integrity,
+      graphql,
+      lastIntegrityFailure: this.lastIntegrityFailure
+        ? { ...this.lastIntegrityFailure }
+        : null,
+      claimByStreamer,
+    };
+  }
+
   // Реализация интерфейса StatisticsProvider
 
   /**
@@ -2129,20 +2311,35 @@ export class StreamWatcher {
     activeWatches: number;
     totalPointsEarned: number;
     lastActivity: number;
+    lastOnlineStreamer: string | null;
     streamersCount: number;
   } {
-    // Для общей статистики используем только активные просмотры
-    const stats = this.getStatistics(false);
-    const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-    const lastActivity = stats.length > 0 
-      ? Math.max(...stats.map(s => s.elapsedTime))
-      : 0;
+    const now = Date.now();
+    let totalPointsEarned = 0;
+
+    for (const info of this.streamers.values()) {
+      if (info.isOnline) {
+        this.ensureWatchSessionStarted(info);
+        this.syncStreamPointsEarned(info);
+        totalPointsEarned += Math.max(0, info.streamPointsEarned ?? 0);
+      }
+    }
+
+    const activeWatches = this.getActiveWatchCount();
+
+    let lastActivity = 0;
+    let lastOnlineStreamer: string | null = null;
+    if (this.lastOnlineTransition) {
+      lastOnlineStreamer = this.lastOnlineTransition.username;
+      lastActivity = Math.max(0, now - this.lastOnlineTransition.at);
+    }
 
     return {
-      activeWatches: stats.length,
+      activeWatches,
       totalPointsEarned,
       lastActivity,
-      streamersCount: this.streamers.size
+      lastOnlineStreamer,
+      streamersCount: this.streamers.size,
     };
   }
 
@@ -2427,7 +2624,8 @@ export class StreamWatcher {
       // Загружаем данные из базы данных перед добавлением
       this.loadStreamerDataFromDatabase(streamerInfo);
       this.applyPersistedPoints(streamerInfo);
-      
+      this.restoreWatchSessionAfterRestart(streamerInfo);
+
       // Стример успешно инициализирован
       this.streamers.set(normalizedUsername, streamerInfo);
       

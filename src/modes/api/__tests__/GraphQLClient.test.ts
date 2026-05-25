@@ -365,7 +365,7 @@ describe('GraphQLClient', () => {
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('должен вернуть false при ошибке integrity', async () => {
+    it('должен вернуть false при ошибке integrity и повторить запрос (api)', async () => {
       const mockResponse = {
         data: {
           claimCommunityPoints: null,
@@ -396,6 +396,31 @@ describe('GraphQLClient', () => {
       expect(result.success).toBe(false);
       expect(result.failureKind).toBe('integrity');
       expect(global.fetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('не повторяет claim при failed integrity check в режиме manual', async () => {
+      process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
+      process.env.TWITCH_CLIENT_INTEGRITY = 'manual-token';
+      const manualClient = new GraphQLClient(mockAuthToken, mockUserAgent);
+
+      const mockResponse = {
+        data: {
+          claimCommunityPoints: null,
+        },
+        errors: [{ message: 'failed integrity check' }],
+      };
+
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => mockResponse,
+      });
+
+      const result = await manualClient.claimBonus('channel123', 'claim123');
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe('integrity');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
   });
 

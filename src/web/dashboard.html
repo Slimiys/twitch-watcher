@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=3">
-    <script src="dashboard.js?v=9" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=5">
+    <script src="dashboard.js?v=25" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -58,6 +58,18 @@
                     <span>🧪</span>
                     <span>Tests</span>
                 </button>
+                <button class="settings-btn" id="appUpdateBtn" title="git pull и run-local.sh (Termux)" style="display: none;">
+                    <span>🔄</span>
+                    <span>Обновиться</span>
+                </button>
+                <button class="settings-btn" id="appStopBtn" title="Остановить бота" style="display: none;">
+                    <span>⏹</span>
+                    <span>Остановить</span>
+                </button>
+                <button class="settings-btn" id="appRestartBtn" title="Перезапустить бота" style="display: none;">
+                    <span>🔁</span>
+                    <span>Перезапустить</span>
+                </button>
                 <button class="settings-btn" id="settingsBtn" title="Settings">
                     <span>⚙️</span>
                     <span>Settings</span>
@@ -83,7 +95,7 @@
             </div>
         </header>
 
-        <div class="stats-grid">
+        <div class="stats-grid" id="overallStatsGrid">
             <div class="stat-card collapsible-card">
                 <h3 onclick="toggleCard(this)">
                     <span>Active Watches</span>
@@ -99,7 +111,7 @@
                 </h3>
                 <div class="stat-card-content">
                     <div class="value" id="totalPoints">0</div>
-                    <div class="label">Points earned</div>
+                    <div class="label">Points earned this session</div>
                 </div>
             </div>
             <div class="stat-card collapsible-card">
@@ -113,11 +125,11 @@
             </div>
             <div class="stat-card collapsible-card">
                 <h3 onclick="toggleCard(this)">
-                    <span>Last Activity</span>
+                    <span>Last Online</span>
                 </h3>
                 <div class="stat-card-content">
-                    <div class="value" id="lastActivity">-</div>
-                    <div class="label">Time ago</div>
+                    <div class="value" id="lastActivity">—</div>
+                    <div class="label">Last streamer went live</div>
                 </div>
             </div>
         </div>
@@ -195,6 +207,22 @@
                         </div>
                     </div>
                 </div>
+
+            <!-- Статус бота -->
+            <div class="section bot-health-section collapsible-section" id="botHealthSection">
+                <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>
+                <div id="botHealthContent" class="bot-health-content">
+                    <div id="botHealthGrid" class="bot-health-grid">
+                        <p class="bot-health-loading">Загрузка…</p>
+                    </div>
+                    <div class="bot-health-claims-wrap">
+                        <h3 class="bot-health-subtitle">Последние 5 claim</h3>
+                        <div id="botHealthClaims" class="bot-health-claims">
+                            <p class="bot-health-empty">Пока нет попыток сбора бонусов</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Token Information: строка 2, столбец 1 -->
             <div class="section" id="tokenInfoSection" style="display: none;">

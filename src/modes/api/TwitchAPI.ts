@@ -429,8 +429,10 @@ export class TwitchAPI {
         streamerInfo.game = streamInfo.game?.name || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
         
-        // Устанавливаем startTime только если стример только что перешел в онлайн
+        // startTime: при переходе в онлайн или если уже онлайн, но время не задано (GraphQL при init)
         if (!wasOnline) {
+          streamerInfo.startTime = Date.now();
+        } else if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
           streamerInfo.startTime = Date.now();
         }
 

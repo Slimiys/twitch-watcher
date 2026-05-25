@@ -3,6 +3,7 @@
  */
 
 import { ClaimBonusResult, GraphQLOperation, GraphQLResponse } from './types';
+import { GraphqlHealthSnapshot } from './botHealthTypes';
 import { GQL_URL, CLIENT_ID, GQL_OPERATIONS } from './constants';
 import { logger } from './logger';
 import { retryWithExponentialBackoff, RetryConfig } from './retry';
@@ -11,6 +12,7 @@ import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
+import { resolveIntegritySource } from './integrityConfig';
 
 /** Коды ClaimCommunityPoints, при которых повтор бесполезен */
 const PERMANENT_CLAIM_ERROR_CODES = new Set([
@@ -69,6 +71,23 @@ export class GraphQLClient {
    */
   getCircuitBreakerState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN' {
     return this.circuitBreaker.getState();
+  }
+
+  /**
+   * Снимок GraphQL для dashboard
+   */
+  getHealthSnapshot(): GraphqlHealthSnapshot {
+    return {
+      circuitBreaker: this.getCircuitBreakerState(),
+      hadRecentNetworkFailure: this.hadRecentNetworkFailure(),
+    };
+  }
+
+  /**
+   * Провайдер Client-Integrity (для bot-health)
+   */
+  getIntegrityProvider(): TwitchIntegrityProvider {
+    return this.integrityProvider;
   }
 
   /**
@@ -785,9 +804,15 @@ export class GraphQLClient {
     let response = await this.postRequest(operation, { requireIntegrity: true });
 
     if (GraphQLClient.hasIntegrityError(response)) {
-      logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
-      this.integrityProvider.invalidate();
-      response = await this.postRequest(operation, { requireIntegrity: true });
+      if (resolveIntegritySource() === 'manual') {
+        logger.verbose(
+          '🔐  ClaimCommunityPoints: failed integrity check (manual) — повтор без обновления TWITCH_CLIENT_INTEGRITY пропущен'
+        );
+      } else {
+        logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
+        this.integrityProvider.invalidate();
+        response = await this.postRequest(operation, { requireIntegrity: true });
+      }
     }
 
     return GraphQLClient.parseClaimBonusResult(response);

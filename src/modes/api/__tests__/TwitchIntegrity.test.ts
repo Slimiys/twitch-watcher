@@ -50,6 +50,21 @@ describe('TwitchIntegrityProvider', () => {
     );
   });
 
+  it('getHealthSnapshot не возвращает токен', async () => {
+    process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
+    process.env.TWITCH_CLIENT_INTEGRITY = 'secret-token-value';
+    process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES = String(Math.floor(Date.now() / 1000) + 7200);
+
+    const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-12345678');
+    const snap = provider.getHealthSnapshot();
+
+    expect(snap.source).toBe('manual');
+    expect(snap.configured).toBe(true);
+    expect(snap.valid).toBe(true);
+    expect(snap.deviceIdPrefix).toBe('device-1');
+    expect(JSON.stringify(snap)).not.toContain('secret-token');
+  });
+
   it('manual возвращает TWITCH_CLIENT_INTEGRITY без fetch', async () => {
     process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
     process.env.TWITCH_CLIENT_INTEGRITY = 'devtools-integrity-token';

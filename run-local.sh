@@ -3,8 +3,18 @@
 # Установка кодировки UTF-8
 export LANG=ru_RU.UTF-8
 
+UPDATE_ONLY=false
+if [ "${1:-}" = "--update-only" ]; then
+  UPDATE_ONLY=true
+  shift
+fi
+
 echo "========================================"
-echo "   Twitch Watcher - Прямой запуск"
+if [ "$UPDATE_ONLY" = true ]; then
+  echo "   Twitch Watcher - Обновление (без запуска)"
+else
+  echo "   Twitch Watcher - Прямой запуск"
+fi
 echo "========================================"
 echo ""
 
@@ -31,6 +41,13 @@ fi
 
 echo ""
 echo "[SUCCESS] Проект успешно собран!"
+
+if [ "$UPDATE_ONLY" = true ]; then
+    echo ""
+    echo "[INFO] Режим --update-only: запуск npm start пропущен"
+    exit 0
+fi
+
 echo ""
 echo "[INFO] Запускаю приложение..."
 echo ""

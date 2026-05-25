@@ -318,6 +318,32 @@ describe('WebSocketManager', () => {
       (manager as any).handleVideoPlaybackMessage('123', message);
 
       expect(streamerInfo.isOnline).toBe(true);
+      expect(streamerInfo.startTime).toBeGreaterThan(0);
+    });
+
+    it('stream-up выставляет startTime если стример уже был онлайн', () => {
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 1000,
+        isOnline: true,
+        broadcastId: 'bc1',
+        game: null,
+        title: null,
+        tags: [],
+        spadeUrl: null,
+        startTime: 0,
+        initialChannelPoints: null,
+        lastChannelPoints: null,
+        streamPointsEarned: 0,
+      };
+
+      (manager as any).streamers.set('123', streamerInfo);
+
+      (manager as any).handleVideoPlaybackMessage('123', { type: 'stream-up', data: {} });
+
+      expect(streamerInfo.isOnline).toBe(true);
+      expect(streamerInfo.startTime).toBeGreaterThan(0);
     });
 
     it('должен обработать событие stream-down', () => {

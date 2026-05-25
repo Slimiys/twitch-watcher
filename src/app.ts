@@ -11,6 +11,7 @@ import * as path from 'path';
 import { askLogin } from './input';
 import { CookieData, LoginInput, AppConfig } from './types';
 import { getAppVersionLabel } from './appVersion';
+import { writePidFile } from './pidFile';
 import { logger } from './modes/api/logger';
 import { writeCrashReport } from './processGuards';
 
@@ -180,6 +181,7 @@ async function startAPIMode(): Promise<void> {
  * Главная функция приложения
  */
 async function main(): Promise<void> {
+  writePidFile();
   const versionLabel = getAppVersionLabel();
   console.clear();
   console.log('=========================');

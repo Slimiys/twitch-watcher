@@ -339,6 +339,12 @@ h1 {
     color: #efeff1;
 }
 
+#lastActivity {
+    font-size: 22px;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
 .stat-card .label {
     font-size: 12px;
     color: #adadb8;
@@ -2405,6 +2411,233 @@ th.notify-header-clickable:active {
     100% {
         transform: scale(1);
         color: #efeff1;
+    }
+}
+
+/* Панель «Статус бота» */
+.bot-health-section h2 {
+    margin-bottom: 16px;
+}
+
+.bot-health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.bot-health-card {
+    background: #18181b;
+    border: 1px solid #2f2f35;
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+
+.bot-health-card-version {
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bot-health-card-version:hover,
+.bot-health-card-version:focus-visible {
+    border-color: #9147ff;
+    background: #1f1f23;
+    outline: none;
+}
+
+.bot-health-card-version[data-state="available"] {
+    border-color: #ffb800;
+    box-shadow: 0 0 0 1px rgba(255, 184, 0, 0.35);
+    animation: version-update-pulse 2s ease-in-out infinite;
+}
+
+.bot-health-card-version[data-state="updating"],
+.bot-health-card-version[data-state="checking"] {
+    border-color: #5a5a6a;
+    cursor: wait;
+}
+
+.bot-health-card-version[data-state="error"] {
+    border-color: #eb0400;
+}
+
+@keyframes version-update-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 1px rgba(255, 184, 0, 0.25);
+    }
+    50% {
+        box-shadow: 0 0 12px 2px rgba(255, 184, 0, 0.45);
+    }
+}
+
+.version-status-pill {
+    display: inline-block;
+    margin-bottom: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1.3;
+}
+
+.version-status-pill--current {
+    color: #00d166;
+    background: rgba(0, 209, 102, 0.12);
+}
+
+.version-status-pill--available {
+    color: #ffb800;
+    background: rgba(255, 184, 0, 0.18);
+}
+
+.version-status-pill--checking,
+.version-status-pill--updating {
+    color: #adadb8;
+    background: rgba(173, 173, 184, 0.12);
+}
+
+.version-status-pill--error {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.version-status-pill--unavailable {
+    color: #adadb8;
+    background: rgba(173, 173, 184, 0.08);
+}
+
+.bot-health-update-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a1a1a;
+    background: #ffb800;
+    border-radius: 4px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.bot-health-card-title {
+    font-size: 12px;
+    color: #adadb8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+
+.bot-health-card-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: #efeff1;
+    word-break: break-word;
+}
+
+.bot-health-card-detail {
+    font-size: 12px;
+    color: #adadb8;
+    margin-top: 6px;
+    line-height: 1.45;
+}
+
+.bot-health-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.bot-health-status-dot.ok {
+    background: #00d166;
+}
+
+.bot-health-status-dot.warn {
+    background: #ffb800;
+}
+
+.bot-health-status-dot.err {
+    background: #ef4444;
+}
+
+.bot-health-status-dot.off {
+    background: #6b6b7a;
+}
+
+.bot-health-subtitle {
+    font-size: 14px;
+    color: #adadb8;
+    margin: 0 0 10px 0;
+    font-weight: 600;
+}
+
+.bot-health-claims {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.bot-health-claim-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 12px;
+    background: #18181b;
+    border-radius: 6px;
+    border: 1px solid #2f2f35;
+    font-size: 13px;
+}
+
+.bot-health-claim-streamer {
+    font-weight: 600;
+    min-width: 100px;
+}
+
+.bot-health-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.bot-health-badge.success {
+    background: rgba(0, 209, 102, 0.2);
+    color: #00d166;
+}
+
+.bot-health-badge.failed {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.bot-health-badge.integrity {
+    background: rgba(255, 184, 0, 0.2);
+    color: #ffb800;
+}
+
+.bot-health-badge.permanent {
+    background: rgba(145, 70, 255, 0.2);
+    color: #bf94ff;
+}
+
+.bot-health-empty,
+.bot-health-loading {
+    color: #adadb8;
+    font-size: 13px;
+    margin: 0;
+}
+
+@media (max-width: 600px) {
+    .bot-health-grid {
+        grid-template-columns: 1fr;
     }
 }
 

@@ -8,6 +8,8 @@ import { Request, Response, NextFunction } from 'express';
 const PUBLIC_API_PATHS = new Set([
   '/api/server-info',
   '/api/initialization-status',
+  '/api/app-update-check',
+  '/api/overall',
 ]);
 
 /**

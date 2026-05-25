@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { clearLogDirectoryOnStartup } from '../../logDirectory';
 
 /**
  * Двухфайловый логгер: при заполнении первого файла пишет во второй;
@@ -83,25 +84,30 @@ export class PingPongFileLogger {
   }
 }
 
+/** Результат инициализации файлового логирования */
+export interface PingPongFileLoggerSetup {
+  logger: PingPongFileLogger | null;
+  /** Сколько файлов удалено из LOG_DIR при старте */
+  clearedFiles: number;
+  logDir: string;
+}
+
 /**
  * Создаёт файловый логгер из переменных окружения или null, если выключено.
  */
-export function createPingPongFileLoggerFromEnv(): PingPongFileLogger | null {
+export function createPingPongFileLoggerFromEnv(): PingPongFileLoggerSetup {
+  const logDir = process.env.LOG_DIR || './logs';
+  const clearedFiles = clearLogDirectoryOnStartup(logDir);
+
   const enabled = process.env.LOG_TO_FILE !== 'false' && process.env.LOG_TO_FILE !== '0';
   if (!enabled) {
-    return null;
+    return { logger: null, clearedFiles, logDir };
   }
 
-  const logDir = process.env.LOG_DIR || './logs';
   const baseName = process.env.LOG_FILE_BASENAME || 'twitch-watcher';
   const maxMb = parseInt(process.env.LOG_FILE_MAX_MB || '100', 10);
   const maxBytes = (Number.isFinite(maxMb) && maxMb > 0 ? maxMb : 100) * 1024 * 1024;
 
   const logger = new PingPongFileLogger(logDir, baseName, maxBytes);
-  const clearOnStart = process.env.LOG_CLEAR_ON_START !== 'false'
-    && process.env.LOG_CLEAR_ON_START !== '0';
-  if (clearOnStart) {
-    logger.clearOnStartup();
-  }
-  return logger;
+  return { logger, clearedFiles, logDir };
 }
