@@ -308,17 +308,17 @@ function formatTimeWithColors(timestamp, timeColor) {
  * @returns {string} HTML код skeleton loader
  */
 function generateStatsSkeleton() {
-    return `
-        <div class="stats-grid">
-            ${Array.from({ length: 4 }).map(() => `
+    return Array.from({ length: 4 })
+        .map(
+            () => `
                 <div class="skeleton-stat-card">
                     <div class="skeleton skeleton-stat-title"></div>
                     <div class="skeleton skeleton-stat-value"></div>
                     <div class="skeleton skeleton-stat-label"></div>
                 </div>
-            `).join('')}
-        </div>
-    `;
+            `
+        )
+        .join('');
 }
 
 /**
@@ -1353,8 +1353,44 @@ let previousStats = {
     lastActivity: 0
 };
 
+/**
+ * Контейнер карточек сводной статистики (только основной дашборд)
+ */
+function getOverallStatsContainer() {
+    return (
+        document.getElementById('overallStatsGrid') ||
+        document.querySelector('#mainContainer .stats-grid')
+    );
+}
+
+/**
+ * Записывает значения /api/overall в карточки заголовка
+ */
+function applyOverallStatsToDom(stats) {
+    const root = getOverallStatsContainer();
+    const resolveEl = (id) => (root ? root.querySelector(`#${id}`) : null) || document.getElementById(id);
+
+    const activeEl = resolveEl('activeWatches');
+    const pointsEl = resolveEl('totalPoints');
+    const streamersEl = resolveEl('streamersCount');
+    const activityEl = resolveEl('lastActivity');
+
+    if (activeEl) {
+        activeEl.textContent = (stats.activeWatches || 0).toLocaleString();
+    }
+    if (pointsEl) {
+        pointsEl.textContent = (stats.totalPointsEarned || 0).toLocaleString();
+    }
+    if (streamersEl) {
+        streamersEl.textContent = (stats.streamersCount || 0).toLocaleString();
+    }
+    if (activityEl) {
+        activityEl.textContent = formatOverallLastActivity(stats.lastActivity);
+    }
+}
+
 async function updateOverallStats() {
-    const statsContainer = document.querySelector('.stats-grid');
+    const statsContainer = getOverallStatsContainer();
     const hasContent = statsContainer && statsContainer.querySelector('.stat-card');
     const hasSkeleton = statsContainer && statsContainer.querySelector('.skeleton-stat-card');
     
@@ -1379,48 +1415,56 @@ async function updateOverallStats() {
     }
 
     updateConnectionStatus(true);
-    lastDataUpdate.overall = Date.now();
-    updateStaleDataIndicator('overall', statsContainer);
 
     // Если был skeleton, заменяем плавно
     if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
         const newContent = `
-            <div class="stat-card">
-                <h3>Active Watches</h3>
-                <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
-                <div class="label">Currently watching</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Active Watches</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
+                    <div class="label">Currently watching</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Total Points</h3>
-                <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
-                <div class="label">Points earned</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Total Points</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
+                    <div class="label">Points earned this session</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Streamers</h3>
-                <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
-                <div class="label">Total streamers</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Streamers</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
+                    <div class="label">Total streamers</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <h3>Last Activity</h3>
-                <div class="value" id="lastActivity">${formatOverallLastActivity(stats.lastActivity)}</div>
-                <div class="label">Since last event</div>
+            <div class="stat-card collapsible-card">
+                <h3 onclick="toggleCard(this)"><span>Last Activity</span></h3>
+                <div class="stat-card-content">
+                    <div class="value" id="lastActivity">${formatOverallLastActivity(stats.lastActivity)}</div>
+                    <div class="label">Since last event</div>
+                </div>
             </div>
         `;
         replaceSkeletonWithContent(statsContainer, newContent);
     } else {
-        // Обычное обновление с анимацией
-        const cards = document.querySelectorAll('.stat-card');
-        cards.forEach(card => {
+        const cards = statsContainer
+            ? statsContainer.querySelectorAll('.stat-card')
+            : document.querySelectorAll('#mainContainer .stat-card');
+        cards.forEach((card) => {
             card.classList.add('updating');
             setTimeout(() => card.classList.remove('updating'), 300);
         });
 
-        // Обновляем значения с анимацией изменений
         updateValueWithAnimation('activeWatches', stats.activeWatches || 0, previousStats.activeWatches);
         updateValueWithAnimation('totalPoints', stats.totalPointsEarned || 0, previousStats.totalPointsEarned);
         updateValueWithAnimation('streamersCount', stats.streamersCount || 0, previousStats.streamersCount);
-        
-        const lastActivityEl = document.getElementById('lastActivity');
+
+        const lastActivityEl =
+            (statsContainer && statsContainer.querySelector('#lastActivity')) ||
+            document.getElementById('lastActivity');
         if (lastActivityEl) {
             const newValue = formatOverallLastActivity(stats.lastActivity);
             if (lastActivityEl.textContent !== newValue) {
@@ -1430,8 +1474,13 @@ async function updateOverallStats() {
             } else {
                 lastActivityEl.textContent = newValue;
             }
+        } else {
+            applyOverallStatsToDom(stats);
         }
     }
+
+    lastDataUpdate.overall = Date.now();
+    updateStaleDataIndicator('overall', statsContainer);
 
     // Сохраняем текущие значения
     previousStats = {
@@ -1449,7 +1498,9 @@ async function updateOverallStats() {
  * @param {number} oldValue Старое значение
  */
 function updateValueWithAnimation(elementId, newValue, oldValue) {
-    const element = document.getElementById(elementId);
+    const root = getOverallStatsContainer();
+    const element =
+        (root && root.querySelector(`#${elementId}`)) || document.getElementById(elementId);
     if (!element) return;
 
     if (newValue !== oldValue) {
@@ -2058,6 +2109,20 @@ let lastDataUpdate = {
 };
 
 const STALE_DATA_THRESHOLD = 30000; // 30 секунд
+
+/**
+ * Помечает контейнер, если данные давно не обновлялись
+ * @param {'stats'|'overall'} key Ключ в lastDataUpdate
+ * @param {Element|null} container DOM-контейнер
+ */
+function updateStaleDataIndicator(key, container) {
+    if (!container) {
+        return;
+    }
+    const ts = lastDataUpdate[key] || 0;
+    const stale = ts > 0 && Date.now() - ts > STALE_DATA_THRESHOLD;
+    container.classList.toggle('stale-data', stale);
+}
 
 // Настройки приложения
 const defaultSettings = {
