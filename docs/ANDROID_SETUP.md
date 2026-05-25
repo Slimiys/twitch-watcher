@@ -66,14 +66,24 @@ nano .env
 
 Добавьте в файл:
 ```env
-MODE=api
 LOG_LEVEL=normal
 MAX_SIMULTANEOUS_CHANNELS=2
 token=your_auth_token_here
 
-# Примечание: Список стримеров теперь настраивается в config.json
+# Сбор бонусов на Termux — manual integrity из браузера (POST /integrity с телефона обычно не проходит)
+TWITCH_INTEGRITY_SOURCE=manual
+TWITCH_CLIENT_INTEGRITY=вставьте_из_DevTools
+TWITCH_CLIENT_INTEGRITY_EXPIRES=1735689600
+TWITCH_DEVICE_ID=uuid-из-cookie-unique_id
+# TWITCH_COOKIES=unique_id=...; api_token=...
+
+# Примечание: Список стримеров настраивается в config.json
 # или через веб-интерфейс после запуска приложения
 ```
+
+**Как получить `TWITCH_CLIENT_INTEGRITY`:** на ПК откройте twitch.tv → F12 → Network → любой запрос `gql` → Request Headers → скопируйте `Client-Integrity` и (по возможности) `X-Device-Id` / cookie `unique_id`. Токен живёт несколько часов — при `failed integrity check` обновите и перезапустите бота.
+
+При старте в логе должно быть: `Integrity: manual`. Успешный сбор: `Бонус успешно собран!` и `Reason: CLAIM` в событиях баллов.
 
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)
 

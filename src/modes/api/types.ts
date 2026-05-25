@@ -3,6 +3,15 @@
  */
 
 /**
+ * Результат ClaimCommunityPoints
+ */
+export interface ClaimBonusResult {
+  success: boolean;
+  /** integrity — обновить TWITCH_CLIENT_INTEGRITY; permanent — не повторять claimId */
+  failureKind?: 'integrity' | 'permanent';
+}
+
+/**
  * Информация о стримере
  */
 export interface StreamerInfo {

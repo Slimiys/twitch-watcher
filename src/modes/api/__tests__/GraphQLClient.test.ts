@@ -71,6 +71,9 @@ describe('GraphQLClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.TWITCH_CLIENT_VERSION = 'test-build-id-for-vitest';
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
+    delete process.env.TWITCH_CLIENT_INTEGRITY;
     client = new GraphQLClient(mockAuthToken, mockUserAgent);
   });
 
@@ -358,7 +361,7 @@ describe('GraphQLClient', () => {
 
       const result = await client.claimBonus('channel123', 'claim123');
 
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
@@ -390,7 +393,8 @@ describe('GraphQLClient', () => {
 
       const result = await client.claimBonus('channel123', 'claim123');
 
-      expect(result).toBe(false);
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe('integrity');
       expect(global.fetch).toHaveBeenCalledTimes(4);
     });
   });

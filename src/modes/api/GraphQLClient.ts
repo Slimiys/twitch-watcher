@@ -2,7 +2,7 @@
  * Клиент для работы с GraphQL API Twitch
  */
 
-import { GraphQLOperation, GraphQLResponse } from './types';
+import { ClaimBonusResult, GraphQLOperation, GraphQLResponse } from './types';
 import { GQL_URL, CLIENT_ID, GQL_OPERATIONS } from './constants';
 import { logger } from './logger';
 import { retryWithExponentialBackoff, RetryConfig } from './retry';
@@ -10,6 +10,15 @@ import { CircuitBreaker } from './CircuitBreaker';
 import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
+import { buildTwitchGqlHeaders } from './twitchGqlContext';
+
+/** Коды ClaimCommunityPoints, при которых повтор бесполезен */
+const PERMANENT_CLAIM_ERROR_CODES = new Set([
+  'FORBIDDEN',
+  'CLAIM_ALREADY_CLAIMED',
+  'UNAUTHORIZED',
+  'NOT_FOUND',
+]);
 
 /**
  * Клиент для выполнения GraphQL запросов к Twitch
@@ -148,18 +157,20 @@ export class GraphQLClient {
       return retryWithExponentialBackoff(
         async () => {
           const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
-          const headers: Record<string, string> = {
-            Authorization: `OAuth ${this.authToken}`,
-            'Client-Id': CLIENT_ID,
-            'User-Agent': this.userAgent,
-            'Content-Type': 'application/json',
-          };
-
+          let integrityToken: string | undefined;
           if (options?.requireIntegrity) {
-            const integrityToken = await this.integrityProvider.getToken();
-            headers['Client-Integrity'] = integrityToken;
-            headers['X-Device-Id'] = this.integrityProvider.getDeviceId();
+            integrityToken = await this.integrityProvider.getToken();
           }
+
+          const headers = await buildTwitchGqlHeaders({
+            authToken: this.authToken,
+            userAgent: this.userAgent,
+            clientId: CLIENT_ID,
+            deviceId: options?.requireIntegrity
+              ? this.integrityProvider.getDeviceId()
+              : undefined,
+            integrityToken,
+          });
 
           const response = await fetch(GQL_URL, {
             method: 'POST',
@@ -754,7 +765,7 @@ export class GraphQLClient {
    * @param claimId ID бонуса
    * @returns true если успешно
    */
-  async claimBonus(channelId: string, claimId: string): Promise<boolean> {
+  async claimBonus(channelId: string, claimId: string): Promise<ClaimBonusResult> {
     const operation = {
       operationName: 'ClaimCommunityPoints',
       variables: {
@@ -782,16 +793,21 @@ export class GraphQLClient {
     return GraphQLClient.parseClaimBonusResult(response);
   }
 
+  /**
+   * @param response Ответ ClaimCommunityPoints
+   */
   private static hasIntegrityError(response: GraphQLResponse): boolean {
     return Boolean(
       response.errors?.some((e: { message?: string }) => e.message === 'failed integrity check')
     );
   }
 
-  private static parseClaimBonusResult(response: GraphQLResponse): boolean {
+  private static parseClaimBonusResult(response: GraphQLResponse): ClaimBonusResult {
     if (GraphQLClient.hasIntegrityError(response)) {
-      logger.verbose('⚠️  ClaimCommunityPoints: failed integrity check (need valid Client-Integrity)');
-      return false;
+      logger.verbose(
+        '⚠️  ClaimCommunityPoints: failed integrity check — обновите TWITCH_CLIENT_INTEGRITY из DevTools'
+      );
+      return { success: false, failureKind: 'integrity' };
     }
 
     const claimResult = (response.data as any)?.claimCommunityPoints;
@@ -799,16 +815,19 @@ export class GraphQLClient {
 
     if (claimError?.code) {
       logger.verbose(`⚠️  ClaimCommunityPoints error: ${claimError.code}`);
-      return false;
+      const failureKind = PERMANENT_CLAIM_ERROR_CODES.has(claimError.code)
+        ? 'permanent'
+        : undefined;
+      return { success: false, failureKind };
     }
 
     if (claimResult?.status === 'SUCCESS') {
-      return true;
+      return { success: true };
     }
 
     if (claimResult !== null && claimResult !== undefined) {
       if (typeof claimResult === 'object' && Object.keys(claimResult).length > 0) {
-        return true;
+        return { success: true };
       }
     }
 
@@ -818,7 +837,7 @@ export class GraphQLClient {
       );
     }
 
-    return false;
+    return { success: false };
   }
 
   /**

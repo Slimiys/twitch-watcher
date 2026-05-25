@@ -29,7 +29,14 @@ export class ClaimIdBlocklist {
   }
 
   /**
-   * Помечает claimId как неудачный
+   * Помечает claimId как неудачный (постоянная ошибка: FORBIDDEN, уже собран и т.п.)
+   */
+  markPermanent(...claimIds: string[]): void {
+    this.markFailed(...claimIds);
+  }
+
+  /**
+   * @deprecated Используйте markPermanent — integrity-ошибки не блокируют claimId
    */
   markFailed(...claimIds: string[]): void {
     const now = Date.now();

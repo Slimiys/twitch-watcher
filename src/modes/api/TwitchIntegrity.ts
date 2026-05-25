@@ -5,19 +5,28 @@
 import { CLIENT_ID } from './constants';
 import { logger } from './logger';
 import * as crypto from 'crypto';
-import { integrityExpirationToMs } from './integrityConfig';
+import {
+  allowApiIntegrityFallback,
+  getManualIntegrityFromEnv,
+  integrityExpirationToMs,
+  resolveIntegritySource,
+  ResolvedIntegritySource,
+} from './integrityConfig';
+import { buildTwitchGqlHeaders } from './twitchGqlContext';
 
 const INTEGRITY_URL = 'https://gql.twitch.tv/integrity';
 
 /**
  * Кэширует integrity-токен и device id для ClaimCommunityPoints и подобных операций.
- * Токен запрашивается через POST /integrity.
+ * manual — из TWITCH_CLIENT_INTEGRITY (DevTools); api — POST /integrity; fallback по env.
  */
 export class TwitchIntegrityProvider {
-  private token: string | null = null;
-  private expiresAtMs = 0;
+  private source: ResolvedIntegritySource;
+  private apiToken: string | null = null;
+  private apiExpiresAtMs = 0;
   private readonly deviceId: string;
-  private refreshPromise: Promise<string> | null = null;
+  private apiRefreshPromise: Promise<string> | null = null;
+  private readonly userAgent: string;
 
   /**
    * @param authToken OAuth-токен Twitch
@@ -26,12 +35,29 @@ export class TwitchIntegrityProvider {
    */
   constructor(
     private authToken: string,
-    private userAgent: string,
+    userAgent: string,
     deviceId?: string
   ) {
+    this.userAgent = userAgent;
     const fromEnv = process.env.TWITCH_DEVICE_ID?.trim();
     this.deviceId = deviceId || fromEnv || crypto.randomUUID();
-    logger.info('🔐  Integrity: api (POST /integrity)');
+    this.source = resolveIntegritySource();
+
+    if (this.source === 'manual') {
+      const manual = getManualIntegrityFromEnv();
+      if (!manual) {
+        logger.warn(
+          '🔐  Integrity: manual, но TWITCH_CLIENT_INTEGRITY не задан — claim не сработает. Скопируйте Client-Integrity из DevTools → Network → gql.'
+        );
+      } else {
+        logger.info('🔐  Integrity: manual (TWITCH_CLIENT_INTEGRITY из DevTools)');
+        if (allowApiIntegrityFallback()) {
+          logger.info('   Fallback POST /integrity включён (TWITCH_INTEGRITY_FALLBACK_API=true)');
+        }
+      }
+    } else {
+      logger.info('🔐  Integrity: api (POST /integrity)');
+    }
   }
 
   /**
@@ -42,42 +68,81 @@ export class TwitchIntegrityProvider {
   }
 
   /**
-   * Сбрасывает кэш токена (перед повторной попыткой после integrity error)
+   * Сбрасывает кэш API-токена; manual перечитывается из env при следующем getToken
    */
   invalidate(): void {
-    this.token = null;
-    this.expiresAtMs = 0;
-    this.refreshPromise = null;
+    this.apiToken = null;
+    this.apiExpiresAtMs = 0;
+    this.apiRefreshPromise = null;
+    if (this.source === 'manual') {
+      logger.verbose(
+        '🔐  Integrity invalidated — обновите TWITCH_CLIENT_INTEGRITY в .env (Request Headers → Client-Integrity)'
+      );
+    }
   }
 
   /**
    * Возвращает актуальный Client-Integrity токен
    */
   async getToken(): Promise<string> {
-    const now = Date.now();
-    if (this.token && now < this.expiresAtMs - 60_000) {
-      return this.token;
+    if (this.source === 'manual') {
+      return this.getManualOrFallbackToken();
+    }
+    return this.getApiToken();
+  }
+
+  private getManualOrFallbackToken(): Promise<string> {
+    const manual = getManualIntegrityFromEnv();
+    if (manual && Date.now() < manual.expiresAtMs - 60_000) {
+      return Promise.resolve(manual.token);
     }
 
-    if (!this.refreshPromise) {
-      this.refreshPromise = this.refreshToken().finally(() => {
-        this.refreshPromise = null;
+    if (manual && Date.now() >= manual.expiresAtMs - 60_000) {
+      logger.warn(
+        '🔐  TWITCH_CLIENT_INTEGRITY истёк — обновите из DevTools (Client-Integrity + TWITCH_CLIENT_INTEGRITY_EXPIRES)'
+      );
+    } else if (!manual) {
+      logger.verbose('🔐  TWITCH_CLIENT_INTEGRITY не задан');
+    }
+
+    if (allowApiIntegrityFallback()) {
+      logger.verbose('🔐  Пробуем fallback POST /integrity...');
+      return this.getApiToken();
+    }
+
+    throw new Error(
+      'Нет действующего TWITCH_CLIENT_INTEGRITY. Откройте twitch.tv в браузере, DevTools → Network → gql → скопируйте Client-Integrity в .env'
+    );
+  }
+
+  private async getApiToken(): Promise<string> {
+    const now = Date.now();
+    if (this.apiToken && now < this.apiExpiresAtMs - 60_000) {
+      return this.apiToken;
+    }
+
+    if (!this.apiRefreshPromise) {
+      this.apiRefreshPromise = this.refreshApiToken().finally(() => {
+        this.apiRefreshPromise = null;
       });
     }
 
-    return this.refreshPromise;
+    return this.apiRefreshPromise;
   }
 
-  private async refreshToken(): Promise<string> {
+  private async refreshApiToken(): Promise<string> {
     const fetchTimeoutMs = parseInt(process.env.FETCH_TIMEOUT_MS || '20000', 10);
+    const headers = await buildTwitchGqlHeaders({
+      authToken: this.authToken,
+      userAgent: this.userAgent,
+      clientId: CLIENT_ID,
+      deviceId: this.deviceId,
+    });
+    delete headers['Content-Type'];
+
     const response = await fetch(INTEGRITY_URL, {
       method: 'POST',
-      headers: {
-        Authorization: `OAuth ${this.authToken}`,
-        'Client-Id': CLIENT_ID,
-        'X-Device-Id': this.deviceId,
-        'User-Agent': this.userAgent,
-      },
+      headers,
       signal: AbortSignal.timeout(fetchTimeoutMs),
     });
 
@@ -91,10 +156,10 @@ export class TwitchIntegrityProvider {
     }
 
     const now = Date.now();
-    this.token = data.token;
-    this.expiresAtMs = integrityExpirationToMs(data.expiration, now);
+    this.apiToken = data.token;
+    this.apiExpiresAtMs = integrityExpirationToMs(data.expiration, now);
 
-    logger.verbose(`🔐  Client-Integrity refreshed (device ${this.deviceId.slice(0, 8)}...)`);
-    return this.token;
+    logger.verbose(`🔐  Client-Integrity refreshed via API (device ${this.deviceId.slice(0, 8)}...)`);
+    return this.apiToken;
   }
 }

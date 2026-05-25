@@ -23,6 +23,8 @@ vi.mock('../logger', () => ({
 describe('Интеграционные тесты', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.TWITCH_CLIENT_VERSION = 'test-build-id-for-vitest';
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
   });
 
   afterEach(() => {

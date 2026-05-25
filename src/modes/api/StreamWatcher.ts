@@ -4,7 +4,7 @@
 
 import { TwitchAPI } from './TwitchAPI';
 import { WebSocketManager, WebSocketEventHandler } from './WebSocketManager';
-import { StreamerInfo, WatchStatistics } from './types';
+import { ClaimBonusResult, StreamerInfo, WatchStatistics } from './types';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
@@ -902,9 +902,11 @@ export class StreamWatcher {
     logger.info(`🎁  [${streamerInfo.username}] Доступен бонус ${claimId}, собираем...`);
 
     const attemptedIds: string[] = [claimId];
-    let success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+    const attemptResults: ClaimBonusResult[] = [];
+    let lastResult = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
+    attemptResults.push(lastResult);
 
-    if (!success) {
+    if (!lastResult.success) {
       try {
         const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
         const fallbackClaimId = pointsInfo?.availableClaim?.id;
@@ -917,7 +919,8 @@ export class StreamWatcher {
             `ℹ️  [${streamerInfo.username}] Повтор с ID из GraphQL: ${fallbackClaimId}`
           );
           attemptedIds.push(fallbackClaimId);
-          success = await graphqlClient.claimBonus(streamerInfo.channelId, fallbackClaimId);
+          lastResult = await graphqlClient.claimBonus(streamerInfo.channelId, fallbackClaimId);
+          attemptResults.push(lastResult);
         }
       } catch (error: any) {
         logger.verbose(
@@ -926,7 +929,7 @@ export class StreamWatcher {
       }
     }
 
-    if (success) {
+    if (lastResult.success) {
       for (const id of attemptedIds) {
         this.claimIdBlocklist.clear(id);
       }
@@ -935,8 +938,21 @@ export class StreamWatcher {
       return;
     }
 
-    this.claimIdBlocklist.markFailed(...attemptedIds);
-    logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус (integrity/FORBIDDEN или уже собран)`);
+    const hadIntegrityFailure = attemptResults.some((r) => r.failureKind === 'integrity');
+    const hadPermanentFailure = attemptResults.some((r) => r.failureKind === 'permanent');
+
+    if (hadPermanentFailure) {
+      this.claimIdBlocklist.markPermanent(...attemptedIds);
+      logger.verbose(
+        `⚠️  [${streamerInfo.username}] Бонус не собран (FORBIDDEN / уже собран) — claimId в blocklist`
+      );
+    } else if (hadIntegrityFailure) {
+      logger.warn(
+        `⚠️  [${streamerInfo.username}] failed integrity check — обновите TWITCH_CLIENT_INTEGRITY в .env (DevTools → gql → Client-Integrity)`
+      );
+    } else {
+      logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус — повторим при следующем опросе`);
+    }
     this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
   }
 

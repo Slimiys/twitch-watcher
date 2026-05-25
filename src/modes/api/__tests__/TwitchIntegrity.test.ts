@@ -6,13 +6,19 @@ describe('TwitchIntegrityProvider', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    process.env.TWITCH_CLIENT_VERSION = 'test-build-id-for-vitest';
+    delete process.env.TWITCH_CLIENT_INTEGRITY;
+    delete process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES;
+    delete process.env.TWITCH_INTEGRITY_SOURCE;
+    delete process.env.TWITCH_INTEGRITY_FALLBACK_API;
   });
 
   afterEach(() => {
     process.env = { ...envBackup };
   });
 
-  it('кэширует integrity token до истечения срока', async () => {
+  it('кэширует integrity token до истечения срока (api)', async () => {
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
     const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
 
     (global.fetch as any) = vi.fn().mockResolvedValue({
@@ -37,12 +43,28 @@ describe('TwitchIntegrityProvider', () => {
         headers: expect.objectContaining({
           Authorization: 'OAuth oauth-token',
           'X-Device-Id': 'device-123',
+          'Client-Version': expect.any(String),
+          'Client-Session-Id': expect.any(String),
         }),
       })
     );
   });
 
-  it('invalidate сбрасывает кэш и запрашивает новый token', async () => {
+  it('manual возвращает TWITCH_CLIENT_INTEGRITY без fetch', async () => {
+    process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
+    process.env.TWITCH_CLIENT_INTEGRITY = 'devtools-integrity-token';
+    process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES = String(Math.floor(Date.now() / 1000) + 7200);
+
+    (global.fetch as any) = vi.fn();
+    const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
+
+    const token = await provider.getToken();
+    expect(token).toBe('devtools-integrity-token');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('invalidate сбрасывает кэш API и запрашивает новый token', async () => {
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
     const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');
 
     (global.fetch as any) = vi
