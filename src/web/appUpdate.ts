@@ -28,12 +28,6 @@ export function validateDashboardUpdateRequest(): { ok: true } | { ok: false; er
       error: 'Обновление через dashboard отключено. Установите DASHBOARD_UPDATE_ENABLED=true в .env',
     };
   }
-  if (!getDashboardApiKey()) {
-    return {
-      ok: false,
-      error: 'Требуется WEB_DASHBOARD_API_KEY в .env (защита от случайного обновления)',
-    };
-  }
   if (updateInProgress) {
     return { ok: false, error: 'Обновление уже выполняется' };
   }

@@ -12,6 +12,7 @@ import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
+import { resolveIntegritySource } from './integrityConfig';
 
 /** Коды ClaimCommunityPoints, при которых повтор бесполезен */
 const PERMANENT_CLAIM_ERROR_CODES = new Set([
@@ -803,9 +804,15 @@ export class GraphQLClient {
     let response = await this.postRequest(operation, { requireIntegrity: true });
 
     if (GraphQLClient.hasIntegrityError(response)) {
-      logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
-      this.integrityProvider.invalidate();
-      response = await this.postRequest(operation, { requireIntegrity: true });
+      if (resolveIntegritySource() === 'manual') {
+        logger.verbose(
+          '🔐  ClaimCommunityPoints: failed integrity check (manual) — повтор без обновления TWITCH_CLIENT_INTEGRITY пропущен'
+        );
+      } else {
+        logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
+        this.integrityProvider.invalidate();
+        response = await this.postRequest(operation, { requireIntegrity: true });
+      }
     }
 
     return GraphQLClient.parseClaimBonusResult(response);

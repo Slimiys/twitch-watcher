@@ -201,6 +201,7 @@ export class WebServer {
     this.app.get('/api/server-info', (_req: Request, res: Response) => {
       const { certPath, keyPath } = resolveHttpsCredentialPaths();
       const { semver, revision, label } = getAppVersionParts();
+      const dashboardUpdateCheck = validateDashboardUpdateRequest();
       res.json({
         scheme: getWebServerScheme(),
         httpsEnabled: isWebServerHttpsEnabled(),
@@ -215,7 +216,9 @@ export class WebServer {
         appSemver: semver,
         gitRevision: revision,
         dashboardUpdateEnabled: isDashboardUpdateEnabled(),
-        dashboardUpdateCanTrigger: validateDashboardUpdateRequest().ok,
+        dashboardUpdateCanTrigger: dashboardUpdateCheck.ok,
+        dashboardUpdateBlockedReason:
+          dashboardUpdateCheck.ok === false ? dashboardUpdateCheck.error : null,
         dashboardUpdateInProgress: isDashboardUpdateInProgress(),
       });
     });

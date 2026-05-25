@@ -10,7 +10,7 @@
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="dashboard.css?v=5">
-    <script src="dashboard.js?v=11" defer></script>
+    <script src="dashboard.js?v=12" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -126,22 +126,6 @@
             </div>
         </div>
 
-        <!-- Статус бота -->
-        <div class="section bot-health-section collapsible-section" id="botHealthSection">
-            <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>
-            <div id="botHealthContent" class="bot-health-content">
-                <div id="botHealthGrid" class="bot-health-grid">
-                    <p class="bot-health-loading">Загрузка…</p>
-                </div>
-                <div class="bot-health-claims-wrap">
-                    <h3 class="bot-health-subtitle">Последние claim по стримерам</h3>
-                    <div id="botHealthClaims" class="bot-health-claims">
-                        <p class="bot-health-empty">Пока нет попыток сбора бонусов</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Критические уведомления -->
         <div id="criticalNotifications" class="critical-notifications" style="display: none;">
             <!-- Уведомления будут добавлены динамически -->
@@ -215,6 +199,22 @@
                         </div>
                     </div>
                 </div>
+
+            <!-- Статус бота -->
+            <div class="section bot-health-section collapsible-section" id="botHealthSection">
+                <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>
+                <div id="botHealthContent" class="bot-health-content">
+                    <div id="botHealthGrid" class="bot-health-grid">
+                        <p class="bot-health-loading">Загрузка…</p>
+                    </div>
+                    <div class="bot-health-claims-wrap">
+                        <h3 class="bot-health-subtitle">Последние claim по стримерам</h3>
+                        <div id="botHealthClaims" class="bot-health-claims">
+                            <p class="bot-health-empty">Пока нет попыток сбора бонусов</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Token Information: строка 2, столбец 1 -->
             <div class="section" id="tokenInfoSection" style="display: none;">

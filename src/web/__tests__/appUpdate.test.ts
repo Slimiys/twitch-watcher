@@ -18,13 +18,13 @@ describe('appUpdate', () => {
     expect(check.ok).toBe(false);
   });
 
-  it('требует API-ключ при включённом обновлении', () => {
+  it('разрешено без WEB_DASHBOARD_API_KEY (личный Termux)', () => {
     process.env.DASHBOARD_UPDATE_ENABLED = 'true';
     delete process.env.WEB_DASHBOARD_API_KEY;
+    const prevPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'linux' });
     const check = validateDashboardUpdateRequest();
-    expect(check.ok).toBe(false);
-    if (!check.ok) {
-      expect(check.error).toContain('WEB_DASHBOARD_API_KEY');
-    }
+    Object.defineProperty(process, 'platform', { value: prevPlatform });
+    expect(check.ok).toBe(true);
   });
 });
