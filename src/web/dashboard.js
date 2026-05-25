@@ -35,6 +35,8 @@ let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000
 let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
 let eventSource = null; // Для Server-Sent Events
 let lastEventCheckTimestamp = 0; // Timestamp последнего проверенного события
+/** Полное обновление UI после инициализации уже выполнено */
+let applicationDataRefreshStarted = false;
 let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
 
 // Настройки видимых колонок таблицы стримеров
@@ -1580,6 +1582,37 @@ function updateValueWithAnimation(elementId, newValue, oldValue) {
 let initializationPollCount = 0;
 
 /**
+ * Базовая метка для режима Event: после первого полного refresh не дергаем UI старыми событиями
+ */
+async function primeEventUpdateBaseline() {
+    try {
+        const response = await fetchData(`/events?limit=1&offset=0`);
+        if (response?.events?.length > 0) {
+            lastEventCheckTimestamp = response.events[0].timestamp;
+        }
+    } catch {
+        // оставляем 0 — следующее событие вызовет updateAll
+    }
+}
+
+/**
+ * Полное обновление дашборда после готовности бота (инициализация / перезагрузка страницы)
+ */
+async function onApplicationInitializationComplete() {
+    if (applicationDataRefreshStarted) {
+        return;
+    }
+    applicationDataRefreshStarted = true;
+
+    await updateAll();
+
+    if (updateMode === 'event') {
+        await primeEventUpdateBaseline();
+        checkForNewEvents();
+    }
+}
+
+/**
  * Скрывает экран загрузки и показывает дашборд
  */
 function hideLoadingScreen() {
@@ -1590,7 +1623,7 @@ function hideLoadingScreen() {
     }
     loadingScreen.classList.add('hidden');
     mainContainer.style.display = 'block';
-    void updateAll();
+    void onApplicationInitializationComplete();
     setTimeout(() => {
         if (loadingScreen.parentNode) {
             loadingScreen.remove();
@@ -1657,7 +1690,6 @@ async function checkInitializationStatus() {
         if (isReady) {
             setTimeout(() => {
                 hideLoadingScreen();
-                void updateOverallStats();
             }, 300);
             return;
         }
@@ -2854,20 +2886,8 @@ function setUpdateInterval(seconds) {
 }
 
 async function startEventBasedUpdate() {
-    // Загружаем начальные данные
     await updateAll();
-    
-    // Инициализируем timestamp последнего события
-    try {
-        const response = await fetchData(`/events?limit=1&offset=0`);
-        if (response && response.events && response.events.length > 0) {
-            lastEventCheckTimestamp = response.events[0].timestamp;
-        }
-    } catch (error) {
-        // Игнорируем ошибки
-    }
-    
-    // Начинаем проверку новых событий
+    await primeEventUpdateBaseline();
     checkForNewEvents();
 }
 
@@ -2898,17 +2918,15 @@ async function checkForNewEvents() {
 }
 
 function startAutoUpdate() {
-    updateAll();
-    
-    // Проверка подключения при старте
     updateConnectionStatus(false);
-    
-    // Запускаем обновление в зависимости от режима
+
+    // Данные подгружаются в onApplicationInitializationComplete после init.
+    // В режиме Event опрос событий тоже стартует только после готовности бота.
     if (updateMode === 'event') {
-        startEventBasedUpdate();
-    } else {
-        updateInterval = setInterval(updateAll, updateIntervalMs);
+        return;
     }
+
+    updateInterval = setInterval(updateAll, updateIntervalMs);
 }
 
 function toggleOfflineStreamers() {
