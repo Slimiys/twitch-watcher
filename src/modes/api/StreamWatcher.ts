@@ -87,8 +87,10 @@ export class StreamWatcher {
   private claimIdBlocklist = new ClaimIdBlocklist(
     parseInt(process.env.CLAIM_FAILED_BLOCK_MS || '86400000', 10)
   );
-  /** Последний результат claim по стримеру (для dashboard) */
-  private claimHealthByStreamer = new Map<string, StreamerClaimHealth>();
+  /** Сколько последних claim показывать в /api/bot-health */
+  private static readonly CLAIM_HEALTH_RECENT_MAX = 5;
+  /** Последние попытки claim (для dashboard), не более CLAIM_HEALTH_RECENT_MAX */
+  private claimHealthRecent: StreamerClaimHealth[] = [];
   /** Последняя ошибка integrity при claim */
   private lastIntegrityFailure: { timestamp: number; streamer: string } | null = null;
   /** Время последней активности бота (minute-watched, баллы) */
@@ -1026,7 +1028,7 @@ export class StreamWatcher {
   }
 
   /**
-   * Сохраняет результат claim для панели здоровья бота
+   * Сохраняет результат claim для панели здоровья бота (хранятся только последние 5 по времени)
    */
   private recordClaimHealth(
     streamer: string,
@@ -1043,7 +1045,11 @@ export class StreamWatcher {
       timestamp: Date.now(),
       message: data.message,
     };
-    this.claimHealthByStreamer.set(streamer, entry);
+    this.claimHealthRecent.push(entry);
+    this.claimHealthRecent.sort((a, b) => b.timestamp - a.timestamp);
+    if (this.claimHealthRecent.length > StreamWatcher.CLAIM_HEALTH_RECENT_MAX) {
+      this.claimHealthRecent.length = StreamWatcher.CLAIM_HEALTH_RECENT_MAX;
+    }
     if (data.failureKind === 'integrity') {
       this.lastIntegrityFailure = { timestamp: entry.timestamp, streamer };
     }
@@ -2261,9 +2267,7 @@ export class StreamWatcher {
       ? graphqlClient.getHealthSnapshot()
       : { circuitBreaker: 'CLOSED' as const, hadRecentNetworkFailure: false };
 
-    const claimByStreamer = Array.from(this.claimHealthByStreamer.values()).sort(
-      (a, b) => b.timestamp - a.timestamp
-    );
+    const claimByStreamer = [...this.claimHealthRecent];
 
     return {
       timestamp: Date.now(),

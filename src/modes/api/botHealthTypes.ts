@@ -49,5 +49,6 @@ export interface BotHealthSnapshot {
   integrity: IntegrityHealthSnapshot;
   graphql: GraphqlHealthSnapshot;
   lastIntegrityFailure: { timestamp: number; streamer: string } | null;
+  /** Последние попытки claim (до 5, по убыванию времени) */
   claimByStreamer: StreamerClaimHealth[];
 }
