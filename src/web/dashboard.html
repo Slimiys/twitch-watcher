@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=3">
-    <script src="dashboard.js?v=9" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=4">
+    <script src="dashboard.js?v=10" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -118,6 +118,22 @@
                 <div class="stat-card-content">
                     <div class="value" id="lastActivity">-</div>
                     <div class="label">Time ago</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Статус бота -->
+        <div class="section bot-health-section collapsible-section" id="botHealthSection">
+            <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>
+            <div id="botHealthContent" class="bot-health-content">
+                <div id="botHealthGrid" class="bot-health-grid">
+                    <p class="bot-health-loading">Загрузка…</p>
+                </div>
+                <div class="bot-health-claims-wrap">
+                    <h3 class="bot-health-subtitle">Последние claim по стримерам</h3>
+                    <div id="botHealthClaims" class="bot-health-claims">
+                        <p class="bot-health-empty">Пока нет попыток сбора бонусов</p>
+                    </div>
                 </div>
             </div>
         </div>

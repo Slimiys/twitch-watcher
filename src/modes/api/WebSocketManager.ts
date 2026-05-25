@@ -9,6 +9,7 @@ import { GraphQLClient } from './GraphQLClient';
 import { logger } from './logger';
 import { loadRetryConfig } from './configLoader';
 import { isNetworkError } from './errorUtils';
+import { WebSocketHealthSnapshot } from './botHealthTypes';
 
 /**
  * Обработчик событий WebSocket
@@ -111,6 +112,33 @@ export class WebSocketManager {
       return null;
     }
     return this.criticalErrors[this.criticalErrors.length - 1];
+  }
+
+  /**
+   * Снимок WebSocket для dashboard
+   */
+  getHealthSnapshot(): WebSocketHealthSnapshot {
+    const connectionState = this.getConnectionState();
+    let status: WebSocketHealthSnapshot['status'];
+
+    if (!this.isRunning) {
+      status = 'stopped';
+    } else if (this.isConnected()) {
+      status = 'connected';
+    } else if (connectionState === 'CONNECTING' || this.reconnectAttempts > 0) {
+      status = 'reconnecting';
+    } else {
+      status = 'disconnected';
+    }
+
+    return {
+      status,
+      connectionState,
+      reconnectAttempt: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+      hasCriticalErrors: this.hasCriticalErrors(),
+      lastCriticalError: this.getLastCriticalError(),
+    };
   }
 
   /**

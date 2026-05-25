@@ -15,6 +15,8 @@ import {
   resolveHttpsCredentialPaths,
 } from './httpsCredentials';
 import { createDashboardApiKeyMiddleware } from './apiAuth';
+import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
+import { getAppVersionParts } from '../appVersion';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -131,6 +133,11 @@ export interface StatisticsProvider {
    * Заполняет приложение тестовыми данными
    */
   fillTestData?(): Promise<{ eventsCount: number; streamersCount: number }>;
+
+  /**
+   * Снимок здоровья бота (WebSocket, integrity, claim, GraphQL)
+   */
+  getBotHealth?(): BotHealthSnapshot;
 }
 
 /**
@@ -187,6 +194,7 @@ export class WebServer {
     // Эндпоинт для проверки статуса инициализации
     this.app.get('/api/server-info', (_req: Request, res: Response) => {
       const { certPath, keyPath } = resolveHttpsCredentialPaths();
+      const { semver, revision, label } = getAppVersionParts();
       res.json({
         scheme: getWebServerScheme(),
         httpsEnabled: isWebServerHttpsEnabled(),
@@ -197,7 +205,30 @@ export class WebServer {
         certExists: fs.existsSync(certPath),
         keyExists: fs.existsSync(keyPath),
         pid: process.pid,
+        appVersion: label,
+        appSemver: semver,
+        gitRevision: revision,
       });
+    });
+
+    this.app.get('/api/bot-health', (req: Request, res: Response) => {
+      try {
+        if (!this.statisticsProvider?.getBotHealth) {
+          const { semver, revision, label } = getAppVersionParts();
+          res.status(503).json({
+            error: 'Watcher is not running',
+            appVersion: label,
+            appSemver: semver,
+            gitRevision: revision,
+            watcherRunning: false,
+          });
+          return;
+        }
+        res.json(this.statisticsProvider.getBotHealth());
+      } catch (error: any) {
+        logger.error('Error getting bot health:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
     });
 
     this.app.get('/api/initialization-status', (req: Request, res: Response) => {

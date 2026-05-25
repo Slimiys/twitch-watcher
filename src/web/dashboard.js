@@ -561,6 +561,217 @@ function updateConnectionStatus(connected) {
     }
 }
 
+/**
+ * Форматирует интервал (мс) для панели здоровья
+ */
+function formatHealthDuration(ms) {
+    if (ms == null || Number.isNaN(ms)) {
+        return '—';
+    }
+    if (ms <= 0) {
+        return 'истёк';
+    }
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) {
+        return `${sec} с`;
+    }
+    const min = Math.floor(sec / 60);
+    if (min < 60) {
+        return `${min} мин`;
+    }
+    const hours = Math.floor(min / 60);
+    if (hours < 48) {
+        return `${hours} ч ${min % 60} мин`;
+    }
+    const days = Math.floor(hours / 24);
+    return `${days} д ${hours % 24} ч`;
+}
+
+function formatHealthTimeAgo(timestamp) {
+    if (!timestamp) {
+        return '—';
+    }
+    return formatHealthDuration(Date.now() - timestamp) + ' назад';
+}
+
+function healthStatusDotClass(kind) {
+    if (kind === 'ok') return 'ok';
+    if (kind === 'warn') return 'warn';
+    if (kind === 'err') return 'err';
+    return 'off';
+}
+
+function renderBotHealthCard(title, valueHtml, detailHtml, dotKind) {
+    const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
+    return `
+        <div class="bot-health-card">
+            <div class="bot-health-card-title">${escapeHtml(title)}</div>
+            <div class="bot-health-card-value">${dot}${valueHtml}</div>
+            ${detailHtml ? `<div class="bot-health-card-detail">${detailHtml}</div>` : ''}
+        </div>
+    `;
+}
+
+function describeWebSocketHealth(ws) {
+    if (!ws) {
+        return { label: '—', kind: 'off', detail: '' };
+    }
+    const labels = {
+        connected: 'Подключён',
+        reconnecting: 'Переподключение',
+        disconnected: 'Отключён',
+        stopped: 'Остановлен',
+    };
+    let kind = 'off';
+    if (ws.status === 'connected') kind = 'ok';
+    else if (ws.status === 'reconnecting') kind = 'warn';
+    else if (ws.status === 'disconnected') kind = 'err';
+
+    let detail = `Состояние: ${escapeHtml(ws.connectionState || '—')}`;
+    if (ws.status === 'reconnecting' && ws.maxReconnectAttempts > 0) {
+        detail += `<br>Попытка ${ws.reconnectAttempt}/${ws.maxReconnectAttempts}`;
+    }
+    if (ws.hasCriticalErrors && ws.lastCriticalError) {
+        detail += `<br><span style="color:#ef4444">${escapeHtml(ws.lastCriticalError.error)}</span>`;
+        kind = 'err';
+    }
+    return { label: labels[ws.status] || ws.status, kind, detail };
+}
+
+function describeIntegrityHealth(integrity) {
+    if (!integrity) {
+        return { label: '—', kind: 'off', detail: '' };
+    }
+    const sourceLabel = integrity.source === 'manual' ? 'manual (DevTools)' : 'api (POST /integrity)';
+    let kind = 'off';
+    let label = 'Не настроен';
+    if (!integrity.configured) {
+        label = integrity.source === 'manual' ? 'Токен не задан' : '—';
+    } else if (integrity.valid) {
+        kind = 'ok';
+        label = 'Действует';
+    } else {
+        kind = 'warn';
+        label = 'Истёк / недействителен';
+    }
+    let detail = `Режим: ${escapeHtml(sourceLabel)}`;
+    if (integrity.expiresInMs != null) {
+        detail += `<br>Истекает через: ${escapeHtml(formatHealthDuration(integrity.expiresInMs))}`;
+    }
+    detail += `<br>Device: ${escapeHtml(integrity.deviceIdPrefix || '—')}…`;
+    if (integrity.fallbackApiEnabled) {
+        detail += '<br>Fallback API: включён';
+    }
+    return { label, kind, detail };
+}
+
+function describeCircuitBreaker(graphql) {
+    const state = graphql?.circuitBreaker || 'CLOSED';
+    const labels = { CLOSED: 'Закрыт (OK)', OPEN: 'Открыт (блокировка)', HALF_OPEN: 'Полуоткрыт' };
+    let kind = 'ok';
+    if (state === 'OPEN') kind = 'err';
+    else if (state === 'HALF_OPEN') kind = 'warn';
+    let detail = '';
+    if (graphql?.hadRecentNetworkFailure) {
+        detail = 'Недавние сетевые ошибки GraphQL';
+        if (kind === 'ok') kind = 'warn';
+    }
+    return { label: labels[state] || state, kind, detail };
+}
+
+/**
+ * Обновляет панель «Статус бота»
+ */
+async function updateBotHealth() {
+    const grid = document.getElementById('botHealthGrid');
+    const claimsEl = document.getElementById('botHealthClaims');
+    if (!grid) {
+        return;
+    }
+
+    const health = await fetchData('/bot-health');
+    if (!health || health.error) {
+        grid.innerHTML = `<p class="bot-health-empty">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
+        if (claimsEl) {
+            claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
+        }
+        updateConnectionStatus(false);
+        return;
+    }
+
+    updateConnectionStatus(health.websocket?.status === 'connected');
+
+    const ws = describeWebSocketHealth(health.websocket);
+    const integrity = describeIntegrityHealth(health.integrity);
+    const gql = describeCircuitBreaker(health.graphql);
+
+    let watcherKind = health.watcherRunning ? 'ok' : 'err';
+    const watcherLabel = health.watcherRunning ? 'Работает' : 'Остановлен';
+
+    let integrityFailDetail = '';
+    if (health.lastIntegrityFailure) {
+        integrityFailDetail = `Последний integrity: ${escapeHtml(health.lastIntegrityFailure.streamer)} — ${escapeHtml(formatHealthTimeAgo(health.lastIntegrityFailure.timestamp))}`;
+    }
+
+    const cards = [
+        renderBotHealthCard(
+            'Версия',
+            escapeHtml(health.appVersion || '—'),
+            `Semver ${escapeHtml(health.appSemver || '')} · git ${escapeHtml(health.gitRevision || '')}`,
+            'ok'
+        ),
+        renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
+        renderBotHealthCard('WebSocket', escapeHtml(ws.label), ws.detail, ws.kind),
+        renderBotHealthCard('Integrity', escapeHtml(integrity.label), integrity.detail, integrity.kind),
+        renderBotHealthCard('GraphQL CB', escapeHtml(gql.label), gql.detail, gql.kind),
+    ];
+
+    if (integrityFailDetail) {
+        cards.push(
+            renderBotHealthCard(
+                'Integrity ошибка',
+                'failed integrity check',
+                integrityFailDetail,
+                'warn'
+            )
+        );
+    }
+
+    grid.innerHTML = cards.join('');
+
+    if (!claimsEl) {
+        return;
+    }
+
+    const claims = health.claimByStreamer || [];
+    if (claims.length === 0) {
+        claimsEl.innerHTML = '<p class="bot-health-empty">Пока нет попыток сбора бонусов в этой сессии</p>';
+        return;
+    }
+
+    claimsEl.innerHTML = claims
+        .map((c) => {
+            const outcomeClass = c.outcome === 'success' ? 'success' : 'failed';
+            const outcomeText = c.outcome === 'success' ? 'Успех' : 'Ошибка';
+            let extraBadge = '';
+            if (c.failureKind === 'integrity') {
+                extraBadge = '<span class="bot-health-badge integrity">integrity</span>';
+            } else if (c.failureKind === 'permanent') {
+                extraBadge = '<span class="bot-health-badge permanent">permanent</span>';
+            }
+            return `
+                <div class="bot-health-claim-row">
+                    <span class="bot-health-claim-streamer">${escapeHtml(c.streamer)}</span>
+                    <span class="bot-health-badge ${outcomeClass}">${outcomeText}</span>
+                    ${extraBadge}
+                    <span style="color:#adadb8">${escapeHtml(formatHealthTimeAgo(c.timestamp))}</span>
+                    <span style="color:#6b6b7a;flex:1;min-width:120px">${escapeHtml(c.message)}</span>
+                </div>
+            `;
+        })
+        .join('');
+}
+
 // Сохраняем предыдущие значения для анимации изменений
 let previousStats = {
     activeWatches: 0,
@@ -3131,6 +3342,7 @@ async function updateAll() {
         await Promise.all([
             updateOverallStats(),
             updateStatistics(),
+            updateBotHealth(),
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()

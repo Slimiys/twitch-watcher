@@ -3,6 +3,7 @@
  */
 
 import { ClaimBonusResult, GraphQLOperation, GraphQLResponse } from './types';
+import { GraphqlHealthSnapshot } from './botHealthTypes';
 import { GQL_URL, CLIENT_ID, GQL_OPERATIONS } from './constants';
 import { logger } from './logger';
 import { retryWithExponentialBackoff, RetryConfig } from './retry';
@@ -69,6 +70,23 @@ export class GraphQLClient {
    */
   getCircuitBreakerState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN' {
     return this.circuitBreaker.getState();
+  }
+
+  /**
+   * Снимок GraphQL для dashboard
+   */
+  getHealthSnapshot(): GraphqlHealthSnapshot {
+    return {
+      circuitBreaker: this.getCircuitBreakerState(),
+      hadRecentNetworkFailure: this.hadRecentNetworkFailure(),
+    };
+  }
+
+  /**
+   * Провайдер Client-Integrity (для bot-health)
+   */
+  getIntegrityProvider(): TwitchIntegrityProvider {
+    return this.integrityProvider;
   }
 
   /**

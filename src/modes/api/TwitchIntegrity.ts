@@ -12,6 +12,7 @@ import {
   resolveIntegritySource,
   ResolvedIntegritySource,
 } from './integrityConfig';
+import { IntegrityHealthSnapshot } from './botHealthTypes';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
 
 const INTEGRITY_URL = 'https://gql.twitch.tv/integrity';
@@ -65,6 +66,44 @@ export class TwitchIntegrityProvider {
    */
   getDeviceId(): string {
     return this.deviceId;
+  }
+
+  /**
+   * Снимок состояния integrity для dashboard (без токена)
+   */
+  getHealthSnapshot(now = Date.now()): IntegrityHealthSnapshot {
+    const fallbackApiEnabled = allowApiIntegrityFallback();
+    let expiresAtMs: number | null = null;
+    let configured = false;
+    let valid = false;
+
+    if (this.source === 'manual') {
+      const manual = getManualIntegrityFromEnv(now);
+      configured = Boolean(manual?.token);
+      if (manual) {
+        expiresAtMs = manual.expiresAtMs;
+        valid = now < manual.expiresAtMs - 60_000;
+      }
+    } else {
+      configured = true;
+      if (this.apiToken && now < this.apiExpiresAtMs - 60_000) {
+        valid = true;
+        expiresAtMs = this.apiExpiresAtMs;
+      }
+    }
+
+    const expiresInMs =
+      expiresAtMs != null && expiresAtMs > now ? expiresAtMs - now : expiresAtMs != null ? 0 : null;
+
+    return {
+      source: this.source,
+      configured,
+      valid,
+      expiresAtMs,
+      expiresInMs,
+      fallbackApiEnabled,
+      deviceIdPrefix: this.deviceId.slice(0, 8),
+    };
   }
 
   /**

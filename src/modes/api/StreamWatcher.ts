@@ -5,6 +5,9 @@
 import { TwitchAPI } from './TwitchAPI';
 import { WebSocketManager, WebSocketEventHandler } from './WebSocketManager';
 import { ClaimBonusResult, StreamerInfo, WatchStatistics } from './types';
+import { BotHealthSnapshot, StreamerClaimHealth } from './botHealthTypes';
+import { getAppVersionParts } from '../../appVersion';
+import { allowApiIntegrityFallback, getManualIntegrityFromEnv, resolveIntegritySource } from './integrityConfig';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
@@ -84,6 +87,10 @@ export class StreamWatcher {
   private claimIdBlocklist = new ClaimIdBlocklist(
     parseInt(process.env.CLAIM_FAILED_BLOCK_MS || '86400000', 10)
   );
+  /** Последний результат claim по стримеру (для dashboard) */
+  private claimHealthByStreamer = new Map<string, StreamerClaimHealth>();
+  /** Последняя ошибка integrity при claim */
+  private lastIntegrityFailure: { timestamp: number; streamer: string } | null = null;
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
   private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
@@ -934,12 +941,21 @@ export class StreamWatcher {
         this.claimIdBlocklist.clear(id);
       }
       logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран!`);
+      this.recordClaimHealth(streamerInfo.username, {
+        outcome: 'success',
+        message: 'Bonus chest claimed',
+      });
       this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
       return;
     }
 
     const hadIntegrityFailure = attemptResults.some((r) => r.failureKind === 'integrity');
     const hadPermanentFailure = attemptResults.some((r) => r.failureKind === 'permanent');
+    const failureKind = hadIntegrityFailure
+      ? 'integrity'
+      : hadPermanentFailure
+        ? 'permanent'
+        : lastResult.failureKind ?? 'unknown';
 
     if (hadPermanentFailure) {
       this.claimIdBlocklist.markPermanent(...attemptedIds);
@@ -953,7 +969,40 @@ export class StreamWatcher {
     } else {
       logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус — повторим при следующем опросе`);
     }
-    this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
+
+    const failMessage = hadIntegrityFailure
+      ? 'Failed integrity check — update TWITCH_CLIENT_INTEGRITY'
+      : 'Failed to claim bonus';
+    this.recordClaimHealth(streamerInfo.username, {
+      outcome: 'failed',
+      failureKind,
+      message: failMessage,
+    });
+    this.addEvent('claim-failed', streamerInfo.username, failMessage);
+  }
+
+  /**
+   * Сохраняет результат claim для панели здоровья бота
+   */
+  private recordClaimHealth(
+    streamer: string,
+    data: {
+      outcome: 'success' | 'failed';
+      failureKind?: StreamerClaimHealth['failureKind'];
+      message: string;
+    }
+  ): void {
+    const entry: StreamerClaimHealth = {
+      streamer,
+      outcome: data.outcome,
+      failureKind: data.failureKind,
+      timestamp: Date.now(),
+      message: data.message,
+    };
+    this.claimHealthByStreamer.set(streamer, entry);
+    if (data.failureKind === 'integrity') {
+      this.lastIntegrityFailure = { timestamp: entry.timestamp, streamer };
+    }
   }
 
   /**
@@ -2101,6 +2150,66 @@ export class StreamWatcher {
     if (stats.length === 0) {
       this.addPointsHistory('system', 0, 0);
     }
+  }
+
+  /**
+   * Снимок здоровья бота для dashboard (/api/bot-health)
+   */
+  getBotHealth(): BotHealthSnapshot {
+    const { semver, revision, label } = getAppVersionParts();
+    const graphqlClient = this.graphqlClient;
+
+    const integrity = graphqlClient
+      ? graphqlClient.getIntegrityProvider().getHealthSnapshot()
+      : (() => {
+          const manual = getManualIntegrityFromEnv();
+          const now = Date.now();
+          const expiresAtMs = manual?.expiresAtMs ?? null;
+          return {
+            source: resolveIntegritySource(),
+            configured: Boolean(manual?.token),
+            valid: manual ? now < manual.expiresAtMs - 60_000 : false,
+            expiresAtMs,
+            expiresInMs:
+              expiresAtMs != null && expiresAtMs > now ? expiresAtMs - now : expiresAtMs != null ? 0 : null,
+            fallbackApiEnabled: allowApiIntegrityFallback(),
+            deviceIdPrefix: (process.env.TWITCH_DEVICE_ID?.trim() || '—').slice(0, 8),
+          };
+        })();
+
+    const websocket = this.wsManager
+      ? this.wsManager.getHealthSnapshot()
+      : {
+          status: 'stopped' as const,
+          connectionState: 'CLOSED',
+          reconnectAttempt: 0,
+          maxReconnectAttempts: 0,
+          hasCriticalErrors: false,
+          lastCriticalError: null,
+        };
+
+    const graphql = graphqlClient
+      ? graphqlClient.getHealthSnapshot()
+      : { circuitBreaker: 'CLOSED' as const, hadRecentNetworkFailure: false };
+
+    const claimByStreamer = Array.from(this.claimHealthByStreamer.values()).sort(
+      (a, b) => b.timestamp - a.timestamp
+    );
+
+    return {
+      timestamp: Date.now(),
+      appVersion: label,
+      appSemver: semver,
+      gitRevision: revision,
+      watcherRunning: this.isRunning,
+      websocket,
+      integrity,
+      graphql,
+      lastIntegrityFailure: this.lastIntegrityFailure
+        ? { ...this.lastIntegrityFailure }
+        : null,
+      claimByStreamer,
+    };
   }
 
   // Реализация интерфейса StatisticsProvider
