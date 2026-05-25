@@ -3461,9 +3461,8 @@ function testSoundNotification(isOnline) {
  */
 async function loadWatchSettingsIntoForm() {
     const hint = document.getElementById('watchSettingsHint');
-    const modeSelect = document.getElementById('watchModeSetting');
     const intervalInput = document.getElementById('watchCycleIntervalSetting');
-    if (!modeSelect || !intervalInput) {
+    if (!intervalInput) {
         return;
     }
 
@@ -3475,7 +3474,6 @@ async function loadWatchSettingsIntoForm() {
         return;
     }
 
-    modeSelect.value = data.mode || 'sequential';
     intervalInput.value = String(data.cycleIntervalSec ?? 60);
     if (data.minCycleIntervalSec != null) {
         intervalInput.min = String(data.minCycleIntervalSec);
@@ -3499,28 +3497,19 @@ function updateWatchSettingsHint(data) {
     const sec = data.cycleIntervalSec ?? 60;
     const online = data.onlineCount ?? 0;
     const last = data.lastSequentialStreamer;
-
-    if (data.mode === 'sequential') {
-        const cycleMin = online > 0 ? Math.round((online * sec) / 60) : 0;
-        const queue = last ? ` Сейчас в очереди: ${last}.` : '';
-        hint.textContent =
-            `Один канал за раз, пауза ${sec} с между отправками. Онлайн: ${online}.` +
-            (online > 0 ? ` Полный круг ≈ ${cycleMin} мин.${queue}` : ' Нет онлайн-каналов.');
-    } else if (data.mode === 'per-channel') {
-        hint.textContent =
-            `Отдельный таймер на каждый онлайн-канал (интервал ${sec} с). Онлайн: ${online}.`;
-    } else {
-        hint.textContent = `Пакетный режим (batch). Интервал цикла: ${sec} с.`;
-    }
+    const cycleMin = online > 0 ? Math.round((online * sec) / 60) : 0;
+    const queue = last ? ` Сейчас в очереди: ${last}.` : '';
+    hint.textContent =
+        `Ротация: пауза ${sec} с между каналами. Онлайн: ${online}.` +
+        (online > 0 ? ` Полный круг ≈ ${cycleMin} мин.${queue}` : ' Нет онлайн-каналов.');
 }
 
 /**
  * Сохраняет настройки minute-watched на сервере (.env + runtime)
  */
 async function saveWatchSettingsFromForm() {
-    const modeSelect = document.getElementById('watchModeSetting');
     const intervalInput = document.getElementById('watchCycleIntervalSetting');
-    if (!modeSelect || !intervalInput) {
+    if (!intervalInput) {
         return { ok: true };
     }
 
@@ -3529,10 +3518,7 @@ async function saveWatchSettingsFromForm() {
         return { ok: false, message: 'Укажите корректный интервал в секундах' };
     }
 
-    const result = await postApi('/api/watch-settings', {
-        mode: modeSelect.value,
-        cycleIntervalSec,
-    });
+    const result = await postApi('/api/watch-settings', { cycleIntervalSec });
 
     if (result.ok && result.data) {
         updateWatchSettingsHint(result.data);

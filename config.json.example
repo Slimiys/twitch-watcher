@@ -25,5 +25,8 @@
     "format": "json",
     "rotationDays": 30,
     "autoSave": true
+  },
+  "watch": {
+    "cycleIntervalMs": 60000
   }
 }

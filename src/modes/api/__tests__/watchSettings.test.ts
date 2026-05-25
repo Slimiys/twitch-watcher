@@ -1,52 +1,53 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  applyWatchSettingsOverrides,
+  applyWatchCycleIntervalOverride,
   clampWatchCycleIntervalMs,
-  getWatchSettings,
-  parseWatchCycleIntervalMsFromEnv,
-  parseWatchModeFromEnv,
+  getWatchCycleIntervalMs,
+  loadWatchCycleIntervalFromConfig,
   resetWatchSettingsOverrides,
+  saveWatchCycleIntervalToConfig,
 } from '../watchSettings';
 
 describe('watchSettings', () => {
-  const envBackup = { ...process.env };
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'twitch-watch-settings-'));
+    configPath = path.join(tmpDir, 'config.json');
+    resetWatchSettingsOverrides();
+  });
 
   afterEach(() => {
-    process.env = { ...envBackup };
     resetWatchSettingsOverrides();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('defaults to sequential mode and 60s interval', () => {
-    delete process.env.WATCH_MODE;
-    delete process.env.WATCH_CYCLE_INTERVAL_MS;
-    resetWatchSettingsOverrides();
-    expect(parseWatchModeFromEnv()).toBe('sequential');
-    expect(parseWatchCycleIntervalMsFromEnv()).toBe(60_000);
-    expect(getWatchSettings().mode).toBe('sequential');
+  it('defaults to 60s when config is missing', () => {
+    expect(loadWatchCycleIntervalFromConfig(configPath)).toBe(60_000);
   });
 
-  it('parses per-channel and batch modes', () => {
-    process.env.WATCH_MODE = 'per-channel';
-    expect(parseWatchModeFromEnv()).toBe('per-channel');
-    process.env.WATCH_MODE = 'perchannel';
-    expect(parseWatchModeFromEnv()).toBe('per-channel');
-    process.env.WATCH_MODE = 'batch';
-    expect(parseWatchModeFromEnv()).toBe('batch');
+  it('reads and saves interval in config.json', () => {
+    saveWatchCycleIntervalToConfig(45_000, configPath);
+    expect(loadWatchCycleIntervalFromConfig(configPath)).toBe(45_000);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.watch.cycleIntervalMs).toBe(45_000);
+    expect(config.streamers).toBeUndefined();
   });
 
-  it('clamps cycle interval to 15s..600s', () => {
+  it('clamps interval to 15s..600s', () => {
     expect(clampWatchCycleIntervalMs(1)).toBe(15_000);
     expect(clampWatchCycleIntervalMs(999_999)).toBe(600_000);
-    expect(clampWatchCycleIntervalMs(45_000)).toBe(45_000);
   });
 
-  it('runtime overrides take precedence over env', () => {
-    process.env.WATCH_MODE = 'batch';
-    process.env.WATCH_CYCLE_INTERVAL_MS = '120000';
+  it('runtime override takes precedence until reset', () => {
+    saveWatchCycleIntervalToConfig(120_000, configPath);
+    applyWatchCycleIntervalOverride(30_000);
+    expect(getWatchCycleIntervalMs()).toBe(30_000);
     resetWatchSettingsOverrides();
-    applyWatchSettingsOverrides({ mode: 'sequential', cycleIntervalMs: 30_000 });
-    const settings = getWatchSettings();
-    expect(settings.mode).toBe('sequential');
-    expect(settings.cycleIntervalMs).toBe(30_000);
+    expect(loadWatchCycleIntervalFromConfig(configPath)).toBe(120_000);
   });
 });

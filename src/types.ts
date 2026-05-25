@@ -7,6 +7,10 @@ export interface AppConfig {
   token?: string;
   retry?: RetryConfig;
   streamers?: string[]; // Список стримеров для отслеживания
+  /** Интервал ротации minute-watched (мс), настраивается через dashboard */
+  watch?: {
+    cycleIntervalMs?: number;
+  };
 }
 
 /**

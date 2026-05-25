@@ -112,7 +112,6 @@ export interface StatisticsProvider {
    * Снимок настроек minute-watched (режим, интервал, очередь)
    */
   getWatchSettingsSnapshot?(): {
-    mode: string;
     cycleIntervalMs: number;
     cycleIntervalSec: number;
     lastSequentialStreamer: string | null;
@@ -120,13 +119,11 @@ export interface StatisticsProvider {
   };
 
   /**
-   * Применяет настройки minute-watched без перезапуска процесса
+   * Применяет интервал ротации minute-watched без перезапуска процесса
    */
   applyWatchSettings?(partial: {
     cycleIntervalMs?: number;
-    mode?: string;
   }): {
-    mode: string;
     cycleIntervalMs: number;
     cycleIntervalSec: number;
     lastSequentialStreamer: string | null;
@@ -606,7 +603,6 @@ export class WebServer {
         const body = req.body ?? {};
         const result = applyWatchSettingsFromApi(this.statisticsProvider, {
           cycleIntervalSec: body.cycleIntervalSec,
-          mode: body.mode,
         });
         res.json(result);
       } catch (error: any) {

@@ -87,12 +87,10 @@ describe('getActiveWatchCount', () => {
     expect(overall.lastActivity).toBe(0);
   });
 
-  it('startChannelWatchTimer выставляет startTime для онлайн без сессии', () => {
-    (watcher as any).watchMode = 'per-channel';
-    (watcher as any).isRunning = true;
+  it('ensureWatchSessionStarted выставляет startTime для онлайн без сессии', () => {
     (watcher as any).streamers.set('alice', onlineWithoutStartTime('alice'));
 
-    (watcher as any).startChannelWatchTimer('alice');
+    (watcher as any).ensureWatchSessionStarted((watcher as any).streamers.get('alice'));
 
     expect((watcher as any).streamers.get('alice').startTime).toBeGreaterThan(0);
     expect(watcher.getActiveWatchCount()).toBe(1);

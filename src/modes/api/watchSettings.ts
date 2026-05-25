@@ -1,57 +1,38 @@
 /**
- * Настройки minute-watched (режим и интервал)
+ * Интервал между отправками minute-watched (ротация по очереди)
  */
 
-/** Режим отправки minute-watched */
-export type WatchMode = 'sequential' | 'per-channel' | 'batch';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getProjectRoot } from '../../pidFile';
+import { AppConfig } from '../../types';
 
-export interface WatchSettings {
-  mode: WatchMode;
+export interface WatchSettingsSnapshot {
   cycleIntervalMs: number;
-}
-
-export interface WatchSettingsSnapshot extends WatchSettings {
   cycleIntervalSec: number;
-  /** Последний стример в sequential-очереди (если есть) */
+  /** Последний стример в очереди ротации (если есть) */
   lastSequentialStreamer: string | null;
   onlineCount: number;
 }
 
+const DEFAULT_CYCLE_MS = 60_000;
 const MIN_CYCLE_MS = 15_000;
 const MAX_CYCLE_MS = 600_000;
 
-let runtimeOverrides: Partial<WatchSettings> = {};
+let runtimeCycleIntervalMs: number | undefined;
 
 /**
- * Сбрасывает runtime-переопределения (тесты)
+ * Сбрасывает runtime-переопределение (тесты)
  */
 export function resetWatchSettingsOverrides(): void {
-  runtimeOverrides = {};
+  runtimeCycleIntervalMs = undefined;
 }
 
 /**
- * Парсит WATCH_MODE из env
+ * Путь к config.json в корне проекта
  */
-export function parseWatchModeFromEnv(): WatchMode {
-  const raw = (process.env.WATCH_MODE || 'sequential').trim().toLowerCase();
-  if (raw === 'batch') {
-    return 'batch';
-  }
-  if (raw === 'per-channel' || raw === 'perchannel') {
-    return 'per-channel';
-  }
-  return 'sequential';
-}
-
-/**
- * Парсит интервал между отправками (мс)
- */
-export function parseWatchCycleIntervalMsFromEnv(): number {
-  const parsed = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
-  if (!Number.isFinite(parsed)) {
-    return 60_000;
-  }
-  return clampWatchCycleIntervalMs(parsed);
+export function getWatchConfigPath(): string {
+  return path.join(getProjectRoot(), 'config.json');
 }
 
 /**
@@ -62,30 +43,60 @@ export function clampWatchCycleIntervalMs(ms: number): number {
 }
 
 /**
- * Текущие эффективные настройки (env + runtime)
+ * Читает интервал из config.json
  */
-export function getWatchSettings(): WatchSettings {
-  const fromEnv: WatchSettings = {
-    mode: parseWatchModeFromEnv(),
-    cycleIntervalMs: parseWatchCycleIntervalMsFromEnv(),
-  };
-  return {
-    mode: runtimeOverrides.mode ?? fromEnv.mode,
-    cycleIntervalMs: runtimeOverrides.cycleIntervalMs ?? fromEnv.cycleIntervalMs,
-  };
+export function loadWatchCycleIntervalFromConfig(configPath: string = getWatchConfigPath()): number {
+  if (!fs.existsSync(configPath)) {
+    return DEFAULT_CYCLE_MS;
+  }
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as AppConfig;
+    const raw = config.watch?.cycleIntervalMs;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+      return DEFAULT_CYCLE_MS;
+    }
+    return clampWatchCycleIntervalMs(raw);
+  } catch {
+    return DEFAULT_CYCLE_MS;
+  }
 }
 
 /**
- * Обновляет runtime-настройки (без записи в .env)
+ * Сохраняет интервал в config.json (остальные поля не трогает)
  */
-export function applyWatchSettingsOverrides(partial: Partial<WatchSettings>): WatchSettings {
-  if (partial.mode !== undefined) {
-    runtimeOverrides.mode = partial.mode;
+export function saveWatchCycleIntervalToConfig(
+  cycleIntervalMs: number,
+  configPath: string = getWatchConfigPath()
+): void {
+  const ms = clampWatchCycleIntervalMs(cycleIntervalMs);
+  let config: AppConfig = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as AppConfig;
+    } catch {
+      config = {};
+    }
   }
-  if (partial.cycleIntervalMs !== undefined) {
-    runtimeOverrides.cycleIntervalMs = clampWatchCycleIntervalMs(partial.cycleIntervalMs);
+  config.watch = { ...config.watch, cycleIntervalMs: ms };
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * Текущий интервал (config.json + runtime override)
+ */
+export function getWatchCycleIntervalMs(): number {
+  if (runtimeCycleIntervalMs !== undefined) {
+    return runtimeCycleIntervalMs;
   }
-  return getWatchSettings();
+  return loadWatchCycleIntervalFromConfig();
+}
+
+/**
+ * Обновляет runtime-интервал (без записи в config)
+ */
+export function applyWatchCycleIntervalOverride(cycleIntervalMs: number): number {
+  runtimeCycleIntervalMs = clampWatchCycleIntervalMs(cycleIntervalMs);
+  return runtimeCycleIntervalMs;
 }
 
 /**
