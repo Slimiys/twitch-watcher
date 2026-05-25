@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AppConfig } from '../../types';
 import { isNetworkError } from './errorUtils';
+import { ClaimIdBlocklist } from './claimIdBlocklist';
 import {
   isTransientNetworkErrorCode,
   shouldAutoExitOnInvalidToken,
@@ -80,6 +81,9 @@ export class StreamWatcher {
   private claimCheckInterval: NodeJS.Timeout | null = null;
   private graphqlClient: GraphQLClient | null = null;
   private recentClaimAttempts = new Map<string, number>();
+  private claimIdBlocklist = new ClaimIdBlocklist(
+    parseInt(process.env.CLAIM_FAILED_BLOCK_MS || '86400000', 10)
+  );
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
   private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
@@ -886,18 +890,31 @@ export class StreamWatcher {
     claimId: string,
     graphqlClient: GraphQLClient
   ): Promise<void> {
+    if (this.claimIdBlocklist.isBlocked(claimId)) {
+      logger.verbose(
+        `⏭️  [${streamerInfo.username}] Пропуск бонуса ${claimId} (уже была неудачная попытка)`
+      );
+      return;
+    }
+
     logger.info(`🎁  [${streamerInfo.username}] Доступен бонус ${claimId}, собираем...`);
 
+    const attemptedIds: string[] = [claimId];
     let success = await graphqlClient.claimBonus(streamerInfo.channelId, claimId);
 
     if (!success) {
       try {
         const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
         const fallbackClaimId = pointsInfo?.availableClaim?.id;
-        if (fallbackClaimId && fallbackClaimId !== claimId) {
+        if (
+          fallbackClaimId &&
+          fallbackClaimId !== claimId &&
+          !this.claimIdBlocklist.isBlocked(fallbackClaimId)
+        ) {
           logger.verbose(
             `ℹ️  [${streamerInfo.username}] Повтор с ID из GraphQL: ${fallbackClaimId}`
           );
+          attemptedIds.push(fallbackClaimId);
           success = await graphqlClient.claimBonus(streamerInfo.channelId, fallbackClaimId);
         }
       } catch (error: any) {
@@ -908,11 +925,15 @@ export class StreamWatcher {
     }
 
     if (success) {
+      for (const id of attemptedIds) {
+        this.claimIdBlocklist.clear(id);
+      }
       logger.info(`✅  [${streamerInfo.username}] Бонус успешно собран!`);
       this.addEvent('claim-success', streamerInfo.username, 'Bonus chest claimed');
       return;
     }
 
+    this.claimIdBlocklist.markFailed(...attemptedIds);
     logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус (integrity/FORBIDDEN или уже собран)`);
     this.addEvent('claim-failed', streamerInfo.username, 'Failed to claim bonus');
   }
@@ -1159,7 +1180,7 @@ export class StreamWatcher {
     try {
       const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
       const claimId = pointsInfo?.availableClaim?.id;
-      if (!claimId) {
+      if (!claimId || this.claimIdBlocklist.isBlocked(claimId)) {
         return;
       }
 
@@ -1211,6 +1232,7 @@ export class StreamWatcher {
         this.recentClaimAttempts.delete(username);
       }
     }
+    this.claimIdBlocklist.prune(now);
 
     for (const streamerInfo of onlineStreamers) {
       const lastAttempt = this.recentClaimAttempts.get(streamerInfo.username);
@@ -1222,6 +1244,9 @@ export class StreamWatcher {
         const pointsInfo = await graphqlClient.getChannelPoints(streamerInfo.username);
         const claimId = pointsInfo?.availableClaim?.id;
         if (!claimId) {
+          continue;
+        }
+        if (this.claimIdBlocklist.isBlocked(claimId)) {
           continue;
         }
 
