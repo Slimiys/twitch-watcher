@@ -7,6 +7,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getProjectRoot, getPidFilePath } from '../pidFile';
 import { logger } from '../modes/api/logger';
+import {
+  isDashboardActionLockPresent,
+  writeDashboardActionLock,
+} from './dashboardActionLock';
 
 let dashboardActionInProgress = false;
 
@@ -74,6 +78,7 @@ export function resolveRestartScriptPath(): string {
 function spawnDashboardScript(scriptPath: string, logLabel: string): void {
   const projectRoot = getProjectRoot();
   dashboardActionInProgress = true;
+  writeDashboardActionLock();
 
   try {
     fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
@@ -125,6 +130,7 @@ export function triggerDashboardUpdate(): { started: boolean; message: string } 
   }
 
   dashboardActionInProgress = true;
+  writeDashboardActionLock();
 
   const child = spawn('bash', [scriptPath], {
     detached: true,
@@ -202,5 +208,5 @@ export function triggerDashboardRestart(): { started: boolean; message: string }
  * Идёт ли сейчас удалённое действие (обновление / stop / restart)
  */
 export function isDashboardUpdateInProgress(): boolean {
-  return dashboardActionInProgress;
+  return dashboardActionInProgress || isDashboardActionLockPresent();
 }

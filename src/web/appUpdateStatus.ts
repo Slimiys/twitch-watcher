@@ -26,6 +26,8 @@ export interface AppUpdateStatus extends AppUpdateCheckResult {
   dashboardUpdateCanTrigger: boolean;
   dashboardUpdateBlockedReason: string | null;
   dashboardUpdateInProgress: boolean;
+  /** PID процесса, отдавшего ответ (для определения перезапуска в dashboard) */
+  serverPid: number;
 }
 
 /**
@@ -48,6 +50,7 @@ export function buildAppUpdateStatus(forceRefresh = false): AppUpdateStatus {
       dashboardUpdateCanTrigger: false,
       dashboardUpdateBlockedReason: 'Обновление уже выполняется',
       dashboardUpdateInProgress: true,
+      serverPid: process.pid,
     };
   }
 
@@ -63,6 +66,7 @@ export function buildAppUpdateStatus(forceRefresh = false): AppUpdateStatus {
     dashboardUpdateCanTrigger,
     dashboardUpdateBlockedReason,
     dashboardUpdateInProgress: false,
+    serverPid: process.pid,
   };
 }
 

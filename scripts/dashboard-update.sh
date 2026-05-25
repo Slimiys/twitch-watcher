@@ -10,6 +10,8 @@ cd "$ROOT"
 BRANCH="${DASHBOARD_UPDATE_GIT_BRANCH:-dev}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
+dashboard_action_lock_acquire
+trap dashboard_action_lock_release EXIT
 exec >>"$LOG_DIR/dashboard-update.log" 2>&1
 
 echo "========================================"
@@ -31,6 +33,7 @@ bash "$ROOT/run-local.sh" --update-only
 
 echo "[3/4] Stopping current process..."
 kill_bot_process
+dashboard_action_lock_release
 
 echo "[4/4] Starting npm start (Termux wake-lock)..."
 start_bot_background "$LOG_DIR/update-restart.log"

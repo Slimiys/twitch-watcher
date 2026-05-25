@@ -473,6 +473,8 @@ let lastBotHealthForVersion = null;
 let versionCardBusy = false;
 /** Режим ожидания перезапуска: update | restart */
 let lifecycleWaitMode = null;
+/** PID бота до update/restart (новый процесс = другой pid) */
+let lifecycleWaitPreviousPid = null;
 
 /**
  * Кнопка «Обновиться» в шапке скрыта — обновление через карточку «Версия»
@@ -558,10 +560,16 @@ async function triggerDashboardStop() {
     }
 }
 
+async function captureLifecycleWaitPid() {
+    const info = await fetchServerInfoForReconnect();
+    lifecycleWaitPreviousPid = info?.pid ?? null;
+}
+
 async function triggerDashboardRestart() {
     if (typeof showNotification === 'function') {
         showNotification('info', 'Перезапуск…');
     }
+    await captureLifecycleWaitPid();
     const result = await postApi('/app-restart', {});
     if (result.ok) {
         if (typeof showNotification === 'function') {
@@ -601,7 +609,7 @@ function beginLifecycleWaitUi(mode) {
  * Опрос статуса обновления (ветка dev на origin)
  */
 async function pollVersionUpdateStatus(forceRefresh = false) {
-    if (!forceRefresh) {
+    if (!forceRefresh && !lifecycleWaitMode) {
         versionUpdateStatus = {
             ...(versionUpdateStatus || {}),
             uiState: 'checking',
@@ -616,6 +624,9 @@ async function pollVersionUpdateStatus(forceRefresh = false) {
     const data = await fetchData(`/app-update-check${query}`);
     if (!data) {
         return null;
+    }
+    if (tryFinishLifecycleIfReady(data)) {
+        return data;
     }
     versionUpdateStatus = data;
     if (lastBotHealthForVersion) {
@@ -851,9 +862,19 @@ async function fetchServerInfoForReconnect() {
     }
 }
 
+function hasNewBotPidAfterLifecycle(serverPid) {
+    if (serverPid == null || lifecycleWaitPreviousPid == null) {
+        return false;
+    }
+    return Number(serverPid) !== Number(lifecycleWaitPreviousPid);
+}
+
 function isServerReadyAfterLifecycle(info) {
     if (!info?.pid) {
         return false;
+    }
+    if (hasNewBotPidAfterLifecycle(info.pid)) {
+        return true;
     }
     if (info.dashboardUpdateInProgress === true) {
         return false;
@@ -861,10 +882,53 @@ function isServerReadyAfterLifecycle(info) {
     return true;
 }
 
+function isUpdateCheckReadyAfterLifecycle(data) {
+    if (!data?.serverPid) {
+        return false;
+    }
+    if (hasNewBotPidAfterLifecycle(data.serverPid)) {
+        return data.uiState !== 'updating';
+    }
+    return data.dashboardUpdateInProgress !== true && data.uiState !== 'updating';
+}
+
+/**
+ * Завершение ожидания: карточка «Версия» + перезагрузка страницы
+ */
+function finishLifecycleFromServer(data, successMessage) {
+    stopDashboardReconnectWatch();
+    versionCardBusy = false;
+    lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
+    if (data) {
+        versionUpdateStatus = data;
+        if (lastBotHealthForVersion) {
+            patchBotHealthVersionCard(lastBotHealthForVersion);
+        }
+    }
+    scheduleDashboardReload(successMessage);
+}
+
+function tryFinishLifecycleIfReady(data) {
+    if (!lifecycleWaitMode || !data) {
+        return false;
+    }
+    if (!isUpdateCheckReadyAfterLifecycle(data)) {
+        return false;
+    }
+    const msg =
+        lifecycleWaitMode === 'update'
+            ? 'Обновление завершено. Перезагрузка страницы…'
+            : 'Перезапуск завершён. Перезагрузка страницы…';
+    finishLifecycleFromServer(data, msg);
+    return true;
+}
+
 /** Сброс «зависшего» Обновление… на карточке и в шапке */
 function resetDashboardLifecycleUi(headerText) {
     versionCardBusy = false;
     lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
     updateConnectionStatus(false);
     setLifecycleHeaderText(headerText || 'Disconnected');
     pollVersionUpdateStatus(true);
@@ -874,6 +938,7 @@ function scheduleDashboardReload(successMessage) {
     stopDashboardReconnectWatch();
     versionCardBusy = false;
     lifecycleWaitMode = null;
+    lifecycleWaitPreviousPid = null;
     if (typeof showNotification === 'function') {
         showNotification('success', successMessage || 'Бот снова online. Перезагрузка страницы…');
     }
@@ -886,42 +951,78 @@ function scheduleDashboardReload(successMessage) {
  * @param successMessage Текст уведомления перед reload
  * @param mode 'update' | 'restart'
  */
+let reconnectWatchAttempts = 0;
+let reconnectWatchSuccessMessage = '';
+let reconnectWatchLabel = 'Перезапуск';
+
+async function runReconnectLifecycleTick() {
+    if (!lifecycleWaitMode) {
+        return;
+    }
+
+    reconnectWatchAttempts += 1;
+    setLifecycleHeaderText(
+        `${reconnectWatchLabel}… ожидание бота (${reconnectWatchAttempts}/${RECONNECT_MAX_ATTEMPTS})`
+    );
+
+    const info = await fetchServerInfoForReconnect();
+    if (isServerReadyAfterLifecycle(info)) {
+        const upd = await fetchData(`/app-update-check?_=${Date.now()}`);
+        finishLifecycleFromServer(
+            upd || null,
+            reconnectWatchSuccessMessage || 'Бот снова online. Перезагрузка страницы…'
+        );
+        return;
+    }
+
+    const updCheck = await fetchData(`/app-update-check?_=${Date.now()}`);
+    if (tryFinishLifecycleIfReady(updCheck)) {
+        return;
+    }
+
+    if (reconnectWatchAttempts >= RECONNECT_MAX_ATTEMPTS) {
+        stopDashboardReconnectWatch();
+        resetDashboardLifecycleUi('Обновите страницу (F5)');
+        if (typeof showNotification === 'function') {
+            showNotification(
+                'warn',
+                'Бот долго не отвечает. Обновите страницу (F5) или откройте дашборд заново.'
+            );
+        }
+        setTimeout(async () => {
+            const late = await fetchServerInfoForReconnect();
+            if (isServerReadyAfterLifecycle(late)) {
+                const upd = await fetchData(`/app-update-check?_=${Date.now()}`);
+                finishLifecycleFromServer(
+                    upd || null,
+                    reconnectWatchSuccessMessage || 'Бот снова online. Перезагрузка страницы…'
+                );
+            } else if (tryFinishLifecycleIfReady(await fetchData(`/app-update-check?_=${Date.now()}`))) {
+                // завершено через app-update-check
+            }
+        }, 2000);
+    }
+}
+
 function startDashboardReconnectWatch(successMessage, mode = 'restart') {
     lifecycleWaitMode = mode;
+    reconnectWatchSuccessMessage = successMessage;
+    reconnectWatchLabel = mode === 'update' ? 'Обновление' : 'Перезапуск';
+    reconnectWatchAttempts = 0;
     stopDashboardReconnectWatch();
-    let attempts = 0;
-    const label = mode === 'update' ? 'Обновление' : 'Перезапуск';
 
-    const tick = async () => {
-        attempts += 1;
-        setLifecycleHeaderText(`${label}… ожидание бота (${attempts}/${RECONNECT_MAX_ATTEMPTS})`);
+    if (lifecycleWaitPreviousPid == null) {
+        captureLifecycleWaitPid();
+    }
 
-        const info = await fetchServerInfoForReconnect();
-        if (isServerReadyAfterLifecycle(info)) {
-            scheduleDashboardReload(successMessage);
-            return;
-        }
+    versionUpdateFastPollTimer = setInterval(runReconnectLifecycleTick, RECONNECT_POLL_MS);
+    runReconnectLifecycleTick();
+}
 
-        if (attempts >= RECONNECT_MAX_ATTEMPTS) {
-            stopDashboardReconnectWatch();
-            resetDashboardLifecycleUi('Обновите страницу (F5)');
-            if (typeof showNotification === 'function') {
-                showNotification(
-                    'warn',
-                    'Бот долго не отвечает. Обновите страницу (F5) или откройте дашборд заново.'
-                );
-            }
-            setTimeout(async () => {
-                const late = await fetchServerInfoForReconnect();
-                if (isServerReadyAfterLifecycle(late)) {
-                    scheduleDashboardReload(successMessage);
-                }
-            }, 2000);
-        }
-    };
-
-    versionUpdateFastPollTimer = setInterval(tick, RECONNECT_POLL_MS);
-    tick();
+function onDashboardVisibilityForLifecycle() {
+    if (document.visibilityState === 'visible' && lifecycleWaitMode) {
+        runReconnectLifecycleTick();
+    }
 }
 
 function stopDashboardReconnectWatch() {
@@ -936,6 +1037,7 @@ async function triggerDashboardAppUpdate() {
         showNotification('info', 'Запуск обновления…');
     }
 
+    await captureLifecycleWaitPid();
     const result = await postApi('/app-update', {});
 
     if (result.ok) {
@@ -2724,6 +2826,10 @@ function startDashboardCore() {
     initProcessControlButtons();
     startVersionUpdatePolling();
     startAutoUpdate();
+    if (!document.documentElement.dataset.lifecycleVisibilityBound) {
+        document.documentElement.dataset.lifecycleVisibilityBound = '1';
+        document.addEventListener('visibilitychange', onDashboardVisibilityForLifecycle);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', startDashboardCore);

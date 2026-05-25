@@ -95,6 +95,8 @@ DASHBOARD_UPDATE_ENABLED=true
 
 В шапке дашборда (при `DASHBOARD_UPDATE_ENABLED=true`): **Остановить** — завершить процесс; **Перезапустить** — stop + `npm start` (лог `logs/update-restart.log`).
 
+Скрипты обновления/перезапуска (`scripts/termux-common.sh`) останавливают **все** экземпляры бота в каталоге проекта: PID из `.twitch-watcher.pid`, `pgrep` по `dist/app.js`, процесс на порту `WEB_SERVER_PORT` (из `.env`, по умолчанию 3001). Перед новым `npm start` проверяется, что порт свободен. Лог: `logs/dashboard-update.log` (строки `[kill]`).
+
 Опционально: `WEB_DASHBOARD_API_KEY` — защита REST API; `DASHBOARD_UPDATE_GIT_BRANCH=dev` (по умолчанию dev).
 
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)

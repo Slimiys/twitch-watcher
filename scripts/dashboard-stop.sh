@@ -9,6 +9,8 @@ cd "$ROOT"
 
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
+dashboard_action_lock_acquire
+trap dashboard_action_lock_release EXIT
 exec >>"$LOG_DIR/dashboard-stop.log" 2>&1
 
 echo "========================================"
