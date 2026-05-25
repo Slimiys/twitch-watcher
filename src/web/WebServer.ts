@@ -1013,11 +1013,10 @@ export class WebServer {
       // Игнорируем ошибки
     }
 
-    // По умолчанию считаем что инициализация завершена
     return {
-      isInitialized: true,
-      currentAction: 'Ready',
-      progress: 100
+      isInitialized: false,
+      currentAction: 'Initializing application...',
+      progress: 0,
     };
   }
 

@@ -1031,8 +1031,8 @@ async function waitForNewBotApiReady(maxWaitMs = 120_000) {
             await new Promise((r) => setTimeout(r, 1000));
             continue;
         }
-        const overall = await fetchData(`/overall?_=${Date.now()}`);
-        if (overall) {
+        const remaining = deadline - Date.now();
+        if (remaining > 0 && (await waitForBotDashboardDataReady(Math.min(remaining, 15_000)))) {
             return true;
         }
         await new Promise((r) => setTimeout(r, 1000));
@@ -1596,14 +1596,39 @@ async function primeEventUpdateBaseline() {
 }
 
 /**
+ * Ждёт полной инициализации бота и непустой статистики стримеров
+ * @param {number} maxWaitMs Максимальное время ожидания
+ * @returns {Promise<boolean>}
+ */
+async function waitForBotDashboardDataReady(maxWaitMs = 120_000) {
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+        const status = await fetchData(`/initialization-status?_=${Date.now()}`);
+        const initDone =
+            status?.isInitialized === true || (Number(status?.progress) || 0) >= 100;
+        const stats = await fetchData(`/statistics?includeOffline=true&_=${Date.now()}`);
+        if (initDone && Array.isArray(stats) && stats.length > 0) {
+            return true;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+}
+
+/**
  * Полное обновление дашборда после готовности бота (инициализация / перезагрузка страницы)
  */
 async function onApplicationInitializationComplete() {
     if (applicationDataRefreshStarted) {
         return;
     }
-    applicationDataRefreshStarted = true;
 
+    const dataReady = await waitForBotDashboardDataReady(120_000);
+    if (!dataReady) {
+        console.warn('Dashboard data not ready after timeout; refreshing with best effort');
+    }
+
+    applicationDataRefreshStarted = true;
     await updateAll();
 
     if (updateMode === 'event') {
@@ -1632,22 +1657,6 @@ function hideLoadingScreen() {
 }
 
 /**
- * Проверяет, отвечает ли API статистикой (приложение уже работает)
- */
-async function isApplicationReadyViaStats() {
-    try {
-        const response = await fetch(`${API_BASE}/statistics?includeOffline=true`);
-        if (!response.ok) {
-            return false;
-        }
-        const stats = await response.json();
-        return Array.isArray(stats) && stats.length > 0;
-    } catch {
-        return false;
-    }
-}
-
-/**
  * Проверяет статус инициализации приложения
  */
 async function checkInitializationStatus() {
@@ -1671,10 +1680,6 @@ async function checkInitializationStatus() {
             } else {
                 statusText.textContent = 'Waiting for server...';
             }
-            if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
-                hideLoadingScreen();
-                return;
-            }
             setTimeout(checkInitializationStatus, 1000);
             return;
         }
@@ -1694,19 +1699,9 @@ async function checkInitializationStatus() {
             return;
         }
 
-        // Fallback: бэкенд уже отдаёт стримеров, но progress не обновился
-        if (initializationPollCount >= 3 && await isApplicationReadyViaStats()) {
-            hideLoadingScreen();
-            return;
-        }
-
         setTimeout(checkInitializationStatus, 500);
     } catch (error) {
         statusText.textContent = 'Connecting to server...';
-        if (initializationPollCount >= 8 && await isApplicationReadyViaStats()) {
-            hideLoadingScreen();
-            return;
-        }
         setTimeout(checkInitializationStatus, 1000);
     }
 }
