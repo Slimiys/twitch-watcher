@@ -17,6 +17,12 @@ import {
 import { createDashboardApiKeyMiddleware } from './apiAuth';
 import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
 import { getAppVersionParts } from '../appVersion';
+import {
+  isDashboardUpdateEnabled,
+  isDashboardUpdateInProgress,
+  triggerDashboardUpdate,
+  validateDashboardUpdateRequest,
+} from './appUpdate';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -208,7 +214,24 @@ export class WebServer {
         appVersion: label,
         appSemver: semver,
         gitRevision: revision,
+        dashboardUpdateEnabled: isDashboardUpdateEnabled(),
+        dashboardUpdateCanTrigger: validateDashboardUpdateRequest().ok,
+        dashboardUpdateInProgress: isDashboardUpdateInProgress(),
       });
+    });
+
+    this.app.post('/api/app-update', (req: Request, res: Response) => {
+      try {
+        const result = triggerDashboardUpdate();
+        if (!result.started) {
+          res.status(400).json(result);
+          return;
+        }
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error triggering app update:', error);
+        res.status(500).json({ started: false, message: error.message || 'Unknown error' });
+      }
     });
 
     this.app.get('/api/bot-health', (req: Request, res: Response) => {

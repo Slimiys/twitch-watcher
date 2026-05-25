@@ -85,6 +85,15 @@ TWITCH_DEVICE_ID=uuid-из-cookie-unique_id
 
 При старте в логе должно быть: `Integrity: manual`. Успешный сбор: `Бонус успешно собран!` и `Reason: CLAIM` в событиях баллов.
 
+**Обновление с телефона (кнопка в дашборде):** в `.env` добавьте:
+
+```env
+DASHBOARD_UPDATE_ENABLED=true
+WEB_DASHBOARD_API_KEY=придумайте_длинный_ключ
+```
+
+В настройках дашборда укажите тот же API-ключ. Кнопка **«Обновиться»** выполнит `git pull`, `run-local.sh --update-only` и перезапуск. Лог: `logs/dashboard-update.log`.
+
 Сохраните файл (Ctrl+O, Enter, Ctrl+X в nano)
 
 6. **Запускаем приложение**:

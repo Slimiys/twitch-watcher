@@ -546,6 +546,101 @@ async function fetchData(endpoint) {
     }
 }
 
+/**
+ * POST к API dashboard (с API-ключом)
+ */
+async function postApi(endpoint, body = {}) {
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const msg = data.message || data.error || `HTTP ${response.status}`;
+            return { ok: false, message: msg, data };
+        }
+        return { ok: true, message: data.message || 'OK', data };
+    } catch (error) {
+        console.error(`Error POST ${endpoint}:`, error);
+        return { ok: false, message: error.message || String(error) };
+    }
+}
+
+/**
+ * Показывает кнопку «Обновиться», если сервер разрешил обновление
+ */
+async function initAppUpdateButton() {
+    const btn = document.getElementById('appUpdateBtn');
+    if (!btn) {
+        return;
+    }
+
+    const info = await fetchData('/server-info');
+    if (info?.dashboardUpdateCanTrigger) {
+        btn.style.display = '';
+        btn.disabled = info.dashboardUpdateInProgress === true;
+        btn.title = 'git pull + run-local.sh + перезапуск (Termux)';
+    } else {
+        btn.style.display = 'none';
+    }
+
+    btn.addEventListener('click', () => {
+        if (btn.disabled) {
+            return;
+        }
+        showConfirmModal(
+            'Обновить приложение?',
+            'Будет выполнено: git pull → npm install → npm run build → перезапуск бота. ' +
+                'Дашборд отключится на 1–3 минуты. Продолжить?',
+            () => triggerDashboardAppUpdate(btn)
+        );
+    });
+}
+
+/**
+ * Запуск обновления через /api/app-update
+ */
+async function triggerDashboardAppUpdate(btn) {
+    if (btn) {
+        btn.disabled = true;
+    }
+
+    if (typeof showNotification === 'function') {
+        showNotification('info', 'Запуск обновления…');
+    }
+
+    const result = await postApi('/app-update', {});
+
+    if (result.ok) {
+        if (typeof showNotification === 'function') {
+            showNotification('success', result.message);
+        }
+        updateConnectionStatus(false);
+        const statusText = document.getElementById('statusText');
+        if (statusText) {
+            statusText.textContent = 'Обновление…';
+        }
+    } else {
+        if (btn) {
+            btn.disabled = false;
+        }
+        if (typeof showNotification === 'function') {
+            showNotification('error', result.message || 'Не удалось запустить обновление');
+        } else {
+            alert(result.message || 'Не удалось запустить обновление');
+        }
+    }
+}
+
 function updateConnectionStatus(connected) {
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -3606,6 +3701,7 @@ function startDashboardCore() {
     }
     dashboardCoreStarted = true;
     checkInitializationStatus();
+    initAppUpdateButton();
     startAutoUpdate();
 }
 
