@@ -80,18 +80,107 @@ body.density-spacious td {
     }
 }
 
-header {
+header,
+.dashboard-header {
     margin-bottom: 30px;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     flex-wrap: wrap;
-    gap: 15px;
+    gap: 20px;
+}
+
+.dashboard-header-brand {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.dashboard-header-tagline {
+    color: #adadb8;
+    margin: 0 0 6px 0;
+    font-size: 14px;
+}
+
+.dashboard-bot-uptime {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #efeff1;
+    font-variant-numeric: tabular-nums;
+}
+
+.dashboard-bot-uptime:empty {
+    display: none;
+}
+
+.dashboard-header-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 2 1 480px;
+    justify-content: flex-end;
+}
+
+.header-toolbar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 8px;
+}
+
+.header-toolbar-group-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #71717a;
+}
+
+.header-toolbar-group-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 16px;
+}
+
+.header-toolbar-group--refresh .header-toolbar-group-body {
+    gap: 10px 18px;
+}
+
+.header-control-label {
+    color: #adadb8;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.header-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.header-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.update-interval-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 h1 {
     color: #9147ff;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
 }
 
 .loading-indicator {
@@ -1350,12 +1439,6 @@ td.invalid-time span {
     color: #efeff1;
 }
 
-.update-interval-control {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
 .interval-buttons {
     display: flex;
     gap: 4px;
@@ -2005,9 +2088,19 @@ th.notify-header-clickable:active {
         max-width: 100%;
     }
 
-    header {
+    header,
+    .dashboard-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .dashboard-header-toolbar {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .header-toolbar-group {
+        width: 100%;
     }
 
     .stats-grid {

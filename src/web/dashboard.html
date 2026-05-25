@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=5">
-    <script src="dashboard.js?v=32" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=6">
+    <script src="dashboard.js?v=33" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -31,78 +31,92 @@
     </div>
 
     <div class="container" id="mainContainer" style="display: none;">
-        <header>
-            <div>
+        <header class="dashboard-header">
+            <div class="dashboard-header-brand">
                 <h1>Twitch Watcher Dashboard</h1>
-                <p>Real-time monitoring and statistics</p>
+                <p class="dashboard-header-tagline">Real-time monitoring and statistics</p>
+                <p id="botUptimeDisplay" class="dashboard-bot-uptime" aria-live="polite"></p>
             </div>
-            <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                <div class="update-interval-control">
-                    <span style="color: #adadb8; font-size: 14px; margin-right: 8px;">Update:</span>
-                    <div class="interval-buttons">
-                        <button class="interval-btn active" data-interval="5">5s</button>
-                        <button class="interval-btn" data-interval="10">10s</button>
-                        <button class="interval-btn" data-interval="30">30s</button>
-                        <button class="interval-btn" data-interval="60">1m</button>
-                        <button class="interval-btn" data-interval="event">Event</button>
+            <div class="dashboard-header-toolbar">
+                <div class="header-toolbar-group header-toolbar-group--refresh">
+                    <span class="header-toolbar-group-label">Обновление данных</span>
+                    <div class="header-toolbar-group-body">
+                        <div class="update-interval-control">
+                            <span class="header-control-label">Интервал:</span>
+                            <div class="interval-buttons">
+                                <button class="interval-btn active" data-interval="5">5s</button>
+                                <button class="interval-btn" data-interval="10">10s</button>
+                                <button class="interval-btn" data-interval="30">30s</button>
+                                <button class="interval-btn" data-interval="60">1m</button>
+                                <button class="interval-btn" data-interval="event">Event</button>
+                            </div>
+                        </div>
+                        <div class="colorize-toggle-control">
+                            <span class="header-control-label">Colorize names:</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="colorizeStreamerNamesToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div
+                            class="colorize-toggle-control"
+                            id="autoUpdateToggleControl"
+                            title="При обнаружении обновления установка запустится без подтверждения"
+                        >
+                            <span class="header-control-label">Автообновление:</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="dashboardAutoUpdateToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
                     </div>
                 </div>
-                <div class="colorize-toggle-control" style="display: flex; align-items: center; gap: 8px;">
-                    <span style="color: #adadb8; font-size: 14px;">Colorize names:</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="colorizeStreamerNamesToggle">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-                <div
-                    class="colorize-toggle-control"
-                    id="autoUpdateToggleControl"
-                    style="display: flex; align-items: center; gap: 8px;"
-                    title="При обнаружении обновления установка запустится без подтверждения"
-                >
-                    <span style="color: #adadb8; font-size: 14px;">Автообновление:</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="dashboardAutoUpdateToggle">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-                <button class="settings-btn" id="testBtn" title="Тестирование">
-                    <span>🧪</span>
-                    <span>Tests</span>
-                </button>
-                <button class="settings-btn" id="appUpdateBtn" title="git pull и run-local.sh (Termux)" style="display: none;">
-                    <span>🔄</span>
-                    <span>Обновиться</span>
-                </button>
-                <button class="settings-btn" id="appStopBtn" title="Остановить бота" style="display: none;">
-                    <span>⏹</span>
-                    <span>Остановить</span>
-                </button>
-                <button class="settings-btn" id="appRestartBtn" title="Перезапустить бота" style="display: none;">
-                    <span>🔁</span>
-                    <span>Перезапустить</span>
-                </button>
-                <button class="settings-btn" id="settingsBtn" title="Settings">
-                    <span>⚙️</span>
-                    <span>Settings</span>
-                </button>
-                <div class="export-menu">
-                    <button class="export-btn" id="exportBtn" title="Export logs">
-                        <span>📥</span>
-                        <span>Export</span>
-                    </button>
-                    <div class="export-dropdown" id="exportDropdown">
-                        <a href="#" class="export-dropdown-item" data-format="csv" data-type="all">📊 Export All (CSV)</a>
-                        <a href="#" class="export-dropdown-item" data-format="json" data-type="all">📄 Export All (JSON)</a>
+                <div class="header-toolbar-group header-toolbar-group--actions">
+                    <span class="header-toolbar-group-label">Действия</span>
+                    <div class="header-toolbar-group-body">
+                        <div class="header-actions-row">
+                            <button class="settings-btn" id="testBtn" title="Тестирование">
+                                <span>🧪</span>
+                                <span>Tests</span>
+                            </button>
+                            <button class="settings-btn" id="appUpdateBtn" title="git pull и run-local.sh (Termux)" style="display: none;">
+                                <span>🔄</span>
+                                <span>Обновиться</span>
+                            </button>
+                            <button class="settings-btn" id="appStopBtn" title="Остановить бота" style="display: none;">
+                                <span>⏹</span>
+                                <span>Остановить</span>
+                            </button>
+                            <button class="settings-btn" id="appRestartBtn" title="Перезапустить бота" style="display: none;">
+                                <span>🔁</span>
+                                <span>Перезапустить</span>
+                            </button>
+                            <button class="settings-btn" id="settingsBtn" title="Settings">
+                                <span>⚙️</span>
+                                <span>Settings</span>
+                            </button>
+                            <div class="export-menu">
+                                <button class="export-btn" id="exportBtn" title="Export logs">
+                                    <span>📥</span>
+                                    <span>Export</span>
+                                </button>
+                                <div class="export-dropdown" id="exportDropdown">
+                                    <a href="#" class="export-dropdown-item" data-format="csv" data-type="all">📊 Export All (CSV)</a>
+                                    <a href="#" class="export-dropdown-item" data-format="json" data-type="all">📄 Export All (JSON)</a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="header-status-row">
+                            <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+                                <div class="loading-spinner"></div>
+                                <span>Updating...</span>
+                            </div>
+                            <div class="connection-status" id="connectionStatus">
+                                <span class="status-dot offline" id="statusDot"></span>
+                                <span id="statusText">Connecting...</span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="loading-indicator" id="loadingIndicator" style="display: none;">
-                    <div class="loading-spinner"></div>
-                    <span>Updating...</span>
-                </div>
-                <div class="connection-status" id="connectionStatus">
-                    <span class="status-dot offline" id="statusDot"></span>
-                    <span id="statusText">Connecting...</span>
                 </div>
             </div>
         </header>

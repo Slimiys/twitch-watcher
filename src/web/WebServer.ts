@@ -242,6 +242,9 @@ export class WebServer {
         certExists: fs.existsSync(certPath),
         keyExists: fs.existsSync(keyPath),
         pid: process.pid,
+        /** Момент старта процесса бота (сбрасывается при перезапуске) */
+        processStartedAt: Date.now() - Math.floor(process.uptime() * 1000),
+        uptimeMs: Math.floor(process.uptime() * 1000),
         appVersion: label,
         appSemver: semver,
         gitRevision: revision,

@@ -44,6 +44,13 @@ let dashboardAutoUpdateEnabled = safeGetLocalStorage('dashboardAutoUpdateEnabled
 let autoUpdateTriggeredForRevision = null;
 /** dashboardUpdateEnabled с последнего server-info */
 let dashboardUpdateFeatureEnabled = false;
+/** PID процесса бота для таймера uptime */
+let botUptimePid = null;
+/** Время старта процесса бота (мс), сбрасывается при смене pid */
+let botUptimeStartedAt = null;
+let botUptimeTickTimer = null;
+const BOT_UPTIME_SYNC_MS = 30_000;
+let botUptimeSyncTimer = null;
 
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
@@ -485,6 +492,86 @@ const LIFECYCLE_SAME_PID_ABORT_MS = 45_000;
 let lifecycleServerWasDown = false;
 
 /**
+ * Форматирует длительность работы бота
+ */
+function formatBotUptimeDuration(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    const parts = [];
+    if (days > 0) {
+        parts.push(`${days}д`);
+    }
+    if (hours > 0 || days > 0) {
+        parts.push(`${hours}ч`);
+    }
+    if (minutes > 0 || hours > 0 || days > 0) {
+        parts.push(`${minutes}м`);
+    }
+    parts.push(`${seconds}с`);
+    return parts.join(' ');
+}
+
+/**
+ * Обновляет подпись таймера в заголовке
+ */
+function renderBotUptimeLabel() {
+    const el = document.getElementById('botUptimeDisplay');
+    if (!el) {
+        return;
+    }
+    if (lifecycleWaitMode) {
+        el.textContent = lifecycleWaitMode === 'update' ? 'Обновление бота…' : 'Перезапуск бота…';
+        return;
+    }
+    if (botUptimeStartedAt == null) {
+        el.textContent = '';
+        return;
+    }
+    el.textContent = `Бот работает: ${formatBotUptimeDuration(Date.now() - botUptimeStartedAt)}`;
+}
+
+/**
+ * Синхронизирует таймер с /api/server-info (новый pid → сброс)
+ */
+function applyBotUptimeFromServerInfo(info) {
+    if (!info || info.processStartedAt == null || !Number.isFinite(info.processStartedAt)) {
+        return;
+    }
+    const pid = info.pid ?? null;
+    if (pid != null && botUptimePid !== pid) {
+        botUptimePid = pid;
+        botUptimeStartedAt = info.processStartedAt;
+    } else if (botUptimeStartedAt == null) {
+        botUptimePid = pid;
+        botUptimeStartedAt = info.processStartedAt;
+    }
+    renderBotUptimeLabel();
+}
+
+async function refreshBotUptimeFromServer() {
+    const info = await fetchData('/server-info');
+    if (info) {
+        applyBotUptimeFromServerInfo(info);
+    }
+}
+
+function startBotUptimeClock() {
+    if (botUptimeTickTimer) {
+        return;
+    }
+    botUptimeTickTimer = setInterval(renderBotUptimeLabel, 1000);
+    if (!botUptimeSyncTimer) {
+        botUptimeSyncTimer = setInterval(() => {
+            void refreshBotUptimeFromServer();
+        }, BOT_UPTIME_SYNC_MS);
+    }
+    void refreshBotUptimeFromServer();
+}
+
+/**
  * Кнопка «Обновиться» в шапке скрыта — обновление через карточку «Версия»
  */
 async function initAppUpdateButton() {
@@ -510,6 +597,7 @@ async function initProcessControlButtons() {
     const inProgress = info?.dashboardUpdateInProgress === true;
     const blocked = info?.dashboardUpdateBlockedReason;
     syncAutoUpdateToggleUi({ enabled, inProgress });
+    applyBotUptimeFromServerInfo(info);
 
     if (stopBtn) {
         stopBtn.style.display = enabled ? '' : 'none';
@@ -637,6 +725,9 @@ function beginLifecycleWaitUi(mode) {
     lifecycleWaitStartedAt = Date.now();
     lifecycleServerWasDown = false;
     versionCardBusy = true;
+    botUptimePid = null;
+    botUptimeStartedAt = null;
+    renderBotUptimeLabel();
     syncAutoUpdateToggleUi({ inProgress: true });
     const label = mode === 'update' ? 'Обновление' : 'Перезапуск';
     versionUpdateStatus = {
@@ -1056,6 +1147,7 @@ function isServerReadyAfterLifecycle(info) {
     if (lifecycleWaitPreviousPid == null) {
         return false;
     }
+    applyBotUptimeFromServerInfo(info);
     if (hasNewBotPidAfterLifecycle(info.pid)) {
         return true;
     }
@@ -1132,6 +1224,7 @@ async function waitForNewBotApiReady(maxWaitMs = 120_000) {
             await new Promise((r) => setTimeout(r, 1000));
             continue;
         }
+        applyBotUptimeFromServerInfo(info);
         if (
             lifecycleWaitPreviousPid != null &&
             !hasNewBotPidAfterLifecycle(info.pid) &&
@@ -1192,7 +1285,10 @@ async function runReconnectLifecycleTick() {
     const info = await fetchServerInfoForReconnect();
     if (!info?.pid) {
         lifecycleServerWasDown = true;
-    } else if (isServerReadyAfterLifecycle(info)) {
+    } else {
+        applyBotUptimeFromServerInfo(info);
+    }
+    if (info?.pid && isServerReadyAfterLifecycle(info)) {
         const upd = await fetchData(`/app-update-check?_=${Date.now()}`);
         finishLifecycleFromServer(
             upd || null,
@@ -3119,6 +3215,7 @@ function startDashboardCore() {
     checkInitializationStatus();
     initAppUpdateButton();
     initProcessControlButtons();
+    startBotUptimeClock();
     startVersionUpdatePolling();
     startAutoUpdate();
     if (!document.documentElement.dataset.lifecycleVisibilityBound) {
