@@ -3,12 +3,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=termux-common.sh
+source "$(dirname "$0")/termux-common.sh"
 cd "$ROOT"
 
 BRANCH="${DASHBOARD_UPDATE_GIT_BRANCH:-dev}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
-exec >> "$LOG_DIR/dashboard-update.log" 2>&1
+exec >>"$LOG_DIR/dashboard-update.log" 2>&1
 
 echo "========================================"
 echo "  Dashboard update — $(date -Iseconds 2>/dev/null || date)"
@@ -28,20 +30,8 @@ echo "[2/4] run-local.sh --update-only (npm install + build)..."
 bash "$ROOT/run-local.sh" --update-only
 
 echo "[3/4] Stopping current process..."
-PID="${TWITCH_WATCHER_PID:-}"
-if [ -z "$PID" ] && [ -n "${TWITCH_WATCHER_PID_FILE:-}" ] && [ -f "$TWITCH_WATCHER_PID_FILE" ]; then
-  PID="$(cat "$TWITCH_WATCHER_PID_FILE")"
-fi
-if [ -z "$PID" ] && [ -f "$ROOT/.twitch-watcher.pid" ]; then
-  PID="$(cat "$ROOT/.twitch-watcher.pid")"
-fi
-if [ -n "$PID" ]; then
-  kill "$PID" 2>/dev/null || true
-  sleep 2
-  kill -9 "$PID" 2>/dev/null || true
-fi
+kill_bot_process
 
-echo "[4/4] Starting npm start in background..."
-nohup npm start >> "$LOG_DIR/update-restart.log" 2>&1 &
-echo "  New PID: $!"
+echo "[4/4] Starting npm start (Termux wake-lock)..."
+start_bot_background "$LOG_DIR/update-restart.log"
 echo "[DONE] Update complete"
