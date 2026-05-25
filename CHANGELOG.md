@@ -5,6 +5,27 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.6.1] - 2026-05-25
+
+### Добавлено
+- Панель **Bot Health** на дашборде и API `/api/bot-health`
+- Кнопки дашборда: обновление из Git, перезапуск и остановка бота (Termux)
+- Карточка версии: проверка обновлений, единый lifecycle обновления/перезапуска
+- Wake-lock в скриптах Termux при update/restart
+- В шапке: последний стример, вышедший в онлайн, и «сколько назад»
+- Ограничение блока «последние claim» до 5 записей
+
+### Изменено
+- Логирование метрик `/api/overall` при запросах; очистка логов при старте
+- Улучшен UX обновления с дашборда (ожидание нового PID, перезагрузка страницы)
+
+### Исправлено
+- Обновление с дашборда: перезагрузка `termux-common.sh` после `git pull`
+- Метрики в шапке дашборда (Active Watches, Total Points, Streamers)
+- Зависшее «Обновление…», дубли процессов, гарантированная остановка бота
+- Пустая таблица стримеров после update/restart до F5 или события
+- `activeWatches` и `startTime` в overall; refresh UI после полной инициализации
+
 ## [0.6.0] - 2026-05-25
 
 ### Добавлено
@@ -162,6 +183,7 @@
 - Добавлен веб-интерфейс для мониторинга и статистики
 - Добавлена поддержка сохранения статистики в файл
 
+[0.6.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Slimiys/twitch-watcher/compare/v0.5.0...v0.5.1
