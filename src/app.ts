@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { askLogin } from './input';
 import { CookieData, LoginInput, AppConfig } from './types';
+import { getAppVersionLabel } from './appVersion';
 import { logger } from './modes/api/logger';
 import { writeCrashReport } from './processGuards';
 
@@ -179,9 +180,13 @@ async function startAPIMode(): Promise<void> {
  * Главная функция приложения
  */
 async function main(): Promise<void> {
+  const versionLabel = getAppVersionLabel();
   console.clear();
-  console.log("=========================");
-  
+  console.log('=========================');
+  console.log(`📦  Version: ${versionLabel}`);
+  logger.info(`📦  Version: ${versionLabel}`);
+  console.log('=========================');
+
   // Информируем о количестве загруженных стримеров
   if (channelsWithPriority.length > 0) {
     console.log(`✅  Streamers configured: ${channelsWithPriority.join(', ')}`);
@@ -191,6 +196,7 @@ async function main(): Promise<void> {
   console.log("=========================");
   
   logger.verbose(`🔍  Environment check:`);
+  logger.verbose(`   VERSION: ${versionLabel}`);
   logger.verbose(`   MODE: API (only mode available)`);
   const logLevel = (process.env.LOG_LEVEL || 'verbose').toLowerCase();
   logger.verbose(`   LOG_LEVEL: "${logLevel}"`);
