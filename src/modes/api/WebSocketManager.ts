@@ -809,13 +809,13 @@ export class WebSocketManager {
     const videoMessage = messageData as VideoPlaybackMessage;
 
     if (videoMessage.type === 'stream-up') {
-      if (!streamerInfo.isOnline) {
-        streamerInfo.isOnline = true;
+      const wasOnline = streamerInfo.isOnline;
+      streamerInfo.isOnline = true;
+      if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
         streamerInfo.startTime = Date.now();
-        
-        if (this.eventHandlers.onStreamUp) {
-          this.eventHandlers.onStreamUp(streamerInfo);
-        }
+      }
+      if (!wasOnline && this.eventHandlers.onStreamUp) {
+        this.eventHandlers.onStreamUp(streamerInfo);
       }
     } else if (videoMessage.type === 'stream-down') {
       if (streamerInfo.isOnline) {

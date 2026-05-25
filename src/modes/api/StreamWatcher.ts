@@ -91,6 +91,8 @@ export class StreamWatcher {
   private claimHealthByStreamer = new Map<string, StreamerClaimHealth>();
   /** Последняя ошибка integrity при claim */
   private lastIntegrityFailure: { timestamp: number; streamer: string } | null = null;
+  /** Время последней активности бота (minute-watched, баллы) для dashboard */
+  private lastGlobalActivityAt = 0;
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
   private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
@@ -661,6 +663,7 @@ export class StreamWatcher {
     return {
       onPointsEarned: (streamerInfo, points, reason) => {
         logger.info(`🚀  +${points} → ${streamerInfo.username} - Reason: ${reason}`);
+        this.touchGlobalActivity();
 
         let eventType: string;
         if (reason === 'CLAIM') {
@@ -848,6 +851,36 @@ export class StreamWatcher {
       streamerInfo.startTime = now;
       logger.verbose(`⏱️  [${streamerInfo.username}] Новая сессия просмотра`);
     }
+  }
+
+  /**
+   * Гарантирует startTime для онлайн-стримера (счётчик Active Watches в dashboard)
+   */
+  private ensureWatchSessionStarted(streamerInfo: StreamerInfo): void {
+    if (!streamerInfo.isOnline || streamerInfo.startTime > 0) {
+      return;
+    }
+    streamerInfo.startTime = Date.now();
+    logger.verbose(`⏱️  [${streamerInfo.username}] Сессия просмотра: startTime установлен`);
+  }
+
+  /**
+   * Отмечает активность бота (для Last Activity на dashboard)
+   */
+  private touchGlobalActivity(): void {
+    this.lastGlobalActivityAt = Date.now();
+  }
+
+  /**
+   * Количество активных просмотров для /api/overall
+   */
+  getActiveWatchCount(): number {
+    for (const info of this.streamers.values()) {
+      if (info.isOnline && info.startTime <= 0) {
+        this.ensureWatchSessionStarted(info);
+      }
+    }
+    return this.getStatistics(false).length;
   }
 
   /**
@@ -1039,6 +1072,11 @@ export class StreamWatcher {
       return;
     }
 
+    const streamerInfo = this.streamers.get(username);
+    if (streamerInfo) {
+      this.ensureWatchSessionStarted(streamerInfo);
+    }
+
     this.channelWatchActive.add(username);
     logger.verbose(
       `⏱️  [${username}] Таймер minute-watched запущен (интервал ${this.watchCycleIntervalMs}ms)`
@@ -1146,6 +1184,7 @@ export class StreamWatcher {
 
       if (success) {
         logger.info(`✅  [${streamerInfo.username}] Minute watched event sent`);
+        this.touchGlobalActivity();
         if (this.graphqlClient) {
           runSafeAsync(`claim-after-watch-${streamerInfo.username}`, () =>
             this.tryClaimBonusForStreamer(streamerInfo)
@@ -1896,6 +1935,7 @@ export class StreamWatcher {
         };
       },
       getMetrics: async () => {
+        const activeWatches = this.getActiveWatchCount();
         const stats = this.getStatistics();
         const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
         const lastActivity = stats.length > 0 
@@ -1903,7 +1943,7 @@ export class StreamWatcher {
           : 0;
 
         return {
-          activeWatches: stats.length,
+          activeWatches,
           totalPointsEarned,
           lastActivity,
           streamersCount: this.streamers.size
@@ -2240,18 +2280,35 @@ export class StreamWatcher {
     lastActivity: number;
     streamersCount: number;
   } {
-    // Для общей статистики используем только активные просмотры
-    const stats = this.getStatistics(false);
-    const totalPointsEarned = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
-    const lastActivity = stats.length > 0 
-      ? Math.max(...stats.map(s => s.elapsedTime))
-      : 0;
+    const now = Date.now();
+    let totalPointsEarned = 0;
+    let maxWatchElapsed = 0;
+
+    for (const info of this.streamers.values()) {
+      if (info.isOnline) {
+        this.ensureWatchSessionStarted(info);
+        this.syncStreamPointsEarned(info);
+        totalPointsEarned += Math.max(0, info.streamPointsEarned ?? 0);
+        if (info.startTime > 0) {
+          maxWatchElapsed = Math.max(maxWatchElapsed, now - info.startTime);
+        }
+      }
+    }
+
+    const activeWatches = this.getActiveWatchCount();
+
+    let lastActivity = 0;
+    if (this.lastGlobalActivityAt > 0) {
+      lastActivity = now - this.lastGlobalActivityAt;
+    } else if (maxWatchElapsed > 0) {
+      lastActivity = maxWatchElapsed;
+    }
 
     return {
-      activeWatches: stats.length,
+      activeWatches,
       totalPointsEarned,
       lastActivity,
-      streamersCount: this.streamers.size
+      streamersCount: this.streamers.size,
     };
   }
 
@@ -2536,7 +2593,8 @@ export class StreamWatcher {
       // Загружаем данные из базы данных перед добавлением
       this.loadStreamerDataFromDatabase(streamerInfo);
       this.applyPersistedPoints(streamerInfo);
-      
+      this.restoreWatchSessionAfterRestart(streamerInfo);
+
       // Стример успешно инициализирован
       this.streamers.set(normalizedUsername, streamerInfo);
       

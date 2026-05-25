@@ -101,6 +101,16 @@ try {
     lastCurrentPoints = {};
 }
 
+/**
+ * Last Activity с /api/overall (мс с последнего minute-watched / баллов)
+ */
+function formatOverallLastActivity(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) {
+        return '—';
+    }
+    return formatTime(ms);
+}
+
 function formatTime(ms) {
     // Безопасно обрабатываем некорректные значения
     if (!Number.isFinite(ms) || ms < 0) return '-';
@@ -1336,8 +1346,8 @@ async function updateOverallStats() {
             </div>
             <div class="stat-card">
                 <h3>Last Activity</h3>
-                <div class="value" id="lastActivity">${formatTime(stats.lastActivity || 0)}</div>
-                <div class="label">Time ago</div>
+                <div class="value" id="lastActivity">${formatOverallLastActivity(stats.lastActivity)}</div>
+                <div class="label">Since last event</div>
             </div>
         `;
         replaceSkeletonWithContent(statsContainer, newContent);
@@ -1356,7 +1366,7 @@ async function updateOverallStats() {
         
         const lastActivityEl = document.getElementById('lastActivity');
         if (lastActivityEl) {
-            const newValue = formatTime(stats.lastActivity || 0);
+            const newValue = formatOverallLastActivity(stats.lastActivity);
             if (lastActivityEl.textContent !== newValue) {
                 lastActivityEl.classList.add('value-change');
                 lastActivityEl.textContent = newValue;
@@ -1413,6 +1423,7 @@ function hideLoadingScreen() {
     }
     loadingScreen.classList.add('hidden');
     mainContainer.style.display = 'block';
+    void updateAll();
     setTimeout(() => {
         if (loadingScreen.parentNode) {
             loadingScreen.remove();
@@ -1477,7 +1488,10 @@ async function checkInitializationStatus() {
         progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
         
         if (isReady) {
-            setTimeout(hideLoadingScreen, 300);
+            setTimeout(() => {
+                hideLoadingScreen();
+                void updateOverallStats();
+            }, 300);
             return;
         }
 
