@@ -26,6 +26,10 @@ import {
   validateDashboardUpdateRequest,
 } from './appUpdate';
 import { buildAppUpdateStatus } from './appUpdateStatus';
+import {
+  applyWatchSettingsFromApi,
+  readWatchSettingsForApi,
+} from './watchSettingsApi';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -104,6 +108,31 @@ export interface StatisticsProvider {
   /**
    * Получает информацию о токене
    */
+  /**
+   * Снимок настроек minute-watched (режим, интервал, очередь)
+   */
+  getWatchSettingsSnapshot?(): {
+    mode: string;
+    cycleIntervalMs: number;
+    cycleIntervalSec: number;
+    lastSequentialStreamer: string | null;
+    onlineCount: number;
+  };
+
+  /**
+   * Применяет настройки minute-watched без перезапуска процесса
+   */
+  applyWatchSettings?(partial: {
+    cycleIntervalMs?: number;
+    mode?: string;
+  }): {
+    mode: string;
+    cycleIntervalMs: number;
+    cycleIntervalSec: number;
+    lastSequentialStreamer: string | null;
+    onlineCount: number;
+  };
+
   getTokenInfo?(): {
     isValid: boolean;
     expiresAt?: number;
@@ -559,6 +588,30 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error getting aggregated stats:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    // API настроек minute-watched (режим и интервал между каналами)
+    this.app.get('/api/watch-settings', (req: Request, res: Response) => {
+      try {
+        res.json(readWatchSettingsForApi(this.statisticsProvider));
+      } catch (error: any) {
+        logger.error('Error getting watch settings:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/watch-settings', (req: Request, res: Response) => {
+      try {
+        const body = req.body ?? {};
+        const result = applyWatchSettingsFromApi(this.statisticsProvider, {
+          cycleIntervalSec: body.cycleIntervalSec,
+          mode: body.mode,
+        });
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error applying watch settings:', error);
+        res.status(400).json({ error: error.message || 'Unknown error' });
       }
     });
 

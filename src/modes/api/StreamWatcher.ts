@@ -29,6 +29,12 @@ import {
   shouldAutoExitOnInvalidToken,
   shouldAutoExitOnUnhealthy,
 } from './runtimeEnv';
+import {
+  getWatchSettings,
+  WatchMode,
+  WatchSettingsSnapshot,
+  applyWatchSettingsOverrides,
+} from './watchSettings';
 import { logFatalExit } from '../../processGuards';
 
 /**
@@ -99,11 +105,13 @@ export class StreamWatcher {
   private lastOnlineTransition: { username: string; at: number } | null = null;
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
-  private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
-  private watchMode: 'per-channel' | 'batch' =
-    process.env.WATCH_MODE === 'batch' ? 'batch' : 'per-channel';
+  private watchCycleIntervalMs = 60_000;
+  private watchMode: WatchMode = 'sequential';
   private watchAllOnlineChannels = process.env.WATCH_ALL_ONLINE_CHANNELS !== 'false';
   private watchCycleLoopActive = false;
+  private sequentialWatchLoopActive = false;
+  private sequentialRotationIndex = 0;
+  private lastSequentialStreamer: string | null = null;
   private channelWatchActive = new Set<string>();
   private channelWatchInProgress = new Set<string>();
   private claimCheckIntervalMs = parseInt(process.env.CLAIM_CHECK_INTERVAL_MS || '120000', 10);
@@ -158,17 +166,10 @@ export class StreamWatcher {
       logger.warn(`⚠️  MAX_SIMULTANEOUS_CHANNELS больше 10, ограничиваем до 10`);
       this.maxSimultaneousChannels = 10;
     }
-    
+
+    this.syncWatchConfigFromSettings();
     logger.verbose(`📊  Max simultaneous channels: ${this.maxSimultaneousChannels}`);
-    logger.verbose(
-      `📊  Watch mode: ${
-        this.watchMode === 'per-channel'
-          ? `per-channel timers (${this.watchCycleIntervalMs}ms)`
-          : this.watchAllOnlineChannels
-            ? 'batch — all online channels'
-            : `batch rotation (max ${this.maxSimultaneousChannels})`
-      }`
-    );
+    logger.verbose(`📊  Watch mode: ${this.describeWatchMode()}`);
     
     // Инициализируем TokenManager для отслеживания истечения токена
     try {
@@ -495,6 +496,8 @@ export class StreamWatcher {
    */
   stop(): void {
     this.isRunning = false;
+    this.sequentialWatchLoopActive = false;
+    this.watchCycleLoopActive = false;
     this.stopAllChannelWatchTimers();
 
     if (this.watchInterval) {
@@ -740,11 +743,11 @@ export class StreamWatcher {
         const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
         this.addPointsHistory(streamerInfo.username, 0, totalPoints);
         this.savePointsState();
-        this.startChannelWatchTimer(streamerInfo.username);
+        this.manageChannelWatchTimer(streamerInfo.username, true);
       },
       onStreamDown: (streamerInfo) => {
         logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
-        this.stopChannelWatchTimer(streamerInfo.username);
+        this.manageChannelWatchTimer(streamerInfo.username, false);
         this.syncStreamPointsEarned(streamerInfo);
         this.persistLastStreamEnd(streamerInfo.username, Date.now());
         this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
@@ -1059,7 +1062,14 @@ export class StreamWatcher {
    * Запускает отправку событий просмотра и периодическую проверку бонусов
    */
   private startWatching(): void {
-    if (this.watchMode === 'per-channel') {
+    this.syncWatchConfigFromSettings();
+    this.stopAllChannelWatchTimers();
+    this.sequentialWatchLoopActive = false;
+    this.watchCycleLoopActive = false;
+
+    if (this.watchMode === 'sequential') {
+      this.startSequentialWatchLoop();
+    } else if (this.watchMode === 'per-channel') {
       this.syncChannelWatchTimers();
     } else {
       this.startWatchCycleLoop();
@@ -1068,12 +1078,166 @@ export class StreamWatcher {
   }
 
   /**
+   * Синхронизирует поля просмотра с env/runtime настройками
+   */
+  private syncWatchConfigFromSettings(): void {
+    const settings = getWatchSettings();
+    this.watchMode = settings.mode;
+    this.watchCycleIntervalMs = settings.cycleIntervalMs;
+  }
+
+  /**
+   * Текстовое описание режима для логов
+   */
+  private describeWatchMode(): string {
+    if (this.watchMode === 'sequential') {
+      return `sequential rotation (pause ${this.watchCycleIntervalMs}ms between channels)`;
+    }
+    if (this.watchMode === 'per-channel') {
+      return `per-channel timers (${this.watchCycleIntervalMs}ms)`;
+    }
+    if (this.watchAllOnlineChannels) {
+      return 'batch — all online channels';
+    }
+    return `batch rotation (max ${this.maxSimultaneousChannels})`;
+  }
+
+  /**
+   * Перезапускает сервис minute-watched после смены настроек
+   */
+  private restartWatchService(): void {
+    if (!this.isRunning) {
+      return;
+    }
+    this.startWatching();
+  }
+
+  /**
+   * Применяет настройки просмотра (dashboard API)
+   */
+  applyWatchSettings(partial: { cycleIntervalMs?: number; mode?: WatchMode }): WatchSettingsSnapshot {
+    applyWatchSettingsOverrides(partial);
+    this.syncWatchConfigFromSettings();
+    this.restartWatchService();
+    return this.getWatchSettingsSnapshot();
+  }
+
+  /**
+   * Снимок настроек minute-watched для dashboard
+   */
+  getWatchSettingsSnapshot(): WatchSettingsSnapshot {
+    const settings = getWatchSettings();
+    return {
+      ...settings,
+      cycleIntervalSec: Math.round(settings.cycleIntervalMs / 1000),
+      lastSequentialStreamer: this.lastSequentialStreamer,
+      onlineCount: this.getOrderedOnlineStreamers().length,
+    };
+  }
+
+  /**
+   * Онлайн-стримеры в порядке priorityChannels, затем остальные по имени
+   */
+  private getOrderedOnlineStreamers(): StreamerInfo[] {
+    const online = Array.from(this.streamers.values()).filter((s) => s.isOnline);
+    const order = new Map(this.priorityChannels.map((name, index) => [name.toLowerCase(), index]));
+    return online.sort((a, b) => {
+      const ai = order.get(a.username.toLowerCase());
+      const bi = order.get(b.username.toLowerCase());
+      if (ai !== undefined && bi !== undefined) {
+        return ai - bi;
+      }
+      if (ai !== undefined) {
+        return -1;
+      }
+      if (bi !== undefined) {
+        return 1;
+      }
+      return a.username.localeCompare(b.username);
+    });
+  }
+
+  /**
+   * Управляет per-channel таймером только в режиме per-channel
+   */
+  private manageChannelWatchTimer(username: string, isOnline: boolean): void {
+    if (this.watchMode !== 'per-channel') {
+      if (!isOnline) {
+        this.stopChannelWatchTimer(username);
+      }
+      return;
+    }
+    if (isOnline) {
+      this.startChannelWatchTimer(username);
+    } else {
+      this.stopChannelWatchTimer(username);
+    }
+  }
+
+  /**
+   * Запускает sequential-очередь minute-watched (один канал → пауза → следующий)
+   */
+  private startSequentialWatchLoop(): void {
+    if (this.sequentialWatchLoopActive) {
+      return;
+    }
+    this.stopAllChannelWatchTimers();
+    this.sequentialWatchLoopActive = true;
+    logger.info(
+      `📺  Sequential minute-watched: интервал ${Math.round(this.watchCycleIntervalMs / 1000)}s между каналами`
+    );
+    runSafeAsync('minute-watched-sequential', () => this.runSequentialWatchLoop());
+  }
+
+  /**
+   * Цикл: один онлайн-канал за итерацию, затем пауза watchCycleIntervalMs
+   */
+  private async runSequentialWatchLoop(): Promise<void> {
+    while (this.isRunning && this.sequentialWatchLoopActive) {
+      this.syncWatchConfigFromSettings();
+      if (this.watchMode !== 'sequential') {
+        this.sequentialWatchLoopActive = false;
+        break;
+      }
+
+      const online = this.getOrderedOnlineStreamers();
+      if (online.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.watchCycleIntervalMs));
+        continue;
+      }
+
+      const position = this.sequentialRotationIndex % online.length;
+      const streamer = online[position];
+      const nextPosition = (position + 1) % online.length;
+      const nextUsername = online[nextPosition]?.username ?? '—';
+      this.lastSequentialStreamer = streamer.username;
+
+      const pauseSec = Math.round(this.watchCycleIntervalMs / 1000);
+      logger.info(
+        `📺  [sequential] ${position + 1}/${online.length}: ${streamer.username} → пауза ${pauseSec}s → ${nextUsername}`
+      );
+
+      await this.sendMinuteWatchedForStreamer(streamer);
+      this.sequentialRotationIndex = nextPosition;
+
+      if (!this.isRunning || !this.sequentialWatchLoopActive) {
+        break;
+      }
+
+      logger.verbose(`⏱️  [sequential] Пауза ${pauseSec}s до ${nextUsername}`);
+      await new Promise((resolve) => setTimeout(resolve, this.watchCycleIntervalMs));
+    }
+
+    this.sequentialWatchLoopActive = false;
+  }
+
+  /**
    * Запускает таймеры minute-watched для всех текущих онлайн-каналов
    */
   private syncChannelWatchTimers(): void {
     for (const streamerInfo of this.streamers.values()) {
       if (streamerInfo.isOnline) {
-        this.startChannelWatchTimer(streamerInfo.username);
+        this.manageChannelWatchTimer(streamerInfo.username, true);
       }
     }
   }
@@ -1727,11 +1891,11 @@ export class StreamWatcher {
           const stats = this.getStatistics();
           const totalPoints = stats.reduce((sum, stat) => sum + stat.pointsEarned, 0);
           this.addPointsHistory(streamerInfo.username, 0, totalPoints);
-          this.startChannelWatchTimer(streamerInfo.username);
+          this.manageChannelWatchTimer(streamerInfo.username, true);
         } else if (wasOnline && !streamerInfo.isOnline) {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
-          this.stopChannelWatchTimer(streamerInfo.username);
+          this.manageChannelWatchTimer(streamerInfo.username, false);
           streamerInfo.startTime = 0;
           this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
@@ -2647,7 +2811,7 @@ export class StreamWatcher {
           );
           this.activeSessions.set(streamerInfo.username, sessionId);
         }
-        this.startChannelWatchTimer(streamerInfo.username);
+        this.manageChannelWatchTimer(streamerInfo.username, true);
       } else {
         logger.info(`😴  [${normalizedUsername}] Added - OFFLINE`);
       }
@@ -2680,7 +2844,7 @@ export class StreamWatcher {
     try {
       logger.info(`➖  Removing streamer: ${normalizedUsername}`);
       
-      this.stopChannelWatchTimer(normalizedUsername);
+      this.manageChannelWatchTimer(normalizedUsername, false);
 
       const streamerInfo = this.streamers.get(normalizedUsername);
       

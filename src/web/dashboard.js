@@ -3457,9 +3457,94 @@ function testSoundNotification(isOnline) {
 }
 
 /**
+ * Загружает настройки minute-watched с бота
+ */
+async function loadWatchSettingsIntoForm() {
+    const hint = document.getElementById('watchSettingsHint');
+    const modeSelect = document.getElementById('watchModeSetting');
+    const intervalInput = document.getElementById('watchCycleIntervalSetting');
+    if (!modeSelect || !intervalInput) {
+        return;
+    }
+
+    const data = await fetchData('/api/watch-settings');
+    if (!data) {
+        if (hint) {
+            hint.textContent = 'Не удалось загрузить настройки просмотра с сервера.';
+        }
+        return;
+    }
+
+    modeSelect.value = data.mode || 'sequential';
+    intervalInput.value = String(data.cycleIntervalSec ?? 60);
+    if (data.minCycleIntervalSec != null) {
+        intervalInput.min = String(data.minCycleIntervalSec);
+    }
+    if (data.maxCycleIntervalSec != null) {
+        intervalInput.max = String(data.maxCycleIntervalSec);
+    }
+
+    updateWatchSettingsHint(data);
+}
+
+/**
+ * Обновляет подсказку по режиму minute-watched
+ */
+function updateWatchSettingsHint(data) {
+    const hint = document.getElementById('watchSettingsHint');
+    if (!hint || !data) {
+        return;
+    }
+
+    const sec = data.cycleIntervalSec ?? 60;
+    const online = data.onlineCount ?? 0;
+    const last = data.lastSequentialStreamer;
+
+    if (data.mode === 'sequential') {
+        const cycleMin = online > 0 ? Math.round((online * sec) / 60) : 0;
+        const queue = last ? ` Сейчас в очереди: ${last}.` : '';
+        hint.textContent =
+            `Один канал за раз, пауза ${sec} с между отправками. Онлайн: ${online}.` +
+            (online > 0 ? ` Полный круг ≈ ${cycleMin} мин.${queue}` : ' Нет онлайн-каналов.');
+    } else if (data.mode === 'per-channel') {
+        hint.textContent =
+            `Отдельный таймер на каждый онлайн-канал (интервал ${sec} с). Онлайн: ${online}.`;
+    } else {
+        hint.textContent = `Пакетный режим (batch). Интервал цикла: ${sec} с.`;
+    }
+}
+
+/**
+ * Сохраняет настройки minute-watched на сервере (.env + runtime)
+ */
+async function saveWatchSettingsFromForm() {
+    const modeSelect = document.getElementById('watchModeSetting');
+    const intervalInput = document.getElementById('watchCycleIntervalSetting');
+    if (!modeSelect || !intervalInput) {
+        return { ok: true };
+    }
+
+    const cycleIntervalSec = parseInt(intervalInput.value, 10);
+    if (!Number.isFinite(cycleIntervalSec)) {
+        return { ok: false, message: 'Укажите корректный интервал в секундах' };
+    }
+
+    const result = await postApi('/api/watch-settings', {
+        mode: modeSelect.value,
+        cycleIntervalSec,
+    });
+
+    if (result.ok && result.data) {
+        updateWatchSettingsHint(result.data);
+    }
+
+    return result;
+}
+
+/**
  * Показывает панель настроек
  */
-function showSettingsModal() {
+async function showSettingsModal() {
     const modal = document.getElementById('settingsModal');
     if (!modal) return;
     
@@ -3496,6 +3581,8 @@ function showSettingsModal() {
         }
     }
     
+    void loadWatchSettingsIntoForm();
+
     modal.style.display = 'flex';
     bindModalOverlayClose(modal, closeSettingsModal);
 
@@ -3551,8 +3638,16 @@ async function saveSettings() {
     
     saveSettingsToStorage(settings);
     applySettings(settings);
+
+    const watchResult = await saveWatchSettingsFromForm();
+    if (!watchResult.ok) {
+        showNotification('error', watchResult.message || 'Не удалось сохранить настройки просмотра');
+        return;
+    }
+
     closeSettingsModal();
-    showNotification('success', 'Настройки сохранены');
+    const watchMsg = watchResult.data?.message;
+    showNotification('success', watchMsg ? `Настройки сохранены. ${watchMsg}` : 'Настройки сохранены');
 }
 
 /**

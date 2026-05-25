@@ -10,7 +10,7 @@
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="dashboard.css?v=5">
-    <script src="dashboard.js?v=28" defer></script>
+    <script src="dashboard.js?v=29" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -397,6 +397,25 @@
                     </p>
                 </div>
                 
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Просмотр (minute-watched)</h4>
+                    <div class="settings-item">
+                        <label class="settings-label" for="watchModeSetting">Режим отправки:</label>
+                        <select id="watchModeSetting" class="settings-select">
+                            <option value="sequential">По очереди (рекомендуется)</option>
+                            <option value="per-channel">На каждый канал параллельно</option>
+                            <option value="batch">Пакет / ротация</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-label" for="watchCycleIntervalSetting">Пауза между каналами (сек):</label>
+                        <input type="number" id="watchCycleIntervalSetting" class="settings-select" style="width: 100%;" min="15" max="600" step="1" value="60">
+                    </div>
+                    <p class="settings-hint" id="watchSettingsHint" style="color: #adadb8; font-size: 12px; margin: 0;">
+                        Загрузка настроек с сервера…
+                    </p>
+                </div>
+
                 <div class="settings-section">
                     <h4 class="settings-section-title">API</h4>
                     <div class="settings-item">
