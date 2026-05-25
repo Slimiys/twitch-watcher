@@ -102,13 +102,16 @@ try {
 }
 
 /**
- * Last Activity с /api/overall (мс с последнего minute-watched / баллов)
+ * Last Activity: последний стример, перешедший в онлайн, и сколько времени назад
+ * @param {{ lastActivity?: number, lastOnlineStreamer?: string|null }} stats
  */
-function formatOverallLastActivity(ms) {
-    if (!Number.isFinite(ms) || ms <= 0) {
+function formatOverallLastActivity(stats) {
+    const streamer = stats?.lastOnlineStreamer;
+    const ms = stats?.lastActivity;
+    if (!streamer || !Number.isFinite(ms) || ms <= 0) {
         return '—';
     }
-    return formatTime(ms);
+    return `${streamer} · ${formatTime(ms)} ago`;
 }
 
 function formatTime(ms) {
@@ -1402,7 +1405,9 @@ let previousStats = {
     activeWatches: 0,
     totalPointsEarned: 0,
     streamersCount: 0,
-    lastActivity: 0
+    lastActivity: 0,
+    lastOnlineStreamer: null,
+    lastActivityLabel: '—',
 };
 
 /**
@@ -1437,7 +1442,7 @@ function applyOverallStatsToDom(stats) {
         streamersEl.textContent = (stats.streamersCount || 0).toLocaleString();
     }
     if (activityEl) {
-        activityEl.textContent = formatOverallLastActivity(stats.lastActivity);
+        activityEl.textContent = formatOverallLastActivity(stats);
     }
 }
 
@@ -1493,10 +1498,10 @@ async function updateOverallStats() {
                 </div>
             </div>
             <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)"><span>Last Activity</span></h3>
+                <h3 onclick="toggleCard(this)"><span>Last Online</span></h3>
                 <div class="stat-card-content">
-                    <div class="value" id="lastActivity">${formatOverallLastActivity(stats.lastActivity)}</div>
-                    <div class="label">Since last event</div>
+                    <div class="value" id="lastActivity">${formatOverallLastActivity(stats)}</div>
+                    <div class="label">Last streamer went live</div>
                 </div>
             </div>
         `;
@@ -1518,7 +1523,7 @@ async function updateOverallStats() {
             (statsContainer && statsContainer.querySelector('#lastActivity')) ||
             document.getElementById('lastActivity');
         if (lastActivityEl) {
-            const newValue = formatOverallLastActivity(stats.lastActivity);
+            const newValue = formatOverallLastActivity(stats);
             if (lastActivityEl.textContent !== newValue) {
                 lastActivityEl.classList.add('value-change');
                 lastActivityEl.textContent = newValue;
@@ -1535,11 +1540,14 @@ async function updateOverallStats() {
     updateStaleDataIndicator('overall', statsContainer);
 
     // Сохраняем текущие значения
+    const lastActivityLabel = formatOverallLastActivity(stats);
     previousStats = {
         activeWatches: stats.activeWatches || 0,
         totalPointsEarned: stats.totalPointsEarned || 0,
         streamersCount: stats.streamersCount || 0,
-        lastActivity: stats.lastActivity || 0
+        lastActivity: stats.lastActivity || 0,
+        lastOnlineStreamer: stats.lastOnlineStreamer || null,
+        lastActivityLabel,
     };
 }
 

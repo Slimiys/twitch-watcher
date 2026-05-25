@@ -61,6 +61,7 @@ export interface StatisticsProvider {
     activeWatches: number;
     totalPointsEarned: number;
     lastActivity: number;
+    lastOnlineStreamer: string | null;
     streamersCount: number;
   };
 
@@ -436,7 +437,7 @@ export class WebServer {
 
         const stats = this.statisticsProvider.getOverallStats();
         logger.verbose(
-          `GET /api/overall: activeWatches=${stats.activeWatches} totalPoints=${stats.totalPointsEarned} streamers=${stats.streamersCount} lastActivityMs=${stats.lastActivity}`
+          `GET /api/overall: activeWatches=${stats.activeWatches} totalPoints=${stats.totalPointsEarned} streamers=${stats.streamersCount} lastOnline=${stats.lastOnlineStreamer ?? '—'} agoMs=${stats.lastActivity}`
         );
         res.json(stats);
       } catch (error: any) {

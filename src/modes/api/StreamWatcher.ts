@@ -91,8 +91,10 @@ export class StreamWatcher {
   private claimHealthByStreamer = new Map<string, StreamerClaimHealth>();
   /** Последняя ошибка integrity при claim */
   private lastIntegrityFailure: { timestamp: number; streamer: string } | null = null;
-  /** Время последней активности бота (minute-watched, баллы) для dashboard */
+  /** Время последней активности бота (minute-watched, баллы) */
   private lastGlobalActivityAt = 0;
+  /** Последний переход стримера в онлайн (для Last Activity на dashboard) */
+  private lastOnlineTransition: { username: string; at: number } | null = null;
   private watchPrepIntervalMs = parseInt(process.env.WATCH_PREP_INTERVAL_MS || '300000', 10);
   private watchOpTimeoutMs = parseInt(process.env.WATCH_OPERATION_TIMEOUT_MS || '10000', 10);
   private watchCycleIntervalMs = parseInt(process.env.WATCH_CYCLE_INTERVAL_MS || '60000', 10);
@@ -705,8 +707,10 @@ export class StreamWatcher {
         this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
       onStreamUp: async (streamerInfo) => {
         logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
+        const onlineAt = Date.now();
+        this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
         this.resetStreamSessionPoints(streamerInfo);
-        streamerInfo.startTime = Date.now();
+        streamerInfo.startTime = onlineAt;
         this.persistLastStreamStart(streamerInfo.username, streamerInfo.startTime);
         this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
 
@@ -865,10 +869,17 @@ export class StreamWatcher {
   }
 
   /**
-   * Отмечает активность бота (для Last Activity на dashboard)
+   * Отмечает активность бота (minute-watched, баллы)
    */
   private touchGlobalActivity(): void {
     this.lastGlobalActivityAt = Date.now();
+  }
+
+  /**
+   * Запоминает переход стримера в онлайн для Last Activity на dashboard
+   */
+  private recordLastOnlineTransition(username: string, at: number = Date.now()): void {
+    this.lastOnlineTransition = { username, at };
   }
 
   /**
@@ -1493,12 +1504,15 @@ export class StreamWatcher {
    * Логирует сводку метрик дашборда (Active Watches, Total Points, Streamers, Last Activity).
    */
   private logOverallDashboardStats(): void {
-    const { activeWatches, totalPointsEarned, streamersCount, lastActivity } = this.getOverallStats();
-    const lastActivityLabel =
-      lastActivity > 0 ? `${formatElapsedTime(lastActivity)} ago` : '—';
+    const { activeWatches, totalPointsEarned, streamersCount, lastActivity, lastOnlineStreamer } =
+      this.getOverallStats();
+    let lastActivityLabel = '—';
+    if (lastOnlineStreamer && lastActivity > 0) {
+      lastActivityLabel = `${lastOnlineStreamer} · ${formatElapsedTime(lastActivity)} ago`;
+    }
 
     logger.important(
-      `📊  Dashboard: Active Watches=${activeWatches} | Total Points=+${totalPointsEarned} | Streamers=${streamersCount} | Last Activity=${lastActivityLabel}`
+      `📊  Dashboard: Active Watches=${activeWatches} | Total Points=+${totalPointsEarned} | Streamers=${streamersCount} | Last Online=${lastActivityLabel}`
     );
   }
 
@@ -1679,8 +1693,9 @@ export class StreamWatcher {
         if (!wasOnline && streamerInfo.isOnline) {
           // Стример перешел из офлайн в онлайн
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
-          this.resetStreamSessionPoints(streamerInfo);
           const streamStartTime = Date.now();
+          this.recordLastOnlineTransition(streamerInfo.username, streamStartTime);
+          this.resetStreamSessionPoints(streamerInfo);
           streamerInfo.startTime = streamStartTime;
           this.persistLastStreamStart(streamerInfo.username, streamStartTime);
           
@@ -2292,36 +2307,34 @@ export class StreamWatcher {
     activeWatches: number;
     totalPointsEarned: number;
     lastActivity: number;
+    lastOnlineStreamer: string | null;
     streamersCount: number;
   } {
     const now = Date.now();
     let totalPointsEarned = 0;
-    let maxWatchElapsed = 0;
 
     for (const info of this.streamers.values()) {
       if (info.isOnline) {
         this.ensureWatchSessionStarted(info);
         this.syncStreamPointsEarned(info);
         totalPointsEarned += Math.max(0, info.streamPointsEarned ?? 0);
-        if (info.startTime > 0) {
-          maxWatchElapsed = Math.max(maxWatchElapsed, now - info.startTime);
-        }
       }
     }
 
     const activeWatches = this.getActiveWatchCount();
 
     let lastActivity = 0;
-    if (this.lastGlobalActivityAt > 0) {
-      lastActivity = now - this.lastGlobalActivityAt;
-    } else if (maxWatchElapsed > 0) {
-      lastActivity = maxWatchElapsed;
+    let lastOnlineStreamer: string | null = null;
+    if (this.lastOnlineTransition) {
+      lastOnlineStreamer = this.lastOnlineTransition.username;
+      lastActivity = Math.max(0, now - this.lastOnlineTransition.at);
     }
 
     return {
       activeWatches,
       totalPointsEarned,
       lastActivity,
+      lastOnlineStreamer,
       streamersCount: this.streamers.size,
     };
   }

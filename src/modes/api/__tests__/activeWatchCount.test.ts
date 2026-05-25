@@ -71,13 +71,20 @@ describe('getActiveWatchCount', () => {
     const offline = onlineWithoutStartTime('c');
     offline.isOnline = false;
     (watcher as any).streamers.set('c', offline);
-    (watcher as any).lastGlobalActivityAt = Date.now() - 30_000;
+    (watcher as any).recordLastOnlineTransition('b', Date.now() - 30_000);
 
     const overall = watcher.getOverallStats();
     expect(overall.streamersCount).toBe(3);
     expect(overall.activeWatches).toBe(2);
     expect(overall.totalPointsEarned).toBe(20);
+    expect(overall.lastOnlineStreamer).toBe('b');
     expect(overall.lastActivity).toBeGreaterThan(0);
+  });
+
+  it('lastOnlineStreamer null до первого перехода в онлайн', () => {
+    const overall = watcher.getOverallStats();
+    expect(overall.lastOnlineStreamer).toBeNull();
+    expect(overall.lastActivity).toBe(0);
   });
 
   it('startChannelWatchTimer выставляет startTime для онлайн без сессии', () => {
