@@ -1224,7 +1224,12 @@ function formatHealthTimeAgo(timestamp) {
     if (!timestamp) {
         return '—';
     }
-    return formatHealthDuration(Date.now() - timestamp) + ' назад';
+    const elapsed = Date.now() - timestamp;
+    // «истёк» из formatHealthDuration — для сроков действия, не для «назад»
+    if (elapsed < 5000) {
+        return 'только что';
+    }
+    return formatHealthDuration(elapsed) + ' назад';
 }
 
 function healthStatusDotClass(kind) {
