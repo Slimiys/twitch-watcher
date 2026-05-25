@@ -18,6 +18,10 @@ export interface AppUpdateCheckResult {
   remoteRevision: string | null;
   localRevisionFull: string;
   remoteRevisionFull: string | null;
+  /** ISO 8601 — дата коммита локального HEAD */
+  localRevisionCommittedAt: string | null;
+  /** ISO 8601 — дата коммита на remote (если объект известен локально) */
+  remoteRevisionCommittedAt: string | null;
   updateAvailable: boolean;
   checkStatus: AppUpdateCheckStatus;
   checkedAt: number;
@@ -77,6 +81,10 @@ export function checkAppUpdateAvailable(forceRefresh = false): AppUpdateCheckRes
 
     const remoteFull = resolveRemoteBranchRevisionFull(projectRoot, remote, branch);
     const remoteRevision = remoteFull ? shortenRevision(remoteFull) : null;
+    const localRevisionCommittedAt = resolveCommitCommittedAt(projectRoot, localRevisionFull);
+    const remoteRevisionCommittedAt = remoteFull
+      ? resolveCommitCommittedAt(projectRoot, remoteFull)
+      : null;
 
     const updateAvailable =
       remoteFull != null &&
@@ -92,6 +100,8 @@ export function checkAppUpdateAvailable(forceRefresh = false): AppUpdateCheckRes
       remoteRevision,
       localRevisionFull,
       remoteRevisionFull: remoteFull,
+      localRevisionCommittedAt,
+      remoteRevisionCommittedAt,
       updateAvailable,
       checkStatus,
       checkedAt: now,
@@ -107,6 +117,8 @@ export function checkAppUpdateAvailable(forceRefresh = false): AppUpdateCheckRes
       remoteRevision: null,
       localRevisionFull: fallback.revision,
       remoteRevisionFull: null,
+      localRevisionCommittedAt: null,
+      remoteRevisionCommittedAt: null,
       updateAvailable: false,
       checkStatus: 'error',
       checkedAt: now,
@@ -139,12 +151,33 @@ function buildSkipped(
     remoteRevision: null,
     localRevisionFull: localRevision,
     remoteRevisionFull: null,
+    localRevisionCommittedAt: null,
+    remoteRevisionCommittedAt: null,
     updateAvailable: false,
     checkStatus: 'skipped',
     checkedAt: Date.now(),
     error: null,
     checkSkippedReason: reason,
   };
+}
+
+/**
+ * Дата коммита в ISO 8601 (git show)
+ */
+function resolveCommitCommittedAt(root: string, revision: string): string | null {
+  if (!revision || revision === 'unknown') {
+    return null;
+  }
+  try {
+    const iso = execFileSync('git', ['show', '-s', '--format=%cI', revision], {
+      encoding: 'utf8',
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return iso || null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveLocalHeadRevision(root: string): { full: string; short: string } | null {

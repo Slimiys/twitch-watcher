@@ -38,6 +38,12 @@ let lastEventCheckTimestamp = 0; // Timestamp последнего провер�
 /** Полное обновление UI после инициализации уже выполнено */
 let applicationDataRefreshStarted = false;
 let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
+/** Автоустановка при обнаружении обновления (без подтверждения и toast) */
+let dashboardAutoUpdateEnabled = safeGetLocalStorage('dashboardAutoUpdateEnabled') === 'true';
+/** Уже запущено автообновление на эту remote-ревизию (не дублировать) */
+let autoUpdateTriggeredForRevision = null;
+/** dashboardUpdateEnabled с последнего server-info */
+let dashboardUpdateFeatureEnabled = false;
 
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
@@ -500,8 +506,10 @@ async function initProcessControlButtons() {
 
     const info = await fetchData('/server-info');
     const enabled = info?.dashboardUpdateEnabled === true;
+    dashboardUpdateFeatureEnabled = enabled;
     const inProgress = info?.dashboardUpdateInProgress === true;
     const blocked = info?.dashboardUpdateBlockedReason;
+    syncAutoUpdateToggleUi({ enabled, inProgress });
 
     if (stopBtn) {
         stopBtn.style.display = enabled ? '' : 'none';
@@ -629,6 +637,7 @@ function beginLifecycleWaitUi(mode) {
     lifecycleWaitStartedAt = Date.now();
     lifecycleServerWasDown = false;
     versionCardBusy = true;
+    syncAutoUpdateToggleUi({ inProgress: true });
     const label = mode === 'update' ? 'Обновление' : 'Перезапуск';
     versionUpdateStatus = {
         ...(versionUpdateStatus || {}),
@@ -676,7 +685,88 @@ async function pollVersionUpdateStatus(forceRefresh = false) {
     if (lastBotHealthForVersion) {
         patchBotHealthVersionCard(lastBotHealthForVersion);
     }
+    syncAutoUpdateToggleUi({
+        enabled: data.dashboardUpdateEnabled === true,
+        inProgress: data.dashboardUpdateInProgress === true,
+    });
+    maybeTriggerAutoAppUpdate(data);
     return data;
+}
+
+/**
+ * Состояние переключателя «Автообновление» в шапке
+ */
+function syncAutoUpdateToggleUi(opts = {}) {
+    const toggle = document.getElementById('dashboardAutoUpdateToggle');
+    const wrap = document.getElementById('autoUpdateToggleControl');
+    if (!toggle) {
+        return;
+    }
+
+    const featureEnabled =
+        opts.enabled !== undefined ? opts.enabled : dashboardUpdateFeatureEnabled;
+    const inProgress =
+        opts.inProgress !== undefined
+            ? opts.inProgress
+            : versionUpdateStatus?.dashboardUpdateInProgress === true;
+
+    toggle.disabled = !featureEnabled || !!lifecycleWaitMode || !!inProgress;
+    if (wrap) {
+        wrap.title = !featureEnabled
+            ? 'Нужен DASHBOARD_UPDATE_ENABLED=true в .env'
+            : 'При обнаружении обновления установка запустится без подтверждения';
+    }
+}
+
+/**
+ * Инициализация переключателя автообновления
+ */
+function initAutoUpdateToggle() {
+    const toggle = document.getElementById('dashboardAutoUpdateToggle');
+    if (!toggle || toggle.dataset.bound === '1') {
+        return;
+    }
+    toggle.dataset.bound = '1';
+    toggle.checked = dashboardAutoUpdateEnabled;
+    toggle.addEventListener('change', (e) => {
+        dashboardAutoUpdateEnabled = e.target.checked;
+        safeSetLocalStorage('dashboardAutoUpdateEnabled', dashboardAutoUpdateEnabled.toString());
+        if (!dashboardAutoUpdateEnabled) {
+            autoUpdateTriggeredForRevision = null;
+        }
+    });
+    syncAutoUpdateToggleUi();
+}
+
+/**
+ * Запускает обновление без диалогов, если включено автообновление
+ */
+function maybeTriggerAutoAppUpdate(st) {
+    if (!dashboardAutoUpdateEnabled) {
+        return;
+    }
+    if (lifecycleWaitMode || versionCardBusy) {
+        return;
+    }
+    if (!st?.updateAvailable || st.uiState !== 'available') {
+        if (st?.checkStatus === 'current' || st?.uiState === 'current') {
+            autoUpdateTriggeredForRevision = null;
+        }
+        return;
+    }
+    if (!st.dashboardUpdateEnabled || !st.dashboardUpdateCanTrigger) {
+        return;
+    }
+
+    const target = st.remoteRevisionFull || st.remoteRevision;
+    if (!target || autoUpdateTriggeredForRevision === target) {
+        return;
+    }
+
+    autoUpdateTriggeredForRevision = target;
+    versionCardBusy = true;
+    setLifecycleHeaderText('Автообновление…');
+    void triggerDashboardAppUpdate({ silent: true });
 }
 
 function versionCardDotKind(uiState) {
@@ -694,6 +784,36 @@ function versionCardDotKind(uiState) {
         default:
             return 'ok';
     }
+}
+
+/**
+ * Форматирует ISO-дату коммита для отображения (ru-RU)
+ */
+function formatCommitDateTime(iso) {
+    if (!iso) {
+        return '';
+    }
+    try {
+        return new Intl.DateTimeFormat('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        }).format(new Date(iso));
+    } catch {
+        return iso;
+    }
+}
+
+/**
+ * Строка «ревизия · дата» для карточки версии
+ */
+function formatRevisionWithCommitDate(revision, committedAtIso) {
+    const rev = revision || '—';
+    const when = formatCommitDateTime(committedAtIso);
+    return when ? `${rev} · ${when}` : rev;
 }
 
 /**
@@ -721,15 +841,22 @@ function renderVersionHealthCard(health) {
         valueHtml += '<span class="bot-health-update-badge">NEW</span>';
     }
 
+    const localRev = st?.localRevision || health.gitRevision || '—';
     const detailParts = [
         `<span class="version-status-pill version-status-pill--${uiState}">${escapeHtml(indicatorLabel)}</span>`,
-        `Локально: git ${escapeHtml(health.gitRevision || st?.localRevision || '—')}`,
+        `Локально: <strong>${escapeHtml(localRev)}</strong>` +
+            (st?.localRevisionCommittedAt
+                ? ` · ${escapeHtml(formatCommitDateTime(st.localRevisionCommittedAt))}`
+                : ''),
     ];
 
-    if (st?.remoteRevision && uiState === 'available') {
+    if (st?.remoteRevision) {
+        const remoteWhen = st.remoteRevisionCommittedAt
+            ? ` · ${escapeHtml(formatCommitDateTime(st.remoteRevisionCommittedAt))}`
+            : '';
         detailParts.push(
             `${escapeHtml(st.remote || 'origin')}/${escapeHtml(st.branch || 'dev')}: ` +
-                `<strong>${escapeHtml(st.remoteRevision)}</strong>`
+                `<strong>${escapeHtml(st.remoteRevision)}</strong>${remoteWhen}`
         );
     }
     if (st?.error) {
@@ -846,7 +973,8 @@ function promptInstallAppUpdate(st) {
         if (typeof showNotification === 'function') {
             showNotification(
                 'warn',
-                `На ${st.remote}/${st.branch} есть ${st.remoteRevision}. Включите DASHBOARD_UPDATE_ENABLED=true в .env`
+                `На ${st.remote}/${st.branch} есть ${formatRevisionWithCommitDate(st.remoteRevision, st.remoteRevisionCommittedAt)}. ` +
+                    'Включите DASHBOARD_UPDATE_ENABLED=true в .env'
             );
         }
         return;
@@ -861,7 +989,9 @@ function promptInstallAppUpdate(st) {
 
     showConfirmModal(
         'Обновить до последней версии dev?',
-        `Будет выполнено: git fetch → reset на origin/${st.branch} (${st.remoteRevision}) → ` +
+        `Локально: ${formatRevisionWithCommitDate(st.localRevision, st.localRevisionCommittedAt)}.\n` +
+            `На ${st.remote}/${st.branch}: ${formatRevisionWithCommitDate(st.remoteRevision, st.remoteRevisionCommittedAt)}.\n\n` +
+            `Будет выполнено: git fetch → reset на origin/${st.branch} → ` +
             'npm install → build → перезапуск. Локальные изменения в репозитории будут сброшены. ' +
             'Дашборд отключится на 1–3 минуты. Продолжить?',
         () => triggerDashboardAppUpdate()
@@ -1135,8 +1265,13 @@ function stopDashboardReconnectWatch() {
     }
 }
 
-async function triggerDashboardAppUpdate() {
-    if (typeof showNotification === 'function') {
+/**
+ * @param {{ silent?: boolean }} [options] silent — без toast (автообновление)
+ */
+async function triggerDashboardAppUpdate(options = {}) {
+    const silent = options.silent === true;
+
+    if (!silent && typeof showNotification === 'function') {
         showNotification('info', 'Запуск обновления…');
     }
 
@@ -1144,17 +1279,24 @@ async function triggerDashboardAppUpdate() {
     const result = await postApi('/app-update', {});
 
     if (result.ok) {
-        if (typeof showNotification === 'function') {
+        if (!silent && typeof showNotification === 'function') {
             showNotification('success', result.message);
         }
         beginLifecycleWaitUi('update');
         startDashboardReconnectWatch('Обновление завершено. Перезагрузка страницы…', 'update');
     } else {
+        if (silent) {
+            autoUpdateTriggeredForRevision = null;
+            versionCardBusy = false;
+        }
         resetDashboardLifecycleUi('Disconnected');
-        if (typeof showNotification === 'function') {
-            showNotification('error', result.message || 'Не удалось запустить обновление');
-        } else {
-            alert(result.message || 'Не удалось запустить обновление');
+        syncAutoUpdateToggleUi();
+        if (!silent) {
+            if (typeof showNotification === 'function') {
+                showNotification('error', result.message || 'Не удалось запустить обновление');
+            } else {
+                alert(result.message || 'Не удалось запустить обновление');
+            }
         }
     }
 }
@@ -3051,6 +3193,8 @@ window.addEventListener('load', () => {
             updateStatistics(); // Обновляем таблицу для применения цветов
         });
     }
+
+    initAutoUpdateToggle();
     
     // Обработчик для кнопки настроек
     const testBtn = document.getElementById('testBtn');

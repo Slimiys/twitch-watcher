@@ -83,12 +83,32 @@ function resolveUiState(check: AppUpdateCheckResult): AppUpdateUiState {
   return 'current';
 }
 
+/** Краткая дата/время для подписи (ru-RU) */
+function formatRevisionDateShort(iso: string | null): string | null {
+  if (!iso) {
+    return null;
+  }
+  try {
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return null;
+  }
+}
+
 function resolveIndicatorLabel(check: AppUpdateCheckResult, uiState: AppUpdateUiState): string {
   switch (uiState) {
     case 'available':
-      return check.remoteRevision
-        ? `Доступно: ${check.remoteRevision}`
-        : 'Доступно обновление';
+      if (check.remoteRevision) {
+        const when = formatRevisionDateShort(check.remoteRevisionCommittedAt);
+        return when ? `Доступно: ${check.remoteRevision} (${when})` : `Доступно: ${check.remoteRevision}`;
+      }
+      return 'Доступно обновление';
     case 'current':
       return 'Актуальная версия';
     case 'error':

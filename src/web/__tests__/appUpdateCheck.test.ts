@@ -28,6 +28,8 @@ vi.mock('fs', () => ({
 
 const LOCAL_FULL = 'aaa111bbb222cccddd444eee5555555555555555';
 const REMOTE_FULL = 'bbb222ccc333ddd444eee555555555555555555';
+const LOCAL_DATE = '2026-05-20T14:30:00+03:00';
+const REMOTE_DATE = '2026-05-22T18:45:00+03:00';
 
 describe('appUpdateCheck', () => {
   const envBackup = { ...process.env };
@@ -61,6 +63,14 @@ describe('appUpdateCheck', () => {
       if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === '--short=12' && argv[2]) {
         return 'bbb222ccc333';
       }
+      if (cmd === 'git' && argv[0] === 'show' && argv[1] === '-s' && argv[2] === '--format=%cI') {
+        if (argv[3] === LOCAL_FULL) {
+          return LOCAL_DATE;
+        }
+        if (argv[3] === REMOTE_FULL) {
+          return REMOTE_DATE;
+        }
+      }
       return '';
     });
 
@@ -75,6 +85,8 @@ describe('appUpdateCheck', () => {
     expect(result.checkStatus).toBe('available');
     expect(result.remoteRevisionFull).toBe(REMOTE_FULL);
     expect(result.branch).toBe('dev');
+    expect(result.localRevisionCommittedAt).toBe(LOCAL_DATE);
+    expect(result.remoteRevisionCommittedAt).toBe(REMOTE_DATE);
   });
 
   it('updateAvailable false при совпадении', () => {
@@ -90,6 +102,9 @@ describe('appUpdateCheck', () => {
       if (cmd === 'git' && argv[0] === 'rev-parse' && argv[1] === '--short=12') {
         return 'aaa111bbb222';
       }
+      if (cmd === 'git' && argv[0] === 'show' && argv[1] === '-s' && argv[2] === '--format=%cI') {
+        return LOCAL_DATE;
+      }
       return '';
     });
 
@@ -102,5 +117,7 @@ describe('appUpdateCheck', () => {
 
     expect(result.updateAvailable).toBe(false);
     expect(result.checkStatus).toBe('current');
+    expect(result.localRevisionCommittedAt).toBe(LOCAL_DATE);
+    expect(result.remoteRevisionCommittedAt).toBe(LOCAL_DATE);
   });
 });

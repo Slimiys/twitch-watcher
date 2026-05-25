@@ -10,7 +10,7 @@
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="dashboard.css?v=5">
-    <script src="dashboard.js?v=30" defer></script>
+    <script src="dashboard.js?v=32" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -51,6 +51,18 @@
                     <span style="color: #adadb8; font-size: 14px;">Colorize names:</span>
                     <label class="toggle-switch">
                         <input type="checkbox" id="colorizeStreamerNamesToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div
+                    class="colorize-toggle-control"
+                    id="autoUpdateToggleControl"
+                    style="display: flex; align-items: center; gap: 8px;"
+                    title="При обнаружении обновления установка запустится без подтверждения"
+                >
+                    <span style="color: #adadb8; font-size: 14px;">Автообновление:</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="dashboardAutoUpdateToggle">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>

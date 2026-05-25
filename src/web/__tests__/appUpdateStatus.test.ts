@@ -13,6 +13,8 @@ vi.mock('../appUpdateCheck', async () => {
       remoteRevision: 'aaa',
       localRevisionFull: 'aaa',
       remoteRevisionFull: 'aaa',
+      localRevisionCommittedAt: '2026-05-20T12:00:00+03:00',
+      remoteRevisionCommittedAt: '2026-05-20T12:00:00+03:00',
       updateAvailable: false,
       checkStatus: 'current' as const,
       checkedAt: Date.now(),
