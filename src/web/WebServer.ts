@@ -435,6 +435,9 @@ export class WebServer {
         }
 
         const stats = this.statisticsProvider.getOverallStats();
+        logger.verbose(
+          `GET /api/overall: activeWatches=${stats.activeWatches} totalPoints=${stats.totalPointsEarned} streamers=${stats.streamersCount} lastActivityMs=${stats.lastActivity}`
+        );
         res.json(stats);
       } catch (error: any) {
         logger.error('Error getting overall stats:', error);

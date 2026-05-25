@@ -95,20 +95,18 @@ _is_twitch_watcher_process() {
   return 1
 }
 
-# Добавить PID в список (без дубликатов)
-# $3 = 1 — доверенный источник (pid-файл / env), иначе проверка cmdline
+# Добавить PID в список (без nameref — на Termux иначе circular name reference)
+# $2 = 1 — доверенный источник (pid-файл / env), иначе проверка cmdline
 _bot_pids_add() {
   local pid="$1"
-  local seen_ref="$2"
-  local trusted="${3:-0}"
-  local -n seen="$seen_ref"
+  local trusted="${2:-0}"
 
   [[ "$pid" =~ ^[0-9]+$ ]] || return 0
-  case " ${seen} " in
+  case " ${_BOT_PIDS_SEEN} " in
     *" ${pid} "*) return 0 ;;
   esac
   if [ "$trusted" = "1" ] || _is_twitch_watcher_process "$pid"; then
-    seen="${seen} ${pid}"
+    _BOT_PIDS_SEEN="${_BOT_PIDS_SEEN} ${pid}"
     echo "$pid"
   fi
   return 0
@@ -128,31 +126,31 @@ _list_pids_on_port() {
 
 # Все PID бота в этом проекте
 collect_all_bot_pids() {
-  local seen=""
+  _BOT_PIDS_SEEN=""
   local pid port
 
   pid="$(resolve_bot_pid)"
   if [ -n "$pid" ]; then
-    _bot_pids_add "$pid" seen 1 || true
+    _bot_pids_add "$pid" 1 || true
   fi
 
   if [ -f "${ROOT}/.twitch-watcher.pid" ]; then
     pid="$(tr -d ' \n\r' <"${ROOT}/.twitch-watcher.pid" 2>/dev/null || true)"
-    [ -n "$pid" ] && _bot_pids_add "$pid" seen 1 || true
+    [ -n "$pid" ] && _bot_pids_add "$pid" 1 || true
   fi
 
   if command -v pgrep >/dev/null 2>&1; then
     while read -r pid; do
-      [ -n "$pid" ] && _bot_pids_add "$pid" seen 0 || true
+      [ -n "$pid" ] && _bot_pids_add "$pid" 0 || true
     done < <(pgrep -f "${ROOT}/dist/app.js" 2>/dev/null || true)
     while read -r pid; do
-      [ -n "$pid" ] && _bot_pids_add "$pid" seen 0 || true
+      [ -n "$pid" ] && _bot_pids_add "$pid" 0 || true
     done < <(pgrep -f "${ROOT}/src/app.ts" 2>/dev/null || true)
   fi
 
   port="$(resolve_bot_web_port)"
   while read -r pid; do
-    [ -n "$pid" ] && _bot_pids_add "$pid" seen 0 || true
+    [ -n "$pid" ] && _bot_pids_add "$pid" 0 || true
   done < <(_list_pids_on_port "$port" 2>/dev/null || true)
 }
 

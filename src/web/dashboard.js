@@ -638,6 +638,9 @@ async function pollVersionUpdateStatus(forceRefresh = false) {
     if (tryFinishLifecycleIfReady(data)) {
         return data;
     }
+    if (!lifecycleWaitMode && data.uiState !== 'updating') {
+        versionCardBusy = false;
+    }
     versionUpdateStatus = data;
     if (lastBotHealthForVersion) {
         patchBotHealthVersionCard(lastBotHealthForVersion);
@@ -893,11 +896,16 @@ function isServerReadyAfterLifecycle(info) {
 }
 
 function isUpdateCheckReadyAfterLifecycle(data) {
-    if (!data?.serverPid) {
+    if (!data) {
         return false;
     }
+    if (data.dashboardUpdateInProgress === true || data.uiState === 'updating') {
+        if (!data.serverPid || !hasNewBotPidAfterLifecycle(data.serverPid)) {
+            return false;
+        }
+    }
     if (hasNewBotPidAfterLifecycle(data.serverPid)) {
-        return data.uiState !== 'updating';
+        return true;
     }
     return data.dashboardUpdateInProgress !== true && data.uiState !== 'updating';
 }

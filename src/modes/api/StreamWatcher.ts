@@ -1472,20 +1472,34 @@ export class StreamWatcher {
 
     if (stats.length === 0) {
       logger.important('📊  Currently watching: none');
-      return;
+    } else {
+      logger.important(`\n📊  Currently watching (${stats.length}):`);
+      for (const stat of stats) {
+        const elapsed = formatElapsedTime(stat.elapsedTime);
+        const pointsDisplay = stat.pointsEarned >= 0
+          ? `+${stat.pointsEarned}`
+          : `${stat.pointsEarned}`;
+
+        logger.important(
+          `   • ${stat.streamerName}: ${elapsed} | Points: ${stat.currentPoints} | Earned: ${pointsDisplay} | Status: ${stat.status}`
+        );
+      }
     }
 
-    logger.important(`\n📊  Currently watching (${stats.length}):`);
-    for (const stat of stats) {
-      const elapsed = formatElapsedTime(stat.elapsedTime);
-      const pointsDisplay = stat.pointsEarned >= 0 
-        ? `+${stat.pointsEarned}` 
-        : `${stat.pointsEarned}`;
-      
-      logger.important(
-        `   • ${stat.streamerName}: ${elapsed} | Points: ${stat.currentPoints} | Earned: ${pointsDisplay} | Status: ${stat.status}`
-      );
-    }
+    this.logOverallDashboardStats();
+  }
+
+  /**
+   * Логирует сводку метрик дашборда (Active Watches, Total Points, Streamers, Last Activity).
+   */
+  private logOverallDashboardStats(): void {
+    const { activeWatches, totalPointsEarned, streamersCount, lastActivity } = this.getOverallStats();
+    const lastActivityLabel =
+      lastActivity > 0 ? `${formatElapsedTime(lastActivity)} ago` : '—';
+
+    logger.important(
+      `📊  Dashboard: Active Watches=${activeWatches} | Total Points=+${totalPointsEarned} | Streamers=${streamersCount} | Last Activity=${lastActivityLabel}`
+    );
   }
 
   /**

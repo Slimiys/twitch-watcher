@@ -104,6 +104,10 @@ function spawnDashboardScript(scriptPath: string, logLabel: string): void {
     logger.error(`Dashboard ${logLabel} spawn failed:`, err.message);
   });
 
+  child.on('exit', () => {
+    dashboardActionInProgress = false;
+  });
+
   setTimeout(() => {
     dashboardActionInProgress = false;
   }, 10 * 60 * 1000);
@@ -149,6 +153,10 @@ export function triggerDashboardUpdate(): { started: boolean; message: string } 
   child.on('error', (err) => {
     dashboardActionInProgress = false;
     logger.error('Dashboard update spawn failed:', err.message);
+  });
+
+  child.on('exit', () => {
+    dashboardActionInProgress = false;
   });
 
   setTimeout(() => {
@@ -208,5 +216,11 @@ export function triggerDashboardRestart(): { started: boolean; message: string }
  * Идёт ли сейчас удалённое действие (обновление / stop / restart)
  */
 export function isDashboardUpdateInProgress(): boolean {
-  return dashboardActionInProgress || isDashboardActionLockPresent();
+  if (isDashboardActionLockPresent()) {
+    return true;
+  }
+  if (dashboardActionInProgress) {
+    dashboardActionInProgress = false;
+  }
+  return false;
 }
