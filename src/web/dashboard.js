@@ -79,29 +79,8 @@ try {
     // Используем значения по умолчанию
 }
 
-// Предыдущие значения статистики по стримерам (для отображения разницы)
-// Эти значения обновляются только при изменении баллов
-let previousStreamerStats = {};
-try {
-    const prevStats = safeGetLocalStorage('previousStreamerStats');
-    if (prevStats) {
-        previousStreamerStats = JSON.parse(prevStats);
-    }
-} catch (e) {
-    previousStreamerStats = {};
-}
-
-// Сохраняем старое значение currentPoints для каждого стримера
-// Это нужно для обновления previousPoints перед следующим изменением
-let lastCurrentPoints = {};
-try {
-    const lastPoints = safeGetLocalStorage('lastCurrentPoints');
-    if (lastPoints) {
-        lastCurrentPoints = JSON.parse(lastPoints);
-    }
-} catch (e) {
-    lastCurrentPoints = {};
-}
+/** Снимок баллов на прошлом обновлении таблицы (разница в скобках — только между обновлениями) */
+let lastUpdatePointsSnapshot = {};
 
 /**
  * Last Activity: последний стример, перешедший в онлайн, и сколько времени назад
@@ -1942,89 +1921,29 @@ async function updateStatistics() {
         filteredStats = stats.filter(s => s.status === 'ONLINE');
     }
 
-    // Сохраняем предыдущие значения для отображения разницы
-    // Используем lastCurrentPoints, если он отличается от текущего, иначе previousStreamerStats
+    // Разница в скобках: только между прошлым и текущим обновлением (Event / interval)
     const currentPreviousStats = {};
-    stats.forEach(s => {
-        if (s.streamerName) {
-            const streamerName = s.streamerName;
-            const currentPointsEarned = s.pointsEarned || 0;
-            const currentCurrentPoints = s.currentPoints || 0;
-            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
-            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
-            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
-            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
-            
-            if (lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned) {
-                currentPreviousStats[streamerName] = { 
-                    pointsEarned: lastPointsEarned,
-                    currentPoints: lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints
-                };
-            } else if (lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints) {
-                currentPreviousStats[streamerName] = { 
-                    pointsEarned: lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned,
-                    currentPoints: lastCurrentPointsValue
-                };
-            } else if (previousStreamerStats[streamerName]) {
-                currentPreviousStats[streamerName] = { ...previousStreamerStats[streamerName] };
-            }
+    stats.forEach((s) => {
+        if (!s.streamerName) {
+            return;
+        }
+        const snap = lastUpdatePointsSnapshot[s.streamerName];
+        if (!snap) {
+            return;
+        }
+        const currentPointsEarned = s.pointsEarned || 0;
+        const currentCurrentPoints = s.currentPoints || 0;
+        const entry = {};
+        if (snap.pointsEarned !== currentPointsEarned) {
+            entry.pointsEarned = snap.pointsEarned;
+        }
+        if (snap.currentPoints !== currentCurrentPoints) {
+            entry.currentPoints = snap.currentPoints;
+        }
+        if (entry.pointsEarned !== undefined || entry.currentPoints !== undefined) {
+            currentPreviousStats[s.streamerName] = entry;
         }
     });
-    
-    stats.forEach(s => {
-        if (s.streamerName) {
-            const streamerName = s.streamerName;
-            const currentPointsEarned = s.pointsEarned || 0;
-            const currentCurrentPoints = s.currentPoints || 0;
-            const prevPointsEarned = previousStreamerStats[streamerName]?.pointsEarned;
-            const prevCurrentPoints = previousStreamerStats[streamerName]?.currentPoints;
-            const lastPointsEarned = lastCurrentPoints[streamerName]?.pointsEarned;
-            const lastCurrentPointsValue = lastCurrentPoints[streamerName]?.currentPoints;
-            
-            if (prevPointsEarned === undefined) {
-                previousStreamerStats[streamerName] = {
-                    pointsEarned: currentPointsEarned,
-                    currentPoints: currentCurrentPoints
-                };
-                lastCurrentPoints[streamerName] = {
-                    pointsEarned: currentPointsEarned,
-                    currentPoints: currentCurrentPoints
-                };
-            } else {
-                const pointsEarnedChanged = prevPointsEarned !== currentPointsEarned;
-                const currentPointsChanged = prevCurrentPoints !== currentCurrentPoints;
-                
-                if (pointsEarnedChanged || currentPointsChanged) {
-                    // Определяем старое значение: если lastCurrentPoints равен currentPoints,
-                    // используем previousStreamerStats, иначе lastCurrentPoints
-                    let newPrevPointsEarned, newPrevCurrentPoints;
-                    const lastPointsEarnedChanged = lastPointsEarned !== undefined && lastPointsEarned !== currentPointsEarned;
-                    const lastCurrentPointsChanged = lastCurrentPointsValue !== undefined && lastCurrentPointsValue !== currentCurrentPoints;
-                    
-                    if (!lastPointsEarnedChanged && !lastCurrentPointsChanged && (lastPointsEarned !== undefined || lastCurrentPointsValue !== undefined)) {
-                        newPrevPointsEarned = prevPointsEarned;
-                        newPrevCurrentPoints = prevCurrentPoints;
-                    } else {
-                        newPrevPointsEarned = lastPointsEarned !== undefined ? lastPointsEarned : prevPointsEarned;
-                        newPrevCurrentPoints = lastCurrentPointsValue !== undefined ? lastCurrentPointsValue : prevCurrentPoints;
-                    }
-                    
-                    previousStreamerStats[streamerName] = {
-                        pointsEarned: newPrevPointsEarned,
-                        currentPoints: newPrevCurrentPoints
-                    };
-                    
-                    lastCurrentPoints[streamerName] = {
-                        pointsEarned: currentPointsEarned,
-                        currentPoints: currentCurrentPoints
-                    };
-                }
-            }
-        }
-    });
-    
-    safeSetLocalStorage('previousStreamerStats', JSON.stringify(previousStreamerStats));
-    safeSetLocalStorage('lastCurrentPoints', JSON.stringify(lastCurrentPoints));
     
     // Сортируем данные
     const sortedStats = sortTableData([...filteredStats], tableSort);
@@ -2188,9 +2107,17 @@ async function updateStatistics() {
     
     lastDataUpdate.stats = Date.now();
     updateStaleDataIndicator('stats', table);
-    
-    // previousStreamerStats уже обновлен выше, перед отображением разницы
-    // Это гарантирует, что при следующем обновлении previous будет равен текущему значению
+
+    const nextSnapshot = {};
+    stats.forEach((s) => {
+        if (s.streamerName) {
+            nextSnapshot[s.streamerName] = {
+                pointsEarned: s.pointsEarned || 0,
+                currentPoints: s.currentPoints || 0,
+            };
+        }
+    });
+    lastUpdatePointsSnapshot = nextSnapshot;
 }
 
 
