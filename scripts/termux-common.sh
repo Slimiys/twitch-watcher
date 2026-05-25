@@ -5,6 +5,12 @@
 # shellcheck disable=SC2034
 TERMUX_COMMON_LOADED=1
 
+# Повторный source после git pull: иначе kill/stop используют старые функции из памяти shell
+termux_reload_common() {
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+}
+
 termux_wake_lock_enabled() {
   [ "${TWITCH_TERMUX_WAKE_LOCK:-true}" != "false" ]
 }

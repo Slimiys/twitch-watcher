@@ -20,6 +20,7 @@ echo "========================================"
 
 sleep 1
 
+termux_reload_common
 kill_bot_process
 dashboard_action_lock_release
 start_bot_background "$LOG_DIR/update-restart.log"

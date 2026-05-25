@@ -28,10 +28,14 @@ else
   echo "[WARN] Not a git repository, skipping git sync"
 fi
 
+echo "[1b/4] Reload termux-common.sh (после git sync)..."
+termux_reload_common
+
 echo "[2/4] run-local.sh --update-only (npm install + build)..."
 bash "$ROOT/run-local.sh" --update-only
 
 echo "[3/4] Stopping current process..."
+termux_reload_common
 kill_bot_process
 dashboard_action_lock_release
 

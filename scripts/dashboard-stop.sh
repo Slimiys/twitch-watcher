@@ -20,6 +20,7 @@ echo "========================================"
 
 sleep 1
 
+termux_reload_common
 kill_bot_process
 termux_release_wake_lock
 echo "[DONE] Stop complete"
