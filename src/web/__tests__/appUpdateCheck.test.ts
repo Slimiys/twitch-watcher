@@ -41,10 +41,11 @@ describe('appUpdateCheck', () => {
     process.env.DASHBOARD_UPDATE_GIT_BRANCH = 'dev';
     const execFileSync = vi.mocked(childProcess.execFileSync);
     execFileSync.mockImplementation((cmd, args) => {
-      if (cmd === 'git' && args[0] === 'ls-remote') {
+      const argv = args ?? [];
+      if (cmd === 'git' && argv[0] === 'ls-remote') {
         return 'bbb222ccc333ddd444eee555\trefs/heads/dev\n';
       }
-      if (cmd === 'git' && args[0] === 'rev-parse') {
+      if (cmd === 'git' && argv[0] === 'rev-parse') {
         return 'bbb222ccc333\n';
       }
       return '';
@@ -65,10 +66,11 @@ describe('appUpdateCheck', () => {
   it('updateAvailable false при совпадении', () => {
     const execFileSync = vi.mocked(childProcess.execFileSync);
     execFileSync.mockImplementation((cmd, args) => {
-      if (cmd === 'git' && args[0] === 'ls-remote') {
+      const argv = args ?? [];
+      if (cmd === 'git' && argv[0] === 'ls-remote') {
         return 'aaa111bbb222cccddd444eee\trefs/heads/dev\n';
       }
-      if (cmd === 'git' && args[0] === 'rev-parse') {
+      if (cmd === 'git' && argv[0] === 'rev-parse') {
         return 'aaa111bbb222\n';
       }
       return '';
