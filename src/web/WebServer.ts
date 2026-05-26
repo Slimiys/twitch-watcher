@@ -357,7 +357,7 @@ export class WebServer {
           syncStatisticsStatusesBeforeRead?: (force?: boolean) => Promise<void>;
         };
         if (typeof streamWatcher.syncStatisticsStatusesBeforeRead === 'function') {
-          await streamWatcher.syncStatisticsStatusesBeforeRead();
+          void streamWatcher.syncStatisticsStatusesBeforeRead();
         }
 
         // Поддерживаем параметр includeOffline для включения офлайн стримеров
@@ -477,7 +477,7 @@ export class WebServer {
           syncStatisticsStatusesBeforeRead?: (force?: boolean) => Promise<void>;
         };
         if (typeof streamWatcher.syncStatisticsStatusesBeforeRead === 'function') {
-          await streamWatcher.syncStatisticsStatusesBeforeRead();
+          void streamWatcher.syncStatisticsStatusesBeforeRead();
         }
 
         const stats = this.statisticsProvider.getOverallStats();

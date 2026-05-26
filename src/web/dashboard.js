@@ -97,6 +97,8 @@ try {
 
 /** Снимок баллов на прошлом обновлении таблицы (разница в скобках — только между обновлениями) */
 let lastUpdatePointsSnapshot = {};
+/** Последний ответ /api/statistics для мгновенного переключения Show/Hide Offline */
+let cachedStatisticsRows = null;
 
 /**
  * Last Activity: последний стример, перешедший в онлайн, и сколько времени назад
@@ -2158,18 +2160,26 @@ window.handleTableSort = function(column) {
     updateStatistics();
 };
 
-async function updateStatistics() {
+async function updateStatistics(options = {}) {
+    const skipFetch = options.skipFetch === true;
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
     const hasSkeleton = table && table.querySelector('.skeleton-table');
     
     // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
-    if (!hasContent && !hasSkeleton && table) {
+    if (!skipFetch && !hasContent && !hasSkeleton && table) {
         table.innerHTML = generateTableSkeleton(5);
     }
     
-    // Запрашиваем всех стримеров, включая офлайн
-    const stats = await fetchData('/statistics?includeOffline=true');
+    let stats;
+    if (skipFetch && cachedStatisticsRows) {
+        stats = cachedStatisticsRows;
+    } else {
+        stats = await fetchData('/statistics?includeOffline=true');
+        if (stats) {
+            cachedStatisticsRows = stats;
+        }
+    }
     
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
@@ -2194,13 +2204,15 @@ async function updateStatistics() {
 
     lastAllStreamerNames = stats.map((s) => s.streamerName).filter(Boolean);
 
-    try {
-        const statusChanges = detectStreamerStatusChanges(stats);
-        if (statusChanges.length > 0) {
-            processStreamStatusNotifications(statusChanges);
+    if (!skipFetch) {
+        try {
+            const statusChanges = detectStreamerStatusChanges(stats);
+            if (statusChanges.length > 0) {
+                processStreamStatusNotifications(statusChanges);
+            }
+        } catch (e) {
+            console.warn('Stream status notifications failed:', e);
         }
-    } catch (e) {
-        console.warn('Stream status notifications failed:', e);
     }
 
     // Фильтруем офлайн стримеров, если они скрыты
@@ -3171,8 +3183,8 @@ function toggleOfflineStreamers() {
         toggleText.textContent = 'Show Offline';
     }
     
-    // Обновляем таблицу
-    updateStatistics();
+    // Перерисовываем таблицу из кэша — без повторного GraphQL на сервере
+    updateStatistics({ skipFetch: Boolean(cachedStatisticsRows) });
 }
 
 function exportLogs(format, streamerName) {

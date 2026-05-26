@@ -1417,18 +1417,13 @@ export class StreamWatcher {
 
   /** Троттлинг GraphQL-синхронизации статуса перед отдачей в dashboard API */
   private lastDashboardStatusSyncAt = 0;
+  /** Фоновая синхронизация для dashboard API (не блокирует ответ) */
+  private dashboardStatusSyncInFlight: Promise<void> | null = null;
 
   /**
-   * Подтягивает статус через GraphQL перед /api/statistics и /api/overall (дашборд без printStatistics)
+   * Собирает стримеров для GraphQL-синхронизации статуса
    */
-  async syncStatisticsStatusesBeforeRead(force = false): Promise<void> {
-    const now = Date.now();
-    const minIntervalMs = parseInt(process.env.STATS_STATUS_SYNC_MS || '5000', 10);
-    if (!force && now - this.lastDashboardStatusSyncAt < minIntervalMs) {
-      return;
-    }
-    this.lastDashboardStatusSyncAt = now;
-
+  private collectDashboardStatusSyncCandidates(now = Date.now()): StreamerInfo[] {
     const candidates = new Set<StreamerInfo>();
     for (const info of this.streamers.values()) {
       if (info.isOnline || isEffectivelyOnline(info)) {
@@ -1446,15 +1441,71 @@ export class StreamWatcher {
       }
     }
 
-    for (const streamerInfo of candidates) {
-      try {
-        await this.twitchAPI.updateStreamerInfo(streamerInfo);
-      } catch (error: any) {
-        logger.verbose(
-          `⚠️  [${streamerInfo.username}] Status sync for dashboard failed: ${error.message || error}`
-        );
-      }
+    return [...candidates];
+  }
+
+  /**
+   * GraphQL-синхронизация статусов (параллельно, с ограничением concurrency)
+   */
+  private async runDashboardStatusSync(): Promise<void> {
+    const candidates = this.collectDashboardStatusSyncCandidates();
+    if (candidates.length === 0) {
+      return;
     }
+
+    const concurrency = Math.max(
+      1,
+      parseInt(process.env.STATS_STATUS_SYNC_CONCURRENCY || '3', 10)
+    );
+    let index = 0;
+
+    const worker = async (): Promise<void> => {
+      while (index < candidates.length) {
+        const streamerInfo = candidates[index];
+        index += 1;
+        try {
+          await this.twitchAPI.updateStreamerInfo(streamerInfo);
+        } catch (error: any) {
+          logger.verbose(
+            `⚠️  [${streamerInfo.username}] Status sync for dashboard failed: ${error.message || error}`
+          );
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker())
+    );
+  }
+
+  /**
+   * Подтягивает статус через GraphQL для dashboard API.
+   * По умолчанию не блокирует HTTP-ответ — синхронизация идёт в фоне.
+   * @param force true — дождаться синхронизации (printStatistics)
+   */
+  async syncStatisticsStatusesBeforeRead(force = false): Promise<void> {
+    const now = Date.now();
+    const minIntervalMs = parseInt(process.env.STATS_STATUS_SYNC_MS || '5000', 10);
+
+    if (!force) {
+      if (now - this.lastDashboardStatusSyncAt < minIntervalMs) {
+        return;
+      }
+      if (this.dashboardStatusSyncInFlight) {
+        return;
+      }
+      this.lastDashboardStatusSyncAt = now;
+      this.dashboardStatusSyncInFlight = this.runDashboardStatusSync().finally(() => {
+        this.dashboardStatusSyncInFlight = null;
+      });
+      return;
+    }
+
+    if (this.dashboardStatusSyncInFlight) {
+      await this.dashboardStatusSyncInFlight;
+    }
+    this.lastDashboardStatusSyncAt = now;
+    await this.runDashboardStatusSync();
   }
 
   /**
