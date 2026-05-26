@@ -1825,6 +1825,9 @@ async function waitForBotDashboardDataReady(maxWaitMs = 120_000) {
         const status = await fetchData(`/initialization-status?_=${Date.now()}`);
         const initDone =
             status?.isInitialized === true || (Number(status?.progress) || 0) >= 100;
+        if (initDone && status?.needsToken) {
+            return true;
+        }
         const stats = await fetchData(`/statistics?includeOffline=true&_=${Date.now()}`);
         if (initDone && Array.isArray(stats) && stats.length > 0) {
             return true;
@@ -1922,8 +1925,14 @@ async function checkInitializationStatus() {
         progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
         
         if (isReady) {
+            if (status.needsToken) {
+                statusText.textContent = status.currentAction || 'Укажите токен в «Конфиг бота»';
+            }
             setTimeout(() => {
                 hideLoadingScreen();
+                if (status.needsToken) {
+                    showNotification('info', 'Откройте «Конфиг бота» в шапке и укажите auth-token');
+                }
             }, 300);
             return;
         }
@@ -3991,10 +4000,17 @@ async function saveAppConfig() {
 
         closeAppConfigModal();
         const parts = [result.message || 'Конфиг сохранён'];
+        if (result.watcherMessage && !result.watcherStarted) {
+            parts.push(result.watcherMessage);
+        }
         if (watchResult.data?.message) {
             parts.push(watchResult.data.message);
         }
-        showNotification('success', parts.join(' '));
+        showNotification(result.watcherStarted === false && result.restartRequired ? 'warning' : 'success', parts.join(' '));
+
+        if (result.watcherStarted) {
+            setTimeout(() => window.location.reload(), 800);
+        }
     } catch (e) {
         showNotification('error', e.message || 'Не удалось сохранить конфиг');
     } finally {

@@ -624,10 +624,10 @@ export class WebServer {
       }
     });
 
-    this.app.post('/api/app-settings', (req: Request, res: Response) => {
+    this.app.post('/api/app-settings', async (req: Request, res: Response) => {
       try {
         const body = req.body ?? {};
-        const result = applyAppSettingsApi({
+        const result = await applyAppSettingsApi({
           settings: body.settings,
           token: body.token,
         });
@@ -1050,12 +1050,21 @@ export class WebServer {
     isInitialized: boolean;
     currentAction: string;
     progress: number;
+    needsToken?: boolean;
   } {
     if (!this.statisticsProvider) {
+      if (this.isRunning()) {
+        return {
+          isInitialized: true,
+          currentAction: 'Укажите токен в dashboard → «Конфиг бота»',
+          progress: 100,
+          needsToken: true,
+        };
+      }
       return {
         isInitialized: false,
         currentAction: 'Waiting for application to start...',
-        progress: 0
+        progress: 0,
       };
     }
 

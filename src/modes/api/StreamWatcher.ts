@@ -141,11 +141,21 @@ export class StreamWatcher {
    * @param userAgent User-Agent
    * @param priorityChannels Список приоритетных каналов
    * @param maxSimultaneousChannels Максимальное количество одновременно просматриваемых каналов (по умолчанию 2)
+   * @param sharedWebServer Уже запущенный dashboard (режим без токена при старте)
    */
-  constructor(authToken: string, userAgent: string, priorityChannels: string[], maxSimultaneousChannels?: number) {
+  constructor(
+    authToken: string,
+    userAgent: string,
+    priorityChannels: string[],
+    maxSimultaneousChannels?: number,
+    sharedWebServer?: WebServer
+  ) {
     this.authToken = authToken;
     this.userAgent = userAgent;
     this.priorityChannels = priorityChannels;
+    if (sharedWebServer) {
+      this.webServer = sharedWebServer;
+    }
     this.twitchAPI = new TwitchAPI(authToken, userAgent);
     // Парсим из переменной окружения или используем переданное значение, или значение по умолчанию
     this.maxSimultaneousChannels = maxSimultaneousChannels ?? 
@@ -2020,7 +2030,12 @@ export class StreamWatcher {
 
     if (!this.webServer) {
       this.webServer = new WebServer(port);
-      this.webServer.setStatisticsProvider(this);
+    }
+
+    this.webServer.setStatisticsProvider(this);
+
+    if (this.webServer.isRunning()) {
+      return;
     }
 
     const started = await this.webServer.startWithRetry();

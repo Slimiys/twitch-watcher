@@ -7,113 +7,32 @@ import { registerProcessGuards } from './processGuards';
 registerProcessGuards();
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { askLogin } from './input';
-import { CookieData, LoginInput, AppConfig } from './types';
 import { getAppVersionLabel, resetAppVersionLabelCache } from './appVersion';
 import { clearAppUpdateCheckCache } from './web/appUpdateCheck';
 import { writePidFile } from './pidFile';
 import { logger } from './modes/api/logger';
 import { writeCrashReport } from './processGuards';
+import {
+  ensureDashboardStarted,
+  loadStreamersFromConfig,
+  loadTokenFromConfig,
+  tryStartWatcherIfNeeded,
+} from './appRuntime';
 
 // ========================================== CONFIG SECTION =================================================================
 const configPath = './config.json';
 
-// Загружаем список стримеров из config.json
-let channelsWithPriority: string[] = [];
+let channelsWithPriority: string[] = loadStreamersFromConfig(configPath);
 
-if (fs.existsSync(configPath)) {
-  try {
-    const configFile: AppConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (configFile.streamers && Array.isArray(configFile.streamers)) {
-      channelsWithPriority = configFile.streamers;
-      if (channelsWithPriority.length > 0) {
-        console.log(`✅  Loaded ${channelsWithPriority.length} streamer(s) from config.json`);
-      } else {
-        console.log(`ℹ️  No streamers in config.json (you can add them via web interface)`);
-      }
-    } else {
-      console.log(`ℹ️  No streamers array in config.json (you can add them via web interface)`);
-    }
-  } catch (error: any) {
-    console.log(`⚠️  Failed to load streamers from config.json: ${error.message}`);
-    console.log(`ℹ️  You can add streamers via web interface after application starts`);
-  }
+if (channelsWithPriority.length > 0) {
+  console.log(`✅  Loaded ${channelsWithPriority.length} streamer(s) from config.json`);
+} else if (fs.existsSync(configPath)) {
+  console.log(`ℹ️  No streamers in config.json (you can add them via web interface)`);
 } else {
-  console.log(`ℹ️  config.json not found, will be created on first run`);
+  console.log(`ℹ️  config.json not found, will be created when saving settings`);
   console.log(`ℹ️  You can add streamers via web interface after application starts`);
 }
-
-let cookie: CookieData[] | null = null;
 // ========================================== CONFIG SECTION =================================================================
-
-/**
- * Чтение данных для входа из конфигурационного файла или переменных окружения
- * @returns Массив cookie для авторизации
- */
-async function readLoginData(): Promise<CookieData[]> {
-  const cookie: CookieData[] = [{
-    domain: ".twitch.tv",
-    hostOnly: false,
-    httpOnly: false,
-    name: "auth-token",
-    path: "/",
-    sameSite: "no_restriction",
-    secure: true,
-    session: false,
-    storeId: "0",
-    id: 1,
-    value: ""
-  }];
-  
-  try {
-    console.log('🔎  Checking config file...');
-
-    if (fs.existsSync(configPath)) {
-      console.log('✅  Json config found!');
-
-      const configFile: AppConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (configFile.token) {
-        cookie[0].value = configFile.token;
-        return cookie;
-      }
-    }
-
-    if (fs.existsSync(configPath)) {
-      console.log('⚠️  Token not found in config.json');
-    } else {
-      console.log('❌ No config file found!');
-    }
-
-    // В Docker или неинтерактивном режиме не можем запросить токен
-    if (process.env.NODE_ENV === 'production' || !process.stdin.isTTY) {
-      throw new Error(
-        'Token not found in config.json. Set it in dashboard → «Конфиг бота» or add "token" to config.json'
-      );
-    }
-
-    const input: LoginInput = await askLogin();
-
-    // Сохраняем токен в config.json
-    let configFile: AppConfig = {};
-    if (fs.existsSync(configPath)) {
-      try {
-        configFile = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      } catch (error) {
-        // Игнорируем ошибки парсинга
-      }
-    }
-    configFile.token = input.token;
-    fs.writeFileSync(configPath, JSON.stringify(configFile, null, 2), 'utf8');
-
-    cookie[0].value = input.token;
-    return cookie;
-  } catch (err) {
-    console.log('🤬 Error: ', err);
-    console.log('Please visit my discord channel to solve this problem: https://discord.gg/s8AH4aZ');
-    throw err;
-  }
-}
 
 /**
  * Корректное завершение работы приложения
@@ -134,41 +53,21 @@ async function shutDown(): Promise<void> {
 }
 
 /**
- * Запускает API-режим
+ * Запускает API-режим: dashboard всегда; watcher — при наличии токена
  */
 async function startAPIMode(): Promise<void> {
-  const { StreamWatcher } = await import('./modes/api/StreamWatcher');
-  const { WebServer } = await import('./web/WebServer');
-  const userAgent = process.env.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36';
-  
-  cookie = await readLoginData();
-  if (!cookie || !cookie[0] || !cookie[0].value) {
-    console.error('❌ ERROR: No auth token found!');
-    console.error('💡 Укажите token в dashboard → «Конфиг бота» или в config.json');
-    console.error('💡 The web interface will be available, but the watcher will not start');
-    
-    // Запускаем веб-сервер даже без токена, чтобы показать ошибку в интерфейсе
-    const webPort = process.env.WEB_SERVER_PORT ? parseInt(process.env.WEB_SERVER_PORT, 10) : 3001;
-    const webServer = new WebServer(webPort);
-    await webServer.startUntilSuccess();
-    console.log(`✅  Web server started on port ${webPort} (watcher disabled - no token)`);
-    
-    // Не выходим из процесса, чтобы веб-сервер продолжал работать
+  await ensureDashboardStarted();
+
+  const token = loadTokenFromConfig(configPath);
+  if (!token) {
+    console.log('ℹ️  Токен не задан — откройте dashboard → «Конфиг бота» и укажите auth-token');
+    console.log('ℹ️  После сохранения бот запустится автоматически');
     return;
   }
 
-  const authToken = cookie[0].value;
-  const watcher = new StreamWatcher(authToken, userAgent, channelsWithPriority);
-  
-  // Сохраняем ссылку на watcher для graceful shutdown
-  (global as any).watcher = watcher;
-  
-  try {
-    await watcher.start();
-  } catch (error: any) {
-    console.error('❌ Error starting API mode:', error.message || error);
-    // Не выходим из процесса, чтобы веб-сервер продолжал работать
-    // process.exit(1);
+  const result = await tryStartWatcherIfNeeded();
+  if (!result.started) {
+    console.error(`❌  ${result.message}`);
   }
 }
 
@@ -186,11 +85,10 @@ async function main(): Promise<void> {
   logger.info(`📦  Version: ${versionLabel}`);
   console.log('=========================');
 
-  // Информируем о количестве загруженных стримеров
   if (channelsWithPriority.length > 0) {
     console.log(`✅  Streamers configured: ${channelsWithPriority.join(', ')}`);
   } else {
-    console.log(`ℹ️  No streamers in config.json - you can add them via web interface at http://localhost:3001`);
+    console.log(`ℹ️  No streamers in config.json - you can add them via web interface`);
   }
   console.log("=========================");
   
