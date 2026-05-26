@@ -17,8 +17,8 @@ function resolveCrashLogPath(): string {
   if (process.env.CRASH_LOG_PATH?.trim()) {
     return process.env.CRASH_LOG_PATH.trim();
   }
-  const logDir = process.env.LOG_DIR?.trim() || 'logs';
-  return path.join(logDir, 'crash.log');
+  const { resolveLogDirectory } = require('./logDirectory') as typeof import('./logDirectory');
+  return path.join(resolveLogDirectory(), 'crash.log');
 }
 
 /**

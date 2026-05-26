@@ -18,6 +18,10 @@ import { WebServer, StatisticsProvider } from '../../web';
 import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
 import { DatabaseStorage } from './DatabaseStorage';
+import {
+  getEffectiveWatchStartTime,
+  isEffectivelyOnline,
+} from './streamOnlineGrace';
 import { loadStatisticsConfig } from './configLoader';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -712,11 +716,12 @@ export class StreamWatcher {
         this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
         this.resetStreamSessionPoints(streamerInfo);
         streamerInfo.startTime = onlineAt;
+        streamerInfo.webSocketOnlineAt = onlineAt;
         this.persistLastStreamStart(streamerInfo.username, streamerInfo.startTime);
         this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
 
         try {
-          await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          await this.twitchAPI.updateStreamerInfo(streamerInfo, { allowOfflineDemotion: false });
         } catch (error: any) {
           logger.verbose(
             `⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`
@@ -742,6 +747,7 @@ export class StreamWatcher {
       },
       onStreamDown: (streamerInfo) => {
         logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
+        streamerInfo.webSocketOnlineAt = undefined;
         this.syncStreamPointsEarned(streamerInfo);
         this.persistLastStreamEnd(streamerInfo.username, Date.now());
         this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
@@ -886,11 +892,30 @@ export class StreamWatcher {
    */
   getActiveWatchCount(): number {
     for (const info of this.streamers.values()) {
-      if (info.isOnline && info.startTime <= 0) {
+      if (isEffectivelyOnline(info) && info.startTime <= 0) {
         this.ensureWatchSessionStarted(info);
       }
     }
-    return this.getStatistics(false).length;
+
+    const stats: WatchStatistics[] = [];
+    for (const streamerInfo of this.streamers.values()) {
+      if (!isEffectivelyOnline(streamerInfo)) {
+        continue;
+      }
+      const watchStart = getEffectiveWatchStartTime(streamerInfo);
+      if (watchStart <= 0) {
+        continue;
+      }
+      stats.push({
+        streamerName: streamerInfo.username,
+        elapsedTime: Date.now() - watchStart,
+        pointsEarned: streamerInfo.streamPointsEarned ?? 0,
+        currentPoints: streamerInfo.channelPoints ?? 0,
+        status: 'ONLINE',
+        game: streamerInfo.game,
+      });
+    }
+    return stats.length;
   }
 
   /**
@@ -1390,6 +1415,48 @@ export class StreamWatcher {
     }
   }
 
+  /** Троттлинг GraphQL-синхронизации статуса перед отдачей в dashboard API */
+  private lastDashboardStatusSyncAt = 0;
+
+  /**
+   * Подтягивает статус через GraphQL перед /api/statistics и /api/overall (дашборд без printStatistics)
+   */
+  async syncStatisticsStatusesBeforeRead(force = false): Promise<void> {
+    const now = Date.now();
+    const minIntervalMs = parseInt(process.env.STATS_STATUS_SYNC_MS || '5000', 10);
+    if (!force && now - this.lastDashboardStatusSyncAt < minIntervalMs) {
+      return;
+    }
+    this.lastDashboardStatusSyncAt = now;
+
+    const candidates = new Set<StreamerInfo>();
+    for (const info of this.streamers.values()) {
+      if (info.isOnline || isEffectivelyOnline(info)) {
+        candidates.add(info);
+      }
+    }
+
+    const lastOnline = this.lastOnlineTransition;
+    if (lastOnline && now - lastOnline.at < 10 * 60 * 1000) {
+      for (const info of this.streamers.values()) {
+        if (info.username === lastOnline.username && !info.isOnline) {
+          candidates.add(info);
+          break;
+        }
+      }
+    }
+
+    for (const streamerInfo of candidates) {
+      try {
+        await this.twitchAPI.updateStreamerInfo(streamerInfo);
+      } catch (error: any) {
+        logger.verbose(
+          `⚠️  [${streamerInfo.username}] Status sync for dashboard failed: ${error.message || error}`
+        );
+      }
+    }
+  }
+
   /**
    * Запускает периодический вывод статистики
    */
@@ -1403,18 +1470,7 @@ export class StreamWatcher {
    * Выводит статистику просмотра
    */
   private async printStatistics(): Promise<void> {
-    // Обновляем статус стримеров перед выводом статистики для актуальности данных
-    // Проверяем только онлайн стримеров для оптимизации (офлайн стримеры не нужны в статистике)
-    // Graceful degradation: при ошибках обновления используем последние известные данные
-    const onlineStreamers = Array.from(this.streamers.values()).filter(s => s.isOnline);
-    for (const streamerInfo of onlineStreamers) {
-      try {
-        await this.twitchAPI.updateStreamerInfo(streamerInfo);
-      } catch (error: any) {
-        // Graceful degradation: при ошибке обновления используем последние известные данные
-        logger.verbose(`⚠️  [${streamerInfo.username}] Failed to update for statistics: ${error.message || error}`);
-      }
-    }
+    await this.syncStatisticsStatusesBeforeRead(true);
 
     const stats = this.getStatistics();
 
@@ -1462,19 +1518,21 @@ export class StreamWatcher {
     const stats: WatchStatistics[] = [];
 
     for (const streamerInfo of this.streamers.values()) {
+      const effectivelyOnline = isEffectivelyOnline(streamerInfo);
+
       // Если не включаем офлайн, пропускаем офлайн стримеров
-      if (!includeOffline && (!streamerInfo.isOnline || streamerInfo.startTime === 0)) {
+      if (!includeOffline && !effectivelyOnline) {
         continue;
       }
 
+      const watchStart = getEffectiveWatchStartTime(streamerInfo);
       // Для офлайн стримеров используем 0 для elapsedTime
-      const elapsed = streamerInfo.isOnline && streamerInfo.startTime > 0 
-        ? Date.now() - streamerInfo.startTime 
-        : 0;
-      
+      const elapsed =
+        effectivelyOnline && watchStart > 0 ? Date.now() - watchStart : 0;
+
       let currentPoints = streamerInfo.channelPoints ?? 0;
-      
-      if (streamerInfo.isOnline) {
+
+      if (effectivelyOnline) {
         // Если channelPoints не установлен, пробуем использовать lastChannelPoints
         if (currentPoints === 0 && streamerInfo.lastChannelPoints !== null) {
           currentPoints = streamerInfo.lastChannelPoints;
@@ -1498,7 +1556,7 @@ export class StreamWatcher {
       this.syncStreamPointsEarned(streamerInfo);
       const pointsEarned = streamerInfo.streamPointsEarned ?? 0;
 
-      const status = streamerInfo.isOnline ? 'ONLINE' : 'OFFLINE';
+      const status = effectivelyOnline ? 'ONLINE' : 'OFFLINE';
       
       stats.push({
         streamerName: streamerInfo.username,
@@ -1634,6 +1692,7 @@ export class StreamWatcher {
           this.recordLastOnlineTransition(streamerInfo.username, streamStartTime);
           this.resetStreamSessionPoints(streamerInfo);
           streamerInfo.startTime = streamStartTime;
+          streamerInfo.webSocketOnlineAt = streamStartTime;
           this.persistLastStreamStart(streamerInfo.username, streamStartTime);
           
           try {
@@ -1663,6 +1722,7 @@ export class StreamWatcher {
           // Стример перешел из онлайн в офлайн
           logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
           streamerInfo.startTime = 0;
+          streamerInfo.webSocketOnlineAt = undefined;
           this.syncStreamPointsEarned(streamerInfo);
           const streamEndTime = Date.now();
           this.persistLastStreamEnd(streamerInfo.username, streamEndTime);
@@ -2253,7 +2313,7 @@ export class StreamWatcher {
     let totalPointsEarned = 0;
 
     for (const info of this.streamers.values()) {
-      if (info.isOnline) {
+      if (isEffectivelyOnline(info)) {
         this.ensureWatchSessionStarted(info);
         this.syncStreamPointsEarned(info);
         totalPointsEarned += Math.max(0, info.streamPointsEarned ?? 0);
@@ -2303,7 +2363,6 @@ export class StreamWatcher {
   }
 
   /**
-<<<<<<< HEAD
    * Добавляет критическое уведомление
    * @param type Тип уведомления
    * @param title Заголовок

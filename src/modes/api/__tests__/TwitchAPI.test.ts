@@ -115,7 +115,7 @@ describe('TwitchAPI', () => {
         title: null,
         tags: [],
         spadeUrl: null,
-        startTime: Date.now(),
+        startTime: Date.now() - 130_000,
         initialChannelPoints: null,
         lastChannelPoints: null,
         streamPointsEarned: 0,
@@ -125,6 +125,64 @@ describe('TwitchAPI', () => {
 
       expect(result.isOnline).toBe(false);
       expect(result.startTime).toBe(0);
+    });
+
+    it('не переводит в OFFLINE сразу после stream-up если GraphQL ещё не видит стрим', async () => {
+      const mockGraphQLClient = (twitchAPI as any).graphqlClient;
+      mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
+      mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
+      mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
+
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 0,
+        isOnline: true,
+        broadcastId: null,
+        game: null,
+        title: null,
+        tags: [],
+        spadeUrl: null,
+        startTime: Date.now() - 5_000,
+        webSocketOnlineAt: Date.now() - 5_000,
+        initialChannelPoints: null,
+        lastChannelPoints: null,
+        streamPointsEarned: 0,
+      };
+
+      const result = await twitchAPI.updateStreamerInfo(streamerInfo, { allowOfflineDemotion: false });
+
+      expect(result.isOnline).toBe(true);
+      expect(result.startTime).toBeGreaterThan(0);
+    });
+
+    it('не переводит в OFFLINE в grace после stream-up при allowOfflineDemotion', async () => {
+      const mockGraphQLClient = (twitchAPI as any).graphqlClient;
+      mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
+      mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
+      mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
+
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 0,
+        isOnline: true,
+        broadcastId: null,
+        game: null,
+        title: null,
+        tags: [],
+        spadeUrl: null,
+        startTime: Date.now() - 5_000,
+        webSocketOnlineAt: Date.now() - 5_000,
+        initialChannelPoints: null,
+        lastChannelPoints: null,
+        streamPointsEarned: 0,
+      };
+
+      const result = await twitchAPI.updateStreamerInfo(streamerInfo);
+
+      expect(result.isOnline).toBe(true);
+      expect(result.startTime).toBeGreaterThan(0);
     });
   });
 

@@ -29,6 +29,8 @@ export interface StreamerInfo {
   lastChannelPoints: number | null; // Последние известные баллы
   streamPointsEarned: number; // Баллы, заработанные за текущий стрим (сбрасываются при stream-up)
   lastWatchPrepAt?: number; // Время последней подготовки перед minute-watched
+  /** Последний stream-up по WebSocket (для grace и dashboard) */
+  webSocketOnlineAt?: number;
 }
 
 /**

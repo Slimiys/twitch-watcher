@@ -31,6 +31,7 @@ import {
   readWatchSettingsForApi,
 } from './watchSettingsApi';
 import { applyAppSettingsApi, readAppSettingsApi } from './appSettingsApi';
+import { StreamWatcher } from '../modes/api/StreamWatcher';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -345,11 +346,18 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/statistics', (req: Request, res: Response) => {
+    this.app.get('/api/statistics', async (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
           res.status(503).json({ error: 'Statistics provider not available. Please check if the watcher is running and token is configured.' });
           return;
+        }
+
+        const streamWatcher = this.statisticsProvider as StreamWatcher & {
+          syncStatisticsStatusesBeforeRead?: (force?: boolean) => Promise<void>;
+        };
+        if (typeof streamWatcher.syncStatisticsStatusesBeforeRead === 'function') {
+          await streamWatcher.syncStatisticsStatusesBeforeRead();
         }
 
         // Поддерживаем параметр includeOffline для включения офлайн стримеров
@@ -357,7 +365,6 @@ export class WebServer {
         const statistics = this.statisticsProvider.getStatistics(includeOffline);
         
         // Обогащаем статистику данными из базы данных (время последнего запуска/завершения стрима)
-        const streamWatcher = this.statisticsProvider as any;
         const databaseStorage = streamWatcher.getDatabaseStorage?.();
         
         if (databaseStorage && databaseStorage.isReady()) {
@@ -456,7 +463,7 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/overall', (req: Request, res: Response) => {
+    this.app.get('/api/overall', async (req: Request, res: Response) => {
       try {
         if (!this.statisticsProvider) {
           res.status(503).json({ 
@@ -464,6 +471,13 @@ export class WebServer {
             message: 'Watcher is not running. Please check token configuration.'
           });
           return;
+        }
+
+        const streamWatcher = this.statisticsProvider as StreamWatcher & {
+          syncStatisticsStatusesBeforeRead?: (force?: boolean) => Promise<void>;
+        };
+        if (typeof streamWatcher.syncStatisticsStatusesBeforeRead === 'function') {
+          await streamWatcher.syncStatisticsStatusesBeforeRead();
         }
 
         const stats = this.statisticsProvider.getOverallStats();

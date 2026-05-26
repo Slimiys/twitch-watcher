@@ -4,13 +4,18 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getProjectRoot } from './pidFile';
 
 /**
- * Возвращает абсолютный путь к каталогу логов (LOG_DIR или ./logs)
+ * Возвращает абсолютный путь к каталогу логов (LOG_DIR или ./logs от корня проекта)
  */
 export function resolveLogDirectory(): string {
-  const dir = process.env.LOG_DIR?.trim() || './logs';
-  return path.isAbsolute(dir) ? dir : path.resolve(process.cwd(), dir);
+  const dir = process.env.LOG_DIR?.trim() || 'logs';
+  if (path.isAbsolute(dir)) {
+    return dir;
+  }
+  const normalized = dir.replace(/^\.\//, '');
+  return path.join(getProjectRoot(), normalized);
 }
 
 /**
@@ -48,6 +53,10 @@ export function clearLogDirectoryOnStartup(logDir?: string): number {
 
   for (const entry of entries) {
     if (!entry.isFile()) {
+      continue;
+    }
+    // Lock-файлы и прочие служебные dot-файлы не являются логами
+    if (entry.name.startsWith('.')) {
       continue;
     }
     const filePath = path.join(targetDir, entry.name);

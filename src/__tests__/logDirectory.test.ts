@@ -38,4 +38,17 @@ describe('logDirectory', () => {
     expect(removed).toBe(0);
     expect(fs.existsSync(path.join(tempDir, 'keep.log'))).toBe(true);
   });
+
+  it('не удаляет dot-файлы (lock и служебные) при очистке логов', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-logs-'));
+    fs.writeFileSync(path.join(tempDir, 'twitch-watcher.1.log'), 'old');
+    fs.writeFileSync(path.join(tempDir, '.dashboard-action.lock'), '123 456');
+
+    delete process.env.LOG_CLEAR_ON_START;
+    const removed = clearLogDirectoryOnStartup(tempDir);
+
+    expect(removed).toBe(1);
+    expect(fs.existsSync(path.join(tempDir, '.dashboard-action.lock'))).toBe(true);
+    expect(fs.readdirSync(tempDir)).toHaveLength(1);
+  });
 });

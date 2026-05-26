@@ -10,6 +10,7 @@ import { fetchWithRetry, RetryConfig } from './retry';
 import { loadRetryConfig } from './configLoader';
 import { CLIENT_ID } from './constants';
 import { isNetworkError } from './errorUtils';
+import { getWebSocketOnlineGraceMs } from './streamOnlineGrace';
 
 /**
  * API клиент для работы с Twitch
@@ -411,9 +412,13 @@ export class TwitchAPI {
   /**
    * Обновляет информацию о стримере
    * @param streamerInfo Информация о стримере
+   * @param options allowOfflineDemotion=false — не сбрасывать ONLINE сразу после WebSocket stream-up
    * @returns Обновленная информация о стримере
    */
-  async updateStreamerInfo(streamerInfo: StreamerInfo): Promise<StreamerInfo> {
+  async updateStreamerInfo(
+    streamerInfo: StreamerInfo,
+    options?: { allowOfflineDemotion?: boolean }
+  ): Promise<StreamerInfo> {
     // Периодически проверяем статус через GraphQL как fallback
     // WebSocket события stream-up/stream-down являются основным источником статуса
     // но GraphQL проверка нужна для случаев, когда WebSocket события не приходят
@@ -478,10 +483,25 @@ export class TwitchAPI {
         // Это предотвращает установку isOnline=false из-за недоступности GraphQL
         const graphqlUnavailable =
           isCircuitBreakerOpen || this.graphqlClient.hadRecentNetworkFailure();
-        if (streamerInfo.isOnline && !graphqlUnavailable) {
-          logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
-          streamerInfo.isOnline = false;
-          streamerInfo.startTime = 0;
+        const allowOfflineDemotion = options?.allowOfflineDemotion !== false;
+        if (streamerInfo.isOnline && !graphqlUnavailable && allowOfflineDemotion) {
+          const wsAt = streamerInfo.webSocketOnlineAt ?? 0;
+          const onlineAgeMs =
+            wsAt > 0
+              ? Date.now() - wsAt
+              : streamerInfo.startTime > 0
+                ? Date.now() - streamerInfo.startTime
+                : Number.POSITIVE_INFINITY;
+          if (onlineAgeMs < getWebSocketOnlineGraceMs()) {
+            logger.verbose(
+              `⚠️  [${streamerInfo.username}] GraphQL: стрим не найден (${Math.round(onlineAgeMs / 1000)}s после stream-up) — оставляем ONLINE (WebSocket)`
+            );
+          } else {
+            logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
+            streamerInfo.isOnline = false;
+            streamerInfo.webSocketOnlineAt = undefined;
+            streamerInfo.startTime = 0;
+          }
         } else if (streamerInfo.isOnline && graphqlUnavailable) {
           // GraphQL недоступен — не помечаем офлайн, полагаемся на WebSocket
           logger.verbose(

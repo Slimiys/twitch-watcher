@@ -811,8 +811,9 @@ export class WebSocketManager {
     if (videoMessage.type === 'stream-up') {
       const wasOnline = streamerInfo.isOnline;
       streamerInfo.isOnline = true;
+      streamerInfo.webSocketOnlineAt = Date.now();
       if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
-        streamerInfo.startTime = Date.now();
+        streamerInfo.startTime = streamerInfo.webSocketOnlineAt;
       }
       if (!wasOnline && this.eventHandlers.onStreamUp) {
         this.eventHandlers.onStreamUp(streamerInfo);
@@ -820,6 +821,7 @@ export class WebSocketManager {
     } else if (videoMessage.type === 'stream-down') {
       if (streamerInfo.isOnline) {
         streamerInfo.isOnline = false;
+        streamerInfo.webSocketOnlineAt = undefined;
         streamerInfo.startTime = 0; // Сбрасываем время просмотра при уходе офлайн
         logger.verbose(`🔄  [${streamerInfo.username}] Stream went down, resetting watch time`);
         
