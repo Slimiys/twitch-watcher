@@ -11,6 +11,8 @@ describe('TwitchIntegrityProvider', () => {
     delete process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES;
     delete process.env.TWITCH_INTEGRITY_SOURCE;
     delete process.env.TWITCH_INTEGRITY_FALLBACK_API;
+    process.env.TWITCH_INTEGRITY_AUTO_REFRESH = 'false';
+    process.env.TWITCH_INTEGRITY_AUTO_PERSIST = 'false';
   });
 
   afterEach(() => {

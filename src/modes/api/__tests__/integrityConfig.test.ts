@@ -4,6 +4,7 @@ import {
   resolveIntegritySource,
   getManualIntegrityFromEnv,
   allowApiIntegrityFallback,
+  isIntegrityAutoRefreshEnabled,
 } from '../integrityConfig';
 
 describe('integrityConfig', () => {
@@ -40,10 +41,16 @@ describe('integrityConfig', () => {
     expect(resolveIntegritySource()).toBe('api');
   });
 
-  it('fallback API только при TWITCH_INTEGRITY_FALLBACK_API=true', () => {
+  it('fallback API при TWITCH_INTEGRITY_FALLBACK_API=true или автообновлении', () => {
     delete process.env.TWITCH_INTEGRITY_FALLBACK_API;
+    process.env.TWITCH_INTEGRITY_AUTO_REFRESH = 'false';
     expect(allowApiIntegrityFallback()).toBe(false);
     process.env.TWITCH_INTEGRITY_FALLBACK_API = 'true';
     expect(allowApiIntegrityFallback()).toBe(true);
+  });
+
+  it('автообновление integrity включено по умолчанию', () => {
+    delete process.env.TWITCH_INTEGRITY_AUTO_REFRESH;
+    expect(isIntegrityAutoRefreshEnabled()).toBe(true);
   });
 });

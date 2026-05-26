@@ -2,6 +2,8 @@
  * Утилиты Client-Integrity (manual из DevTools и POST /integrity)
  */
 
+import { isAppBooleanEnabled } from './logSettings';
+
 export type ResolvedIntegritySource = 'manual' | 'api';
 
 /**
@@ -39,7 +41,53 @@ export function getManualIntegrityFromEnv(now = Date.now()): { token: string; ex
  * Разрешён ли fallback на POST /integrity при manual-режиме
  */
 export function allowApiIntegrityFallback(): boolean {
-  return process.env.TWITCH_INTEGRITY_FALLBACK_API === 'true';
+  return (
+    process.env.TWITCH_INTEGRITY_FALLBACK_API === 'true' || isIntegrityAutoRefreshEnabled()
+  );
+}
+
+/**
+ * Автообновление Client-Integrity через POST /integrity (по умолчанию включено)
+ */
+export function isIntegrityAutoRefreshEnabled(): boolean {
+  return isAppBooleanEnabled('TWITCH_INTEGRITY_AUTO_REFRESH', process.env.TWITCH_INTEGRITY_AUTO_REFRESH);
+}
+
+/**
+ * Сохранять обновлённый integrity в config.json
+ */
+export function shouldPersistIntegrityToConfig(): boolean {
+  return isAppBooleanEnabled('TWITCH_INTEGRITY_AUTO_PERSIST', process.env.TWITCH_INTEGRITY_AUTO_PERSIST);
+}
+
+/** За сколько мс до истечения запрашивать новый токен */
+export function getIntegrityRefreshLeadMs(): number {
+  const min = parseInt(process.env.TWITCH_INTEGRITY_REFRESH_LEAD_MIN || '15', 10);
+  const minutes = Number.isFinite(min) && min > 0 ? min : 15;
+  return minutes * 60_000;
+}
+
+/**
+ * Нужно ли обновить manual-токен по сроку (с запасом)
+ */
+export function isManualIntegrityExpiringSoon(
+  expiresAtMs: number,
+  now = Date.now()
+): boolean {
+  return now >= expiresAtMs - getIntegrityRefreshLeadMs();
+}
+
+/**
+ * Можно ли обновить integrity через POST /integrity (при ошибке claim или по таймеру)
+ */
+export function canRefreshIntegrityViaApi(): boolean {
+  const source = resolveIntegritySource();
+  if (source === 'api') {
+    return true;
+  }
+  return (
+    isIntegrityAutoRefreshEnabled() || process.env.TWITCH_INTEGRITY_FALLBACK_API === 'true'
+  );
 }
 
 /**

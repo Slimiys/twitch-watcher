@@ -3787,7 +3787,12 @@ async function saveWatchSettingsFromForm() {
 const APP_CONFIG_SECRET_PLACEHOLDER = '••••••••';
 
 /** Boolean в конфиге: LOG_TO_FILE и LOG_CLEAR_ON_START включены по умолчанию */
-const APP_CONFIG_BOOLEAN_DEFAULT_TRUE = new Set(['LOG_TO_FILE', 'LOG_CLEAR_ON_START']);
+const APP_CONFIG_BOOLEAN_DEFAULT_TRUE = new Set([
+    'LOG_TO_FILE',
+    'LOG_CLEAR_ON_START',
+    'TWITCH_INTEGRITY_AUTO_REFRESH',
+    'TWITCH_INTEGRITY_AUTO_PERSIST',
+]);
 
 function isAppConfigBooleanChecked(field, value) {
     if (APP_CONFIG_BOOLEAN_DEFAULT_TRUE.has(field.key)) {

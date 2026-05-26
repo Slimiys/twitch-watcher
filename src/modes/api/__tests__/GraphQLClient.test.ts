@@ -401,6 +401,8 @@ describe('GraphQLClient', () => {
     it('не повторяет claim при failed integrity check в режиме manual', async () => {
       process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
       process.env.TWITCH_CLIENT_INTEGRITY = 'manual-token';
+      process.env.TWITCH_INTEGRITY_AUTO_REFRESH = 'false';
+      process.env.TWITCH_INTEGRITY_FALLBACK_API = 'false';
       const manualClient = new GraphQLClient(mockAuthToken, mockUserAgent);
 
       const mockResponse = {

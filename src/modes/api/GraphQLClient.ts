@@ -12,7 +12,7 @@ import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
-import { allowApiIntegrityFallback, resolveIntegritySource } from './integrityConfig';
+import { canRefreshIntegrityViaApi } from './integrityConfig';
 
 /** Коды ClaimCommunityPoints, при которых повтор бесполезен */
 const PERMANENT_CLAIM_ERROR_CODES = new Set([
@@ -804,15 +804,20 @@ export class GraphQLClient {
     let response = await this.postRequest(operation, { requireIntegrity: true });
 
     if (GraphQLClient.hasIntegrityError(response)) {
-      const manualWithoutFallback =
-        resolveIntegritySource() === 'manual' && !allowApiIntegrityFallback();
-      if (manualWithoutFallback) {
+      if (!canRefreshIntegrityViaApi()) {
         logger.warn(
-          '🔐  Claim: failed integrity check — обновите Client-Integrity в «Конфиг бота» или включите TWITCH_INTEGRITY_FALLBACK_API'
+          '🔐  Claim: failed integrity check — обновите Client-Integrity в «Конфиг бота» или включите TWITCH_INTEGRITY_AUTO_REFRESH'
         );
       } else {
         logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, повтор с обновлением токена...');
         this.integrityProvider.invalidate();
+        try {
+          await this.integrityProvider.refreshApiTokenAndPersist();
+        } catch (refreshError: unknown) {
+          const message =
+            refreshError instanceof Error ? refreshError.message : String(refreshError);
+          logger.warn(`🔐  Не удалось обновить integrity автоматически: ${message}`);
+        }
         response = await this.postRequest(operation, { requireIntegrity: true });
       }
     }

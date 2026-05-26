@@ -3,7 +3,12 @@
  */
 
 /** Boolean-настройки: включены, если ключ отсутствует или не равен false/0 */
-export const APP_BOOLEAN_DEFAULT_TRUE = new Set(['LOG_TO_FILE', 'LOG_CLEAR_ON_START']);
+export const APP_BOOLEAN_DEFAULT_TRUE = new Set([
+  'LOG_TO_FILE',
+  'LOG_CLEAR_ON_START',
+  'TWITCH_INTEGRITY_AUTO_REFRESH',
+  'TWITCH_INTEGRITY_AUTO_PERSIST',
+]);
 
 /**
  * Проверяет, включён ли boolean-параметр с учётом значения по умолчанию

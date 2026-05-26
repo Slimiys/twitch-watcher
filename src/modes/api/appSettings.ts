@@ -212,11 +212,25 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     hint: 'Unix sec/ms из ответа POST integrity, если копируете вручную',
   },
   {
-    key: 'TWITCH_INTEGRITY_FALLBACK_API',
-    label: 'Fallback POST /integrity (настройка бота)',
+    key: 'TWITCH_INTEGRITY_AUTO_REFRESH',
+    label: 'Автообновление Client-Integrity',
     section: 'Client-Integrity (Network → gql)',
     inputType: 'boolean',
-    hint: 'Если manual Client-Integrity устарел — попробовать POST /integrity (на Termux может не работать)',
+    hint: 'По умолчанию включено: POST /integrity до истечения срока и при ошибке claim',
+  },
+  {
+    key: 'TWITCH_INTEGRITY_AUTO_PERSIST',
+    label: 'Сохранять integrity в config.json',
+    section: 'Client-Integrity (Network → gql)',
+    inputType: 'boolean',
+    hint: 'После автообновления записывать токен и expiration в конфиг (перезапуск не нужен)',
+  },
+  {
+    key: 'TWITCH_INTEGRITY_FALLBACK_API',
+    label: 'Fallback POST /integrity (устаревшее)',
+    section: 'Client-Integrity (Network → gql)',
+    inputType: 'boolean',
+    hint: 'Дублирует автообновление; оставьте выключенным, если включено «Автообновление»',
   },
   {
     key: 'TWITCH_DEVICE_ID',
