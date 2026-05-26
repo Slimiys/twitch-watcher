@@ -423,7 +423,10 @@ export class TwitchAPI {
     // WebSocket события stream-up/stream-down являются основным источником статуса
     // но GraphQL проверка нужна для случаев, когда WebSocket события не приходят
     try {
-      const streamInfo = await this.graphqlClient.getStreamInfo(streamerInfo.username);
+      const streamInfo = await this.graphqlClient.getStreamInfo(
+        streamerInfo.username,
+        streamerInfo.channelId
+      );
 
       if (streamInfo) {
         // Стример онлайн
@@ -482,7 +485,9 @@ export class TwitchAPI {
         // 2. CircuitBreaker не открыт (GraphQL доступен)
         // Это предотвращает установку isOnline=false из-за недоступности GraphQL
         const graphqlUnavailable =
-          isCircuitBreakerOpen || this.graphqlClient.hadRecentNetworkFailure();
+          isCircuitBreakerOpen ||
+          this.graphqlClient.hadRecentNetworkFailure() ||
+          this.graphqlClient.hadRecentStreamInfoQueryFailure();
         const allowOfflineDemotion = options?.allowOfflineDemotion !== false;
         if (streamerInfo.isOnline && !graphqlUnavailable && allowOfflineDemotion) {
           const wsAt = streamerInfo.webSocketOnlineAt ?? 0;

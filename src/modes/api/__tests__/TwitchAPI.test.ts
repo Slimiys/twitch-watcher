@@ -104,6 +104,7 @@ describe('TwitchAPI', () => {
       mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
       mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
       mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
+      mockGraphQLClient.hadRecentStreamInfoQueryFailure = vi.fn().mockReturnValue(false);
 
       const streamerInfo: StreamerInfo = {
         username: 'testuser',
@@ -132,6 +133,7 @@ describe('TwitchAPI', () => {
       mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
       mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
       mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
+      mockGraphQLClient.hadRecentStreamInfoQueryFailure = vi.fn().mockReturnValue(false);
 
       const streamerInfo: StreamerInfo = {
         username: 'testuser',
@@ -161,6 +163,7 @@ describe('TwitchAPI', () => {
       mockGraphQLClient.getStreamInfo = vi.fn().mockResolvedValue(null);
       mockGraphQLClient.getCircuitBreakerState = vi.fn().mockReturnValue('CLOSED');
       mockGraphQLClient.hadRecentNetworkFailure = vi.fn().mockReturnValue(false);
+      mockGraphQLClient.hadRecentStreamInfoQueryFailure = vi.fn().mockReturnValue(false);
 
       const streamerInfo: StreamerInfo = {
         username: 'testuser',

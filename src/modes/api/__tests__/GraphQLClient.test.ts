@@ -249,6 +249,42 @@ describe('GraphQLClient', () => {
 
       expect(result).toBeNull();
     });
+
+    it('использует WithIsStreamLiveQuery если overlay query сломан', async () => {
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            errors: [{ message: 'PersistedQueryNotFound' }],
+            data: null,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            errors: [{ message: 'Cannot query field "name" on type "Tag".' }],
+            data: null,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              user: {
+                stream: { id: 'live-broadcast-99' },
+              },
+            },
+          }),
+        });
+
+      const result = await client.getStreamInfo('testuser', 'channel-123');
+
+      expect(result?.broadcastId).toBe('live-broadcast-99');
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe('getChannelPoints', () => {

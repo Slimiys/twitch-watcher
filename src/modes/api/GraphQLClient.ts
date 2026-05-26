@@ -33,6 +33,8 @@ export class GraphQLClient {
   private integrityProvider: TwitchIntegrityProvider;
   /** Время последней сетевой ошибки (для защиты от ложного OFFLINE) */
   private lastNetworkFailureAt = 0;
+  /** Не удалось надёжно определить статус стрима (сломанный persisted/full query) */
+  private lastStreamInfoQueryFailureAt = 0;
   /** Некритичные операции — баллы/статус дублируются через WebSocket */
   private static readonly NON_CRITICAL_OPERATIONS = [
     'ChannelPointsContext',
@@ -96,6 +98,59 @@ export class GraphQLClient {
    */
   hadRecentNetworkFailure(withinMs: number = 120000): boolean {
     return this.lastNetworkFailureAt > 0 && Date.now() - this.lastNetworkFailureAt < withinMs;
+  }
+
+  /**
+   * Был ли недавно сбой определения статуса стрима через GraphQL (не подтверждённый OFFLINE)
+   */
+  hadRecentStreamInfoQueryFailure(withinMs: number = 120000): boolean {
+    return (
+      this.lastStreamInfoQueryFailureAt > 0 &&
+      Date.now() - this.lastStreamInfoQueryFailureAt < withinMs
+    );
+  }
+
+  private markStreamInfoQueryFailure(): void {
+    this.lastStreamInfoQueryFailureAt = Date.now();
+  }
+
+  private clearStreamInfoQueryFailure(): void {
+    this.lastStreamInfoQueryFailureAt = 0;
+  }
+
+  private static hasUnreliableGraphQLErrors(response: GraphQLResponse): boolean {
+    return Boolean(
+      response.errors?.some((e: { message?: string }) => {
+        const msg = e.message ?? '';
+        return (
+          msg.includes('PersistedQueryNotFound') ||
+          msg.includes('Cannot query field')
+        );
+      })
+    );
+  }
+
+  /**
+   * Минимальная информация о стриме по channelId (fallback WhenIsStreamLiveQuery)
+   */
+  private async getStreamInfoViaLiveQuery(channelId: string): Promise<{
+    broadcastId: string;
+    title: string;
+    game: null;
+    tags: [];
+    viewersCount: number;
+  } | null> {
+    const liveId = await this.checkStreamerOnline(channelId);
+    if (!liveId) {
+      return null;
+    }
+    return {
+      broadcastId: liveId,
+      title: '',
+      game: null,
+      tags: [],
+      viewersCount: 0,
+    };
   }
 
   private markNetworkFailure(error: any): void {
@@ -530,9 +585,13 @@ export class GraphQLClient {
   /**
    * Получает информацию о стриме
    * @param username Имя пользователя
-   * @returns Информация о стриме или null
+   * @param channelId ID канала для fallback WithIsStreamLiveQuery
+   * @returns Информация о стриме или null (null = офлайн или статус неизвестен)
    */
-  async getStreamInfo(username: string): Promise<{
+  async getStreamInfo(
+    username: string,
+    channelId?: string
+  ): Promise<{
     broadcastId: string;
     title: string;
     game: any;
@@ -586,7 +645,6 @@ export class GraphQLClient {
                 viewersCount
                 tags {
                   id
-                  name
                   localizedName
                 }
               }
@@ -618,8 +676,16 @@ export class GraphQLClient {
             logger.verbose(`⚠️  Full query failed for getStreamInfo(${username}), using persisted query data: ${e.message || e}`);
             response = { ...response, data: persistedQueryData };
           } else {
-            // Если и persisted query не вернул данных, возвращаем null
+            // Если и persisted query не вернул данных — пробуем live query
+            if (channelId) {
+              const viaLive = await this.getStreamInfoViaLiveQuery(channelId);
+              if (viaLive) {
+                this.clearStreamInfoQueryFailure();
+                return viaLive;
+              }
+            }
             logger.verbose(`⚠️  Both queries failed for getStreamInfo(${username}): ${e.message || e}`);
+            this.markStreamInfoQueryFailure();
             return null;
           }
         }
@@ -627,7 +693,8 @@ export class GraphQLClient {
       
       if (response.data?.user?.stream) {
         const stream = response.data.user.stream;
-        
+        this.clearStreamInfoQueryFailure();
+
         return {
           broadcastId: stream.id,
           title: response.data.user.broadcastSettings?.title || '',
@@ -636,13 +703,44 @@ export class GraphQLClient {
           viewersCount: stream.viewersCount || 0,
         };
       }
-      
+
+      const user = response.data?.user;
+      const explicitOffline =
+        user != null &&
+        user.stream == null &&
+        !GraphQLClient.hasUnreliableGraphQLErrors(response);
+
+      if (explicitOffline) {
+        this.clearStreamInfoQueryFailure();
+        return null;
+      }
+
+      if (channelId) {
+        const viaLive = await this.getStreamInfoViaLiveQuery(channelId);
+        if (viaLive) {
+          this.clearStreamInfoQueryFailure();
+          logger.verbose(
+            `⚠️  getStreamInfo(${username}): overlay query failed, stream is LIVE via WithIsStreamLiveQuery`
+          );
+          return viaLive;
+        }
+      }
+
+      this.markStreamInfoQueryFailure();
       return null;
     } catch (error: any) {
       // Обрабатываем ошибки GraphQL
       // При ошибках не можем определить статус стримера, возвращаем null
       // НО не помечаем стримера как офлайн - это сделает вызывающий код на основе других источников
       if (error.message && (error.message.includes('timeout') || error.message.includes('service timeout'))) {
+        this.markStreamInfoQueryFailure();
+        if (channelId) {
+          const viaLive = await this.getStreamInfoViaLiveQuery(channelId);
+          if (viaLive) {
+            this.clearStreamInfoQueryFailure();
+            return viaLive;
+          }
+        }
         return null;
       }
       
@@ -654,6 +752,14 @@ export class GraphQLClient {
         error.message.includes('PersistedQueryNotFound')
       )) {
         logger.verbose(`⚠️  GraphQL error for getStreamInfo(${username}): ${error.message} - используем альтернативные источники`);
+        if (channelId) {
+          const viaLive = await this.getStreamInfoViaLiveQuery(channelId);
+          if (viaLive) {
+            this.clearStreamInfoQueryFailure();
+            return viaLive;
+          }
+        }
+        this.markStreamInfoQueryFailure();
         return null;
       }
       
