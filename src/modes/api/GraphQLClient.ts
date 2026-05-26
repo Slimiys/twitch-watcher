@@ -12,7 +12,7 @@ import { loadRetryConfig } from './configLoader';
 import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
-import { resolveIntegritySource } from './integrityConfig';
+import { allowApiIntegrityFallback, resolveIntegritySource } from './integrityConfig';
 
 /** Коды ClaimCommunityPoints, при которых повтор бесполезен */
 const PERMANENT_CLAIM_ERROR_CODES = new Set([
@@ -804,12 +804,14 @@ export class GraphQLClient {
     let response = await this.postRequest(operation, { requireIntegrity: true });
 
     if (GraphQLClient.hasIntegrityError(response)) {
-      if (resolveIntegritySource() === 'manual') {
-        logger.verbose(
-          '🔐  ClaimCommunityPoints: failed integrity check (manual) — повтор без обновления TWITCH_CLIENT_INTEGRITY пропущен'
+      const manualWithoutFallback =
+        resolveIntegritySource() === 'manual' && !allowApiIntegrityFallback();
+      if (manualWithoutFallback) {
+        logger.warn(
+          '🔐  Claim: failed integrity check — обновите Client-Integrity в «Конфиг бота» или включите TWITCH_INTEGRITY_FALLBACK_API'
         );
       } else {
-        logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, refreshing token...');
+        logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, повтор с обновлением токена...');
         this.integrityProvider.invalidate();
         response = await this.postRequest(operation, { requireIntegrity: true });
       }

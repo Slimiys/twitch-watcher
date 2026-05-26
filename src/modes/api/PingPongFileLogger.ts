@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { clearLogDirectoryOnStartup } from '../../logDirectory';
+import { clearLogDirectoryOnStartup, resolveLogDirectory } from '../../logDirectory';
+import { isFileLoggingEnabled } from './logSettings';
 
 /**
  * Двухфайловый логгер: при заполнении первого файла пишет во второй;
@@ -96,11 +97,10 @@ export interface PingPongFileLoggerSetup {
  * Создаёт файловый логгер из переменных окружения или null, если выключено.
  */
 export function createPingPongFileLoggerFromEnv(): PingPongFileLoggerSetup {
-  const logDir = process.env.LOG_DIR || './logs';
+  const logDir = resolveLogDirectory();
   const clearedFiles = clearLogDirectoryOnStartup(logDir);
 
-  const enabled = process.env.LOG_TO_FILE !== 'false' && process.env.LOG_TO_FILE !== '0';
-  if (!enabled) {
+  if (!isFileLoggingEnabled()) {
     return { logger: null, clearedFiles, logDir };
   }
 

@@ -3786,6 +3786,16 @@ async function saveWatchSettingsFromForm() {
 
 const APP_CONFIG_SECRET_PLACEHOLDER = '••••••••';
 
+/** Boolean в конфиге: LOG_TO_FILE и LOG_CLEAR_ON_START включены по умолчанию */
+const APP_CONFIG_BOOLEAN_DEFAULT_TRUE = new Set(['LOG_TO_FILE', 'LOG_CLEAR_ON_START']);
+
+function isAppConfigBooleanChecked(field, value) {
+    if (APP_CONFIG_BOOLEAN_DEFAULT_TRUE.has(field.key)) {
+        return value !== 'false' && value !== '0';
+    }
+    return value === 'true' || value === '1';
+}
+
 /**
  * ID поля формы конфига бота
  */
@@ -3852,7 +3862,7 @@ function renderAppConfigForm(data) {
                 }
                 html += '</select>';
             } else if (field.inputType === 'boolean') {
-                const checked = value === 'true' || value === '1' ? ' checked' : '';
+                const checked = isAppConfigBooleanChecked(field, value) ? ' checked' : '';
                 html += `<label class="settings-checkbox-label"><input type="checkbox" id="${id}" class="settings-checkbox"${checked}><span>Включено</span></label>`;
             } else if (field.inputType === 'number') {
                 html += `<input type="number" id="${id}" class="settings-select" style="width:100%" value="${escapeHtml(value)}">`;

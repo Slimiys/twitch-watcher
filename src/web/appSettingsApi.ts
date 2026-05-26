@@ -3,7 +3,7 @@
  */
 
 import { loadTokenFromConfig, tryStartWatcherIfNeeded } from '../appRuntime';
-import { logger } from '../modes/api/logger';
+import { logger, reloadLoggerFromAppSettings } from '../modes/api/logger';
 import {
   applyAppSettingsFromInput,
   ApplyAppSettingsInput,
@@ -27,6 +27,7 @@ export async function applyAppSettingsApi(
 ): Promise<ApplyAppSettingsResult & { watcherStarted?: boolean; watcherMessage?: string }> {
   const hadTokenBefore = Boolean(loadTokenFromConfig());
   const result = applyAppSettingsFromInput(body);
+  reloadLoggerFromAppSettings();
 
   let watcherStarted: boolean | undefined;
   let watcherMessage: string | undefined;

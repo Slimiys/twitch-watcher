@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getProjectRoot } from '../../pidFile';
 import { AppConfig } from '../../types';
+import { APP_BOOLEAN_DEFAULT_TRUE, isAppBooleanEnabled, isFileLoggingEnabled } from './logSettings';
 
 /** Значение-заглушка: поле заполнено, менять не нужно */
 export const APP_SETTINGS_SECRET_PLACEHOLDER = '••••••••';
@@ -44,6 +45,18 @@ const RESTART_REQUIRED_KEYS = new Set([
   'FETCH_TIMEOUT_MS',
 ]);
 
+/** Integrity читается при создании GraphQL-клиента — нужен перезапуск */
+const INTEGRITY_RESTART_KEYS = new Set([
+  'TWITCH_INTEGRITY_SOURCE',
+  'TWITCH_CLIENT_INTEGRITY',
+  'TWITCH_CLIENT_INTEGRITY_EXPIRES',
+  'TWITCH_INTEGRITY_FALLBACK_API',
+  'TWITCH_DEVICE_ID',
+  'TWITCH_COOKIES',
+  'TWITCH_CLIENT_VERSION',
+  'TWITCH_CLIENT_SESSION_ID',
+]);
+
 /**
  * Описание полей для dashboard (группы и подписи)
  */
@@ -72,6 +85,7 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     label: 'Писать логи в файлы',
     section: 'Логирование',
     inputType: 'boolean',
+    hint: 'По умолчанию включено. Каталог — LOG_DIR (обычно ./logs)',
   },
   {
     key: 'LOG_DIR',
@@ -202,6 +216,7 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     label: 'Fallback POST /integrity (настройка бота)',
     section: 'Client-Integrity (Network → gql)',
     inputType: 'boolean',
+    hint: 'Если manual Client-Integrity устарел — попробовать POST /integrity (на Termux может не работать)',
   },
   {
     key: 'TWITCH_DEVICE_ID',
@@ -392,6 +407,37 @@ export function applyAppSettingsToProcessEnv(
 export function bootstrapAppSettings(configPath: string = getAppConfigPath()): void {
   const config = readAppConfigFile(configPath);
   applyAppSettingsToProcessEnv(config);
+  if (!isFileLoggingEnabled()) {
+    console.log(
+      'ℹ️  Запись логов в файлы отключена (LOG_TO_FILE=false). Включите «Писать логи в файлы» в «Конфиг бота».'
+    );
+  }
+}
+
+/**
+ * Сохраняет boolean-поле с учётом значения по умолчанию (не пишет true для opt-out полей)
+ */
+function persistBooleanAppSetting(config: AppConfig, key: string, enabled: boolean): void {
+  if (!config.app) {
+    config.app = {};
+  }
+  if (APP_BOOLEAN_DEFAULT_TRUE.has(key)) {
+    if (enabled) {
+      delete config.app[key];
+      delete process.env[key];
+    } else {
+      config.app[key] = 'false';
+      process.env[key] = 'false';
+    }
+    return;
+  }
+  if (enabled) {
+    config.app[key] = 'true';
+    process.env[key] = 'true';
+  } else {
+    delete config.app[key];
+    delete process.env[key];
+  }
 }
 
 /**
@@ -423,6 +469,10 @@ export function readAppSettingsForApi(configPath: string = getAppConfigPath()): 
 
   for (const field of APP_SETTING_FIELDS) {
     if (field.key === 'token') {
+      continue;
+    }
+    if (field.inputType === 'boolean') {
+      settings[field.key] = isAppBooleanEnabled(field.key, raw[field.key]) ? 'true' : 'false';
       continue;
     }
     const value = raw[field.key];
@@ -491,6 +541,17 @@ export function applyAppSettingsFromInput(
       continue;
     }
 
+    const fieldMeta = APP_SETTING_FIELDS.find((f) => f.key === key);
+    if (fieldMeta?.inputType === 'boolean') {
+      const enabled = str === 'true' || str === '1';
+      const prev = config.app[key];
+      persistBooleanAppSetting(config, key, enabled);
+      if (INTEGRITY_RESTART_KEYS.has(key) && prev !== config.app[key]) {
+        restartReasons.push(key);
+      }
+      continue;
+    }
+
     if (str === '') {
       delete config.app[key];
       delete process.env[key];
@@ -501,7 +562,14 @@ export function applyAppSettingsFromInput(
     }
 
     const prev = config.app[key];
-    if (RESTART_REQUIRED_KEYS.has(key) && prev !== undefined && String(prev) !== str) {
+    if (
+      (RESTART_REQUIRED_KEYS.has(key) || INTEGRITY_RESTART_KEYS.has(key)) &&
+      prev !== undefined &&
+      String(prev) !== str
+    ) {
+      restartReasons.push(key);
+    }
+    if (INTEGRITY_RESTART_KEYS.has(key) && prev === undefined && str) {
       restartReasons.push(key);
     }
 

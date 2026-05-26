@@ -1,5 +1,6 @@
 import * as util from 'util';
 import { createPingPongFileLoggerFromEnv, PingPongFileLogger } from './PingPongFileLogger';
+import { isFileLoggingEnabled } from './logSettings';
 
 /**
  * Уровни логирования
@@ -14,17 +15,35 @@ export enum LogLevel {
  * Менеджер логирования (консоль + опционально два файла с ротацией по размеру)
  */
 class Logger {
-  private level: LogLevel;
-  private readonly fileLogger: PingPongFileLogger | null;
+  private level: LogLevel = LogLevel.VERBOSE;
+  private fileLogger: PingPongFileLogger | null = null;
 
   constructor() {
+    this.applyLogLevelFromEnv();
+    this.reloadFileLoggingFromEnv(true);
+  }
+
+  /**
+   * Перечитывает LOG_LEVEL из process.env
+   */
+  applyLogLevelFromEnv(): void {
     const envLevel = (process.env.LOG_LEVEL || 'verbose').toLowerCase();
     this.level = Object.values(LogLevel).includes(envLevel as LogLevel)
       ? (envLevel as LogLevel)
       : LogLevel.VERBOSE;
+  }
 
+  /**
+   * Пересоздаёт файловый логгер по текущим LOG_* (после сохранения «Конфиг бота»)
+   */
+  reloadFileLoggingFromEnv(logStartupMessages = false): void {
     const fileSetup = createPingPongFileLoggerFromEnv();
     this.fileLogger = fileSetup.logger;
+
+    if (!logStartupMessages) {
+      return;
+    }
+
     if (fileSetup.clearedFiles > 0) {
       console.log(
         `🗑️  Log directory cleared on startup (${fileSetup.clearedFiles} file(s)): ${fileSetup.logDir}`
@@ -32,9 +51,13 @@ class Logger {
     }
     if (this.fileLogger) {
       const [p1, p2] = this.fileLogger.getLogPaths();
-      console.log(`📝  File logging enabled (max ${process.env.LOG_FILE_MAX_MB || '100'} MB per file, ping-pong):`);
+      console.log(
+        `📝  File logging enabled (max ${process.env.LOG_FILE_MAX_MB || '100'} MB per file, ping-pong):`
+      );
       console.log(`    ${p1}`);
       console.log(`    ${p2}`);
+    } else if (!isFileLoggingEnabled()) {
+      console.log('ℹ️  File logging disabled (LOG_TO_FILE=false в «Конфиг бота»)');
     }
   }
 
@@ -110,3 +133,14 @@ class Logger {
 
 // Экспортируем единственный экземпляр
 export const logger = new Logger();
+
+/**
+ * Применяет настройки логов из process.env после сохранения config
+ */
+export function reloadLoggerFromAppSettings(): void {
+  logger.applyLogLevelFromEnv();
+  logger.reloadFileLoggingFromEnv(false);
+  if (isFileLoggingEnabled()) {
+    logger.info('📝  File logging reloaded from config');
+  }
+}
