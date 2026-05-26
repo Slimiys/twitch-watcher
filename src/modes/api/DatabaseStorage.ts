@@ -98,6 +98,7 @@ export interface StreamerStats {
   updatedAt: number;
   lastStreamStart: number | null; // Время последнего запуска стрима (timestamp)
   lastStreamEnd: number | null; // Время последнего завершения стрима (timestamp)
+  lastStreamDurationMs: number | null; // Длительность последнего завершённого стрима (мс)
   lastGame: string | null; // Последняя категория стрима
   lastBalance: number | null; // Последний известный баланс баллов (currentPoints)
 }
@@ -229,7 +230,8 @@ export class DatabaseStorage {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_stream_start INTEGER,
-        last_stream_end INTEGER
+        last_stream_end INTEGER,
+        last_stream_duration_ms INTEGER
       )
     `);
 
@@ -276,6 +278,29 @@ export class DatabaseStorage {
       if (!error.message?.includes('duplicate column name')) {
         logger.verbose(`⚠️  Failed to add last_balance column: ${error.message}`);
       }
+    }
+
+    try {
+      this.db.exec(`
+        ALTER TABLE streamers ADD COLUMN last_stream_duration_ms INTEGER;
+      `);
+    } catch (error: any) {
+      if (!error.message?.includes('duplicate column name')) {
+        logger.verbose(`⚠️  Failed to add last_stream_duration_ms column: ${error.message}`);
+      }
+    }
+
+    try {
+      this.db.exec(`
+        UPDATE streamers
+        SET last_stream_duration_ms = last_stream_end - last_stream_start
+        WHERE last_stream_start IS NOT NULL
+          AND last_stream_end IS NOT NULL
+          AND last_stream_end >= last_stream_start
+          AND (last_stream_duration_ms IS NULL OR last_stream_duration_ms = 0)
+      `);
+    } catch (error: any) {
+      logger.verbose(`⚠️  Failed to backfill last_stream_duration_ms: ${error.message}`);
     }
 
     // Таблица ежедневных баллов
@@ -326,7 +351,7 @@ export class DatabaseStorage {
     // Создаем нового стримера
     const now = Date.now();
     const insertStmt = this.db.prepare(
-      'INSERT INTO streamers (username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end) VALUES (?, 0, 0, ?, ?, NULL, NULL)'
+      'INSERT INTO streamers (username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_stream_duration_ms) VALUES (?, 0, 0, ?, ?, NULL, NULL, NULL)'
     );
     insertStmt.bind([username, now, now]);
     insertStmt.step();
@@ -449,7 +474,9 @@ export class DatabaseStorage {
     if (!this.db) return null;
 
     try {
-      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game, last_balance FROM streamers WHERE username = ?');
+      const stmt = this.db.prepare(
+        'SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_stream_duration_ms, last_game, last_balance FROM streamers WHERE username = ?'
+      );
       stmt.bind([username]);
       const result = stmt.step() ? stmt.getAsObject() as any : null;
       stmt.free();
@@ -464,6 +491,7 @@ export class DatabaseStorage {
         updatedAt: result.updated_at,
         lastStreamStart: result.last_stream_start ?? null,
         lastStreamEnd: result.last_stream_end ?? null,
+        lastStreamDurationMs: result.last_stream_duration_ms ?? null,
         lastGame: result.last_game ?? null,
         lastBalance: result.last_balance ?? null,
       };
@@ -549,7 +577,9 @@ export class DatabaseStorage {
     if (!this.db) return [];
 
     try {
-      const stmt = this.db.prepare('SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_game, last_balance FROM streamers ORDER BY total_points DESC');
+      const stmt = this.db.prepare(
+        'SELECT username, total_points, total_watch_time_ms, created_at, updated_at, last_stream_start, last_stream_end, last_stream_duration_ms, last_game, last_balance FROM streamers ORDER BY total_points DESC'
+      );
       
       const results: StreamerStats[] = [];
       while (stmt.step()) {
@@ -562,6 +592,7 @@ export class DatabaseStorage {
           updatedAt: row.updated_at,
           lastStreamStart: row.last_stream_start ?? null,
           lastStreamEnd: row.last_stream_end ?? null,
+          lastStreamDurationMs: row.last_stream_duration_ms ?? null,
           lastGame: row.last_game ?? null,
           lastBalance: row.last_balance ?? null,
         });
@@ -618,8 +649,21 @@ export class DatabaseStorage {
       const streamerId = this.getOrCreateStreamer(username);
       const now = Date.now();
 
-      const stmt = this.db.prepare('UPDATE streamers SET last_stream_end = ?, updated_at = ? WHERE id = ?');
-      stmt.bind([timestamp, now, streamerId]);
+      let durationMs: number | null = null;
+      const startStmt = this.db.prepare('SELECT last_stream_start FROM streamers WHERE id = ?');
+      startStmt.bind([streamerId]);
+      const startRow = startStmt.step() ? (startStmt.getAsObject() as { last_stream_start: number | null }) : null;
+      startStmt.free();
+
+      const streamStart = startRow?.last_stream_start;
+      if (streamStart != null && timestamp >= streamStart) {
+        durationMs = timestamp - streamStart;
+      }
+
+      const stmt = this.db.prepare(
+        'UPDATE streamers SET last_stream_end = ?, last_stream_duration_ms = ?, updated_at = ? WHERE id = ?'
+      );
+      stmt.bind([timestamp, durationMs, now, streamerId]);
       stmt.step();
       stmt.free();
 
@@ -627,7 +671,11 @@ export class DatabaseStorage {
         this.saveDatabase();
       }
 
-      logger.verbose(`📺  Updated last stream end for ${username}: ${new Date(timestamp).toISOString()}`);
+      const durationLabel =
+        durationMs != null ? `, duration ${Math.round(durationMs / 60_000)} min` : '';
+      logger.verbose(
+        `📺  Updated last stream end for ${username}: ${new Date(timestamp).toISOString()}${durationLabel}`
+      );
     } catch (error: any) {
       logger.error(`❌  Failed to update last stream end: ${error.message || error}`);
     }

@@ -2760,6 +2760,11 @@ export class StreamWatcher {
         if (dbStats.lastStreamEnd) {
           logger.verbose(`📊  [${streamerInfo.username}] Last stream end: ${new Date(dbStats.lastStreamEnd).toISOString()}`);
         }
+        if (dbStats.lastStreamDurationMs) {
+          logger.verbose(
+            `📊  [${streamerInfo.username}] Last stream duration: ${Math.round(dbStats.lastStreamDurationMs / 60_000)} min`
+          );
+        }
         if (dbStats.lastGame) {
           logger.verbose(`📊  [${streamerInfo.username}] Last game: ${dbStats.lastGame}`);
           // Загружаем последнюю категорию из БД, если текущая категория не установлена

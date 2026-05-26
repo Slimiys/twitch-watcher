@@ -368,6 +368,7 @@ export class WebServer {
                 ...stat,
                 lastStreamStart: dbStats.lastStreamStart,
                 lastStreamEnd: dbStats.lastStreamEnd,
+                lastStreamDurationMs: dbStats.lastStreamDurationMs,
               };
             }
             return stat;

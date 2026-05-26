@@ -22,6 +22,9 @@
 - `total_watch_time_ms` - Общее время просмотра в миллисекундах (INTEGER DEFAULT 0)
 - `created_at` - Время создания записи (INTEGER - timestamp)
 - `updated_at` - Время последнего обновления (INTEGER - timestamp)
+- `last_stream_start` - Время начала последнего стрима (INTEGER, timestamp)
+- `last_stream_end` - Время окончания последнего стрима (INTEGER, timestamp)
+- `last_stream_duration_ms` - Длительность последнего завершённого стрима (INTEGER, мс)
 
 ### Таблица `daily_points`
 
@@ -45,6 +48,9 @@
 
 2. **Завершение сессии просмотра** - при завершении просмотра стрима:
    - Обновляется `total_watch_time_ms` в таблице `streamers`
+
+3. **Окончание трансляции** (offline / WebSocket stream-down):
+   - Обновляются `last_stream_end` и `last_stream_duration_ms` (разница с `last_stream_start`)
 
 ## Расположение базы данных
 

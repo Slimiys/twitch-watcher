@@ -55,10 +55,13 @@ let botUptimeSyncTimer = null;
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "lastStreamStart": true, "lastStreamEnd": true, "lastStreamDuration": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
+    if (visibleColumns.lastStreamDuration === undefined) {
+        visibleColumns.lastStreamDuration = true;
+    }
 } catch (e) {
-    visibleColumns = {notify: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, actions: true};
+    visibleColumns = {notify: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, lastStreamDuration: true, actions: true};
 }
 
 // Предыдущий статус стримеров (для уведомлений online/offline)
@@ -122,6 +125,24 @@ function formatTime(ms) {
     } else {
         return `${seconds}s`;
     }
+}
+
+/**
+ * Длительность последнего завершённого стрима (мс) из API или start/end
+ * @param {object} stat Строка статистики стримера
+ * @returns {number|null}
+ */
+function resolveLastStreamDurationMs(stat) {
+    const stored = Number(stat?.lastStreamDurationMs);
+    if (Number.isFinite(stored) && stored > 0) {
+        return stored;
+    }
+    const start = Number(stat?.lastStreamStart);
+    const end = Number(stat?.lastStreamEnd);
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start && start > 0) {
+        return end - start;
+    }
+    return null;
 }
 
 /**
@@ -2035,6 +2056,11 @@ function sortTableData(data, sort) {
                 valueB = b.lastStreamEnd ? Number(b.lastStreamEnd) : null;
                 treatZeroAsEmpty = true;
                 break;
+            case 'lastStreamDuration':
+                valueA = resolveLastStreamDurationMs(a);
+                valueB = resolveLastStreamDurationMs(b);
+                treatZeroAsEmpty = true;
+                break;
             case 'game':
                 valueA = a.game;
                 valueB = b.game;
@@ -2083,6 +2109,7 @@ function sortTableData(data, sort) {
                 break;
             case 'lastStreamStart':
             case 'lastStreamEnd':
+            case 'lastStreamDuration':
                 comparison = Number(valueA) - Number(valueB);
                 break;
             case 'game':
@@ -2111,7 +2138,8 @@ function sortTableData(data, sort) {
  */
 window.handleTableSort = function(column) {
     // Определяем, является ли колонка временной (для временных колонок начальное направление - desc)
-    const isTimeColumn = column === 'lastStreamStart' || column === 'lastStreamEnd';
+    const isTimeColumn =
+        column === 'lastStreamStart' || column === 'lastStreamEnd' || column === 'lastStreamDuration';
     
     // Если кликнули на ту же колонку, меняем направление сортировки
     if (tableSort.column === column) {
@@ -2238,6 +2266,11 @@ async function updateStatistics() {
         { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
         { key: 'lastStreamStart', label: 'Last Stream Start', visible: visibleColumns.lastStreamStart !== false },
         { key: 'lastStreamEnd', label: 'Last Stream End', visible: visibleColumns.lastStreamEnd !== false },
+        {
+            key: 'lastStreamDuration',
+            label: 'Last Stream Duration',
+            visible: visibleColumns.lastStreamDuration !== false,
+        },
         { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
     ];
     
@@ -2249,7 +2282,7 @@ async function updateStatistics() {
                 <tr>
                     ${visibleColumnsList.map(col => {
                         // Определяем, можно ли сортировать эту колонку
-                        const isSortable = ['streamer', 'lastStreamStart', 'lastStreamEnd'].includes(col.key);
+                        const isSortable = ['streamer', 'lastStreamStart', 'lastStreamEnd', 'lastStreamDuration'].includes(col.key);
                         const isSorted = tableSort.column === col.key;
                         const sortIcon = isSorted 
                             ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
@@ -2339,6 +2372,13 @@ async function updateStatistics() {
                             
                             // Все корректно - показываем с красным временем
                             return `<td>${formatTimeWithColors(endTime, '#ef4444')}</td>`;
+                        })() : ''}
+                        ${visibleColumns.lastStreamDuration !== false ? (() => {
+                            const durationMs = resolveLastStreamDurationMs(s);
+                            if (durationMs == null) {
+                                return '<td>-</td>';
+                            }
+                            return `<td title="Последний завершённый стрим">${formatTime(durationMs)}</td>`;
                         })() : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
