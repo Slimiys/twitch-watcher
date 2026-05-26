@@ -3717,7 +3717,7 @@ async function loadWatchSettingsIntoForm() {
         return;
     }
 
-    const data = await fetchData('/api/watch-settings');
+    const data = await fetchData('/watch-settings');
     if (!data) {
         if (hint) {
             hint.textContent = 'Не удалось загрузить настройки просмотра с сервера.';
@@ -3769,7 +3769,7 @@ async function saveWatchSettingsFromForm() {
         return { ok: false, message: 'Укажите корректный интервал в секундах' };
     }
 
-    const result = await postApi('/api/watch-settings', { cycleIntervalSec });
+    const result = await postApi('/watch-settings', { cycleIntervalSec });
 
     if (result.ok && result.data) {
         updateWatchSettingsHint(result.data);
@@ -3941,7 +3941,10 @@ async function showAppConfigModal() {
     document.addEventListener('keydown', escapeHandler);
 
     try {
-        const data = await fetchData('/api/app-settings');
+        const data = await fetchData('/app-settings');
+        if (!data?.fields) {
+            throw new Error('Пустой ответ сервера (проверьте API-ключ или перезапустите бота)');
+        }
         renderAppConfigForm(data);
         if (hint) {
             hint.textContent = data.configPath ? `Файл: ${data.configPath}` : '';
@@ -3978,7 +3981,7 @@ async function saveAppConfig() {
 
     try {
         const payload = collectAppConfigPayload();
-        const result = await postApi('/api/app-settings', payload);
+        const result = await postApi('/app-settings', payload);
 
         const apiKey = payload.settings?.WEB_DASHBOARD_API_KEY;
         if (apiKey) {
