@@ -30,6 +30,7 @@ import {
   applyWatchSettingsFromApi,
   readWatchSettingsForApi,
 } from './watchSettingsApi';
+import { applyAppSettingsApi, readAppSettingsApi } from './appSettingsApi';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -610,6 +611,29 @@ export class WebServer {
         res.json(result);
       } catch (error: any) {
         logger.error('Error applying watch settings:', error);
+        res.status(400).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/app-settings', (_req: Request, res: Response) => {
+      try {
+        res.json(readAppSettingsApi());
+      } catch (error: any) {
+        logger.error('Error getting app settings:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/app-settings', (req: Request, res: Response) => {
+      try {
+        const body = req.body ?? {};
+        const result = applyAppSettingsApi({
+          settings: body.settings,
+          token: body.token,
+        });
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error applying app settings:', error);
         res.status(400).json({ error: error.message || 'Unknown error' });
       }
     });

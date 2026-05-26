@@ -1894,6 +1894,26 @@ th.notify-header-clickable:active {
     overflow-y: auto;
 }
 
+.app-config-modal-content {
+    max-width: 720px;
+    max-height: 92vh;
+}
+
+.app-config-modal-body {
+    padding: 20px 24px;
+    overflow-y: auto;
+    max-height: calc(92vh - 120px);
+}
+
+.app-config-intro code {
+    color: #bf94ff;
+    font-size: 12px;
+}
+
+.app-config-form-root .settings-section:last-child {
+    border-bottom: none;
+}
+
 .test-modal-content {
     max-width: 520px;
 }

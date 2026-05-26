@@ -800,7 +800,7 @@ function syncAutoUpdateToggleUi(opts = {}) {
     toggle.disabled = !featureEnabled || !!lifecycleWaitMode || !!inProgress;
     if (wrap) {
         wrap.title = !featureEnabled
-            ? 'Нужен DASHBOARD_UPDATE_ENABLED=true в .env'
+            ? 'Включите «Обновление с dashboard» в «Конфиг бота»'
             : 'При обнаружении обновления установка запустится без подтверждения';
     }
 }
@@ -953,7 +953,7 @@ function renderVersionHealthCard(health) {
         detailParts.push(escapeHtml(st.checkSkippedReason));
     }
     if (st?.dashboardUpdateEnabled === false && uiState === 'available') {
-        detailParts.push('Для установки: DASHBOARD_UPDATE_ENABLED=true в .env');
+        detailParts.push('Для установки включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»');
     }
 
     const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
@@ -1061,7 +1061,7 @@ function promptInstallAppUpdate(st) {
             showNotification(
                 'warn',
                 `На ${st.remote}/${st.branch} есть ${formatRevisionWithCommitDate(st.remoteRevision, st.remoteRevisionCommittedAt)}. ` +
-                    'Включите DASHBOARD_UPDATE_ENABLED=true в .env'
+                    'Включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»'
             );
         }
         return;
@@ -2551,7 +2551,7 @@ function getOsNotificationAvailability() {
                 ok: false,
                 reason: 'insecure',
                 message: 'Уведомления ОС недоступны по HTTP с IP-адреса (например http://192.168.x.x). '
-                    + 'Включите WEB_SERVER_HTTPS=true в .env на сервере и откройте https://IP:3001, '
+                    + 'Включите HTTPS в «Конфиг бота» на сервере и откройте https://IP:3001, '
                     + 'или используйте http://localhost:3001 через SSH-туннель.',
             };
         }
@@ -3295,6 +3295,11 @@ window.addEventListener('load', () => {
         testBtn.addEventListener('click', showTestModal);
     }
 
+    const appConfigBtn = document.getElementById('appConfigBtn');
+    if (appConfigBtn) {
+        appConfigBtn.addEventListener('click', showAppConfigModal);
+    }
+
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', showSettingsModal);
@@ -3764,6 +3769,241 @@ async function saveWatchSettingsFromForm() {
     return result;
 }
 
+const APP_CONFIG_SECRET_PLACEHOLDER = '••••••••';
+
+/**
+ * ID поля формы конфига бота
+ */
+function appConfigFieldId(key) {
+    return `appCfg_${key}`;
+}
+
+/**
+ * Рендерит форму настроек бота по метаданным с сервера
+ */
+function renderAppConfigForm(data) {
+    const root = document.getElementById('appConfigFormRoot');
+    if (!root || !data?.fields) {
+        return;
+    }
+
+    const settings = data.settings || {};
+    const bySection = new Map();
+
+    for (const field of data.fields) {
+        if (field.key === 'token') {
+            continue;
+        }
+        if (!bySection.has(field.section)) {
+            bySection.set(field.section, []);
+        }
+        bySection.get(field.section).push(field);
+    }
+
+    let html = '';
+
+    html += '<div class="settings-section"><h4 class="settings-section-title">Авторизация</h4>';
+    html += '<div class="settings-item">';
+    html += '<label class="settings-label" for="appCfg_token">Twitch auth-token</label>';
+    html += `<input type="password" id="appCfg_token" class="settings-select" style="width:100%" autocomplete="off" placeholder="${data.tokenSet ? 'Оставьте пустым, чтобы не менять' : 'Вставьте auth-token'}"`;
+    if (data.tokenMasked) {
+        html += ` data-masked="${escapeHtml(data.tokenMasked)}"`;
+    }
+    html += '></div>';
+    if (data.tokenMasked) {
+        html += `<p class="settings-hint">Текущий: ${escapeHtml(data.tokenMasked)}</p>`;
+    }
+    html += '</div>';
+
+    for (const [section, fields] of bySection) {
+        html += `<div class="settings-section"><h4 class="settings-section-title">${escapeHtml(section)}</h4>`;
+        for (const field of fields) {
+            const id = appConfigFieldId(field.key);
+            const value = settings[field.key] ?? '';
+            html += '<div class="settings-item">';
+            html += `<label class="settings-label" for="${id}">${escapeHtml(field.label)}</label>`;
+            if (field.inputType === 'select' && field.options) {
+                html += `<select id="${id}" class="settings-select" style="width:100%">`;
+                for (const opt of field.options) {
+                    const selected = value === opt.value ? ' selected' : '';
+                    html += `<option value="${escapeHtml(opt.value)}"${selected}>${escapeHtml(opt.label)}</option>`;
+                }
+                html += '</select>';
+            } else if (field.inputType === 'boolean') {
+                const checked = value === 'true' || value === '1' ? ' checked' : '';
+                html += `<label class="settings-checkbox-label"><input type="checkbox" id="${id}" class="settings-checkbox"${checked}><span>Включено</span></label>`;
+            } else if (field.inputType === 'number') {
+                html += `<input type="number" id="${id}" class="settings-select" style="width:100%" value="${escapeHtml(value)}">`;
+            } else {
+                const type = field.inputType === 'password' ? 'password' : 'text';
+                const ph = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
+                html += `<input type="${type}" id="${id}" class="settings-select" style="width:100%" value="${escapeHtml(value)}"${ph} autocomplete="off">`;
+            }
+            if (field.hint) {
+                html += `<p class="settings-hint">${escapeHtml(field.hint)}</p>`;
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    root.innerHTML = html;
+}
+
+/**
+ * Собирает значения формы конфига бота
+ */
+function collectAppConfigPayload() {
+    const settings = {};
+    const root = document.getElementById('appConfigFormRoot');
+    if (!root) {
+        return { settings, token: undefined };
+    }
+
+    root.querySelectorAll('input, select').forEach((el) => {
+        const id = el.id || '';
+        if (!id.startsWith('appCfg_')) {
+            return;
+        }
+        const key = id.slice('appCfg_'.length);
+        if (key === 'token') {
+            return;
+        }
+
+        let value;
+        if (el.type === 'checkbox') {
+            value = el.checked ? 'true' : 'false';
+        } else if (el.tagName === 'SELECT') {
+            value = el.value;
+            if (value === '') {
+                settings[key] = '';
+                return;
+            }
+            value = value.trim();
+        } else {
+            value = el.value.trim();
+        }
+
+        if (value === '') {
+            return;
+        }
+        if (
+            (el.type === 'password' || el.dataset?.masked)
+            && (value === APP_CONFIG_SECRET_PLACEHOLDER || value.startsWith(APP_CONFIG_SECRET_PLACEHOLDER))
+        ) {
+            return;
+        }
+        settings[key] = value;
+    });
+
+    const tokenEl = document.getElementById('appCfg_token');
+    const token = tokenEl?.value?.trim() || undefined;
+
+    return { settings, token };
+}
+
+/**
+ * Открывает модальное окно конфига бота
+ */
+async function showAppConfigModal() {
+    const modal = document.getElementById('appConfigModal');
+    if (!modal) {
+        return;
+    }
+
+    const hint = document.getElementById('appConfigLoadHint');
+    const restartHint = document.getElementById('appConfigRestartHint');
+    if (hint) {
+        hint.textContent = 'Загрузка настроек с сервера…';
+    }
+    if (restartHint) {
+        restartHint.style.display = 'none';
+    }
+
+    modal.style.display = 'flex';
+    bindModalOverlayClose(modal, closeAppConfigModal);
+
+    const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeAppConfigModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+
+    try {
+        const data = await fetchData('/api/app-settings');
+        renderAppConfigForm(data);
+        if (hint) {
+            hint.textContent = data.configPath ? `Файл: ${data.configPath}` : '';
+        }
+        const existingKey = getDashboardApiKey();
+        const apiKeyField = document.getElementById(appConfigFieldId('WEB_DASHBOARD_API_KEY'));
+        if (apiKeyField && !apiKeyField.value && existingKey) {
+            apiKeyField.value = existingKey;
+        }
+        void loadWatchSettingsIntoForm();
+    } catch (e) {
+        if (hint) {
+            hint.textContent = 'Не удалось загрузить настройки: ' + (e.message || e);
+        }
+        showNotification('error', 'Не удалось загрузить конфиг бота');
+    }
+}
+
+function closeAppConfigModal() {
+    const modal = document.getElementById('appConfigModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * Сохраняет конфиг бота на сервере
+ */
+async function saveAppConfig() {
+    const saveBtn = document.getElementById('appConfigSaveBtn');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+    }
+
+    try {
+        const payload = collectAppConfigPayload();
+        const result = await postApi('/api/app-settings', payload);
+
+        const apiKey = payload.settings?.WEB_DASHBOARD_API_KEY;
+        if (apiKey) {
+            setDashboardApiKey(apiKey);
+        }
+
+        const watchResult = await saveWatchSettingsFromForm();
+        if (!watchResult.ok) {
+            showNotification('error', watchResult.message || 'Не удалось сохранить интервал просмотра');
+            return;
+        }
+
+        const restartHint = document.getElementById('appConfigRestartHint');
+        if (restartHint && result.restartRequired) {
+            restartHint.style.display = 'block';
+            restartHint.textContent =
+                'Сохранено. Перезапустите бота для: ' + (result.restartReasons || []).join(', ');
+        }
+
+        closeAppConfigModal();
+        const parts = [result.message || 'Конфиг сохранён'];
+        if (watchResult.data?.message) {
+            parts.push(watchResult.data.message);
+        }
+        showNotification('success', parts.join(' '));
+    } catch (e) {
+        showNotification('error', e.message || 'Не удалось сохранить конфиг');
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+        }
+    }
+}
+
 /**
  * Показывает панель настроек
  */
@@ -3784,11 +4024,6 @@ async function showSettingsModal() {
     document.getElementById('osNotificationsSetting').checked = settings.osNotifications;
     document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
 
-    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
-    if (apiKeyInput) {
-        apiKeyInput.value = getDashboardApiKey();
-    }
-
     const osHint = document.getElementById('osNotificationsHint');
     if (osHint) {
         const availability = getOsNotificationAvailability();
@@ -3804,8 +4039,6 @@ async function showSettingsModal() {
         }
     }
     
-    void loadWatchSettingsIntoForm();
-
     modal.style.display = 'flex';
     bindModalOverlayClose(modal, closeSettingsModal);
 
@@ -3845,11 +4078,6 @@ async function saveSettings() {
         soundNotifications: document.getElementById('soundNotificationsSetting').checked
     };
 
-    const apiKeyInput = document.getElementById('dashboardApiKeySetting');
-    if (apiKeyInput) {
-        setDashboardApiKey(apiKeyInput.value.trim());
-    }
-
     if (settings.osNotifications) {
         const permission = await ensureOsNotificationPermission();
         if (!permission.ok) {
@@ -3862,15 +4090,8 @@ async function saveSettings() {
     saveSettingsToStorage(settings);
     applySettings(settings);
 
-    const watchResult = await saveWatchSettingsFromForm();
-    if (!watchResult.ok) {
-        showNotification('error', watchResult.message || 'Не удалось сохранить настройки просмотра');
-        return;
-    }
-
     closeSettingsModal();
-    const watchMsg = watchResult.data?.message;
-    showNotification('success', watchMsg ? `Настройки сохранены. ${watchMsg}` : 'Настройки сохранены');
+    showNotification('success', 'Настройки интерфейса сохранены');
 }
 
 /**
@@ -4149,6 +4370,9 @@ window.saveSettings = saveSettings;
 window.toggleStreamerNotify = toggleStreamerNotify;
 window.toggleAllStreamerNotifications = toggleAllStreamerNotifications;
 window.showSettingsModal = showSettingsModal;
+window.showAppConfigModal = showAppConfigModal;
+window.closeAppConfigModal = closeAppConfigModal;
+window.saveAppConfig = saveAppConfig;
 window.showTestModal = showTestModal;
 window.closeTestModal = closeTestModal;
 window.testToastNotification = testToastNotification;

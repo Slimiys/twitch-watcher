@@ -1,6 +1,6 @@
-import * as dotenv from 'dotenv';
+import { bootstrapAppSettings } from './modes/api/appSettings';
 
-dotenv.config();
+bootstrapAppSettings();
 
 /**
  * Настраивает глобальный HTTP-клиент (undici): IPv4, таймауты, опциональный прокси.

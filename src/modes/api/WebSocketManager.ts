@@ -221,7 +221,7 @@ export class WebSocketManager {
         
         return validatedUserId;
       } else if (response.status === 401) {
-        logger.warn(`⚠️  Токен отклонён Twitch (401) — обновите token в .env или config.json`);
+        logger.warn(`⚠️  Токен отклонён Twitch (401) — обновите token в «Конфиг бота» или config.json`);
         return null;
       } else {
         logger.warn(`⚠️  Ответ валидации токена: ${response.status} ${response.statusText}`);

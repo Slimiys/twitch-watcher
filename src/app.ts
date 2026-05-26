@@ -79,23 +79,17 @@ async function readLoginData(): Promise<CookieData[]> {
       }
     }
 
-    // Если токена нет в config.json, проверяем переменную окружения
-    if (process.env.token) {
-      console.log('✅  Token found in environment variable');
-      cookie[0].value = process.env.token;
-      return cookie;
-    }
-
-    // Если токена нет ни в config.json, ни в переменной окружения
     if (fs.existsSync(configPath)) {
-      console.log('⚠️  Token not found in config.json, checking environment variable...');
+      console.log('⚠️  Token not found in config.json');
     } else {
       console.log('❌ No config file found!');
     }
 
     // В Docker или неинтерактивном режиме не можем запросить токен
     if (process.env.NODE_ENV === 'production' || !process.stdin.isTTY) {
-      throw new Error('Token not found in config.json or environment variable. Please set token in .env file or config.json');
+      throw new Error(
+        'Token not found in config.json. Set it in dashboard → «Конфиг бота» or add "token" to config.json'
+      );
     }
 
     const input: LoginInput = await askLogin();
@@ -150,7 +144,7 @@ async function startAPIMode(): Promise<void> {
   cookie = await readLoginData();
   if (!cookie || !cookie[0] || !cookie[0].value) {
     console.error('❌ ERROR: No auth token found!');
-    console.error('💡 Please set token in .env file or config.json');
+    console.error('💡 Укажите token в dashboard → «Конфиг бота» или в config.json');
     console.error('💡 The web interface will be available, but the watcher will not start');
     
     // Запускаем веб-сервер даже без токена, чтобы показать ошибку в интерфейсе

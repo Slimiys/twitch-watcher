@@ -28,7 +28,7 @@ export function validateDashboardControlRequest(scriptPath: string): { ok: true 
   if (!isDashboardUpdateEnabled()) {
     return {
       ok: false,
-      error: 'Управление через dashboard отключено. Установите DASHBOARD_UPDATE_ENABLED=true в .env',
+      error: 'Управление через dashboard отключено. Включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»',
     };
   }
   if (dashboardActionInProgress) {

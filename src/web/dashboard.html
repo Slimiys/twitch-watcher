@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=7">
-    <script src="dashboard.js?v=34" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=8">
+    <script src="dashboard.js?v=35" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -97,7 +97,11 @@
                                 <span>🔁</span>
                                 <span>Перезапустить</span>
                             </button>
-                            <button class="settings-btn" id="settingsBtn" title="Settings">
+                            <button class="settings-btn" id="appConfigBtn" title="Настройки бота (config.json)">
+                                <span>🛠</span>
+                                <span>Конфиг бота</span>
+                            </button>
+                            <button class="settings-btn" id="settingsBtn" title="Настройки интерфейса">
                                 <span>⚙️</span>
                                 <span>Settings</span>
                             </button>
@@ -424,31 +428,6 @@
                 </div>
                 
                 <div class="settings-section">
-                    <h4 class="settings-section-title">Просмотр (minute-watched)</h4>
-                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0 0 12px 0;">
-                        Ротация по очереди: один онлайн-канал за раз. Интервал сохраняется в config.json.
-                    </p>
-                    <div class="settings-item">
-                        <label class="settings-label" for="watchCycleIntervalSetting">Пауза между каналами (сек):</label>
-                        <input type="number" id="watchCycleIntervalSetting" class="settings-select" style="width: 100%;" min="15" max="600" step="1" value="60">
-                    </div>
-                    <p class="settings-hint" id="watchSettingsHint" style="color: #adadb8; font-size: 12px; margin: 0;">
-                        Загрузка настроек с сервера…
-                    </p>
-                </div>
-
-                <div class="settings-section">
-                    <h4 class="settings-section-title">API</h4>
-                    <div class="settings-item">
-                        <label class="settings-label" for="dashboardApiKeySetting">API-ключ (WEB_DASHBOARD_API_KEY):</label>
-                        <input type="password" id="dashboardApiKeySetting" class="settings-select" style="width: 100%;" autocomplete="off" placeholder="Оставьте пустым, если защита отключена">
-                    </div>
-                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0;">
-                        Ключ передаётся в заголовке X-API-Key. Хранится только в браузере (localStorage).
-                    </p>
-                </div>
-
-                <div class="settings-section">
                     <h4 class="settings-section-title">Управление настройками</h4>
                     <div class="settings-item" style="display: flex; gap: 10px;">
                         <button class="modal-btn modal-btn-secondary" onclick="exportSettings()">Экспорт настроек</button>
@@ -460,6 +439,39 @@
             <div class="modal-footer">
                 <button class="modal-btn modal-btn-secondary" onclick="closeSettingsModal()">Отмена</button>
                 <button class="modal-btn modal-btn-primary" onclick="saveSettings()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="appConfigModal" class="modal-overlay app-config-modal" style="display: none;">
+        <div class="modal-content app-config-modal-content">
+            <div class="modal-header">
+                <h3>Конфиг бота</h3>
+                <button type="button" class="modal-close" onclick="closeAppConfigModal()" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="modal-body app-config-modal-body">
+                <p class="settings-hint app-config-intro">
+                    Параметры сохраняются в <code>config.json</code> (секция <code>app</code> и поле <code>token</code>).
+                    Файл <code>.env</code> больше не используется.
+                </p>
+                <p class="settings-hint" id="appConfigLoadHint">Загрузка…</p>
+                <div id="appConfigFormRoot" class="app-config-form-root"></div>
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Просмотр (minute-watched)</h4>
+                    <p class="settings-hint" style="color: #adadb8; font-size: 12px; margin: 0 0 12px 0;">
+                        Ротация по очереди: один онлайн-канал за раз.
+                    </p>
+                    <div class="settings-item">
+                        <label class="settings-label" for="watchCycleIntervalSetting">Пауза между каналами (сек):</label>
+                        <input type="number" id="watchCycleIntervalSetting" class="settings-select" style="width: 100%;" min="15" max="600" step="1" value="60">
+                    </div>
+                    <p class="settings-hint" id="watchSettingsHint" style="color: #adadb8; font-size: 12px; margin: 0;"></p>
+                </div>
+                <p class="settings-hint" id="appConfigRestartHint" style="display: none; color: #ffb84d;"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="modal-btn modal-btn-secondary" onclick="closeAppConfigModal()">Отмена</button>
+                <button type="button" class="modal-btn modal-btn-primary" id="appConfigSaveBtn" onclick="saveAppConfig()">Сохранить</button>
             </div>
         </div>
     </div>

@@ -189,7 +189,7 @@ export class StreamWatcher {
             this.addCriticalNotification(
               'error',
               'Token Expired',
-              'Your Twitch token has expired. Please update it in config.json or .env file to continue watching streams.'
+              'Your Twitch token has expired. Please update it in dashboard → «Конфиг бота» or config.json.'
             );
             this.addEvent('token-expired', 'system', 'Token has expired - please update it');
           },
@@ -198,7 +198,7 @@ export class StreamWatcher {
             this.addCriticalNotification(
               'error',
               'Token Invalid',
-              'Your Twitch token is invalid. Please update it in config.json or .env file to continue watching streams.'
+              'Your Twitch token is invalid. Please update it in dashboard → «Конфиг бота» or config.json.'
             );
             this.addEvent('token-invalid', 'system', 'Token is invalid - please update it');
             
@@ -997,7 +997,7 @@ export class StreamWatcher {
       );
     } else if (hadIntegrityFailure) {
       logger.warn(
-        `⚠️  [${streamerInfo.username}] failed integrity check — обновите TWITCH_CLIENT_INTEGRITY в .env (DevTools → gql → Client-Integrity)`
+        `⚠️  [${streamerInfo.username}] failed integrity check — обновите Client-Integrity в «Конфиг бота» (DevTools → gql)`
       );
     } else {
       logger.verbose(`⚠️  [${streamerInfo.username}] Не удалось собрать бонус — повторим при следующем опросе`);

@@ -11,6 +11,8 @@ export interface AppConfig {
   watch?: {
     cycleIntervalMs?: number;
   };
+  /** Параметры, ранее задаваемые через .env (редактируются в dashboard → «Конфиг бота») */
+  app?: Record<string, string>;
 }
 
 /**

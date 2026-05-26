@@ -1,4 +1,13 @@
 {
+  "token": "your_auth_token_here",
+  "app": {
+    "LOG_LEVEL": "normal",
+    "WEB_SERVER_PORT": "3001",
+    "HEALTH_CHECK_PORT": "3000",
+    "TWITCH_INTEGRITY_SOURCE": "manual",
+    "TWITCH_CLIENT_INTEGRITY": "",
+    "WEB_DASHBOARD_API_KEY": ""
+  },
   "streamers": [
     "example_streamer_1",
     "example_streamer_2"

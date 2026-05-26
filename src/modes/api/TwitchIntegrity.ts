@@ -115,7 +115,7 @@ export class TwitchIntegrityProvider {
     this.apiRefreshPromise = null;
     if (this.source === 'manual') {
       logger.verbose(
-        '🔐  Integrity invalidated — обновите TWITCH_CLIENT_INTEGRITY в .env (Request Headers → Client-Integrity)'
+        '🔐  Integrity invalidated — обновите Client-Integrity в «Конфиг бота» (Request Headers → Client-Integrity)'
       );
     }
   }
@@ -150,7 +150,7 @@ export class TwitchIntegrityProvider {
     }
 
     throw new Error(
-      'Нет действующего TWITCH_CLIENT_INTEGRITY. Откройте twitch.tv в браузере, DevTools → Network → gql → скопируйте Client-Integrity в .env'
+      'Нет действующего Client-Integrity. Скопируйте из DevTools → gql в «Конфиг бота»'
     );
   }
 
