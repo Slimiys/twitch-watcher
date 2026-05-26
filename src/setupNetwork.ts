@@ -45,5 +45,5 @@ export function setupNetwork(): void {
       connections: 50,
     })
   );
-  console.log('✅  HTTP client: IPv4, keep-alive (Docker-friendly)');
+  console.log('✅  HTTP client: IPv4, keep-alive');
 }

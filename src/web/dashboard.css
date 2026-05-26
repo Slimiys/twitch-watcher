@@ -1478,6 +1478,15 @@ td.invalid-time span {
     gap: 8px;
 }
 
+#autoUpdateToggleControl.auto-update-toggle--feature-off .toggle-slider {
+    opacity: 0.55;
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .toggle-switch {
     position: relative;
     display: inline-block;

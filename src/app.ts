@@ -81,7 +81,6 @@ async function main(): Promise<void> {
   const versionLabel = getAppVersionLabel();
   console.clear();
   console.log('=========================');
-  console.log(`📦  Version: ${versionLabel}`);
   logger.info(`📦  Version: ${versionLabel}`);
   console.log('=========================');
 
@@ -93,7 +92,6 @@ async function main(): Promise<void> {
   console.log("=========================");
   
   logger.verbose(`🔍  Environment check:`);
-  logger.verbose(`   VERSION: ${versionLabel}`);
   logger.verbose(`   MODE: API (only mode available)`);
   const logLevel = (process.env.LOG_LEVEL || 'verbose').toLowerCase();
   logger.verbose(`   LOG_LEVEL: "${logLevel}"`);

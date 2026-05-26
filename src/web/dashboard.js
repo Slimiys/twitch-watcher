@@ -797,10 +797,11 @@ function syncAutoUpdateToggleUi(opts = {}) {
             ? opts.inProgress
             : versionUpdateStatus?.dashboardUpdateInProgress === true;
 
-    toggle.disabled = !featureEnabled || !!lifecycleWaitMode || !!inProgress;
+    toggle.disabled = !!lifecycleWaitMode || !!inProgress;
     if (wrap) {
+        wrap.classList.toggle('auto-update-toggle--feature-off', !featureEnabled);
         wrap.title = !featureEnabled
-            ? 'Включите «Обновление с dashboard» в «Конфиг бота»'
+            ? 'Сохраняет выбор. Чтобы автообновление работало, включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»'
             : 'При обнаружении обновления установка запустится без подтверждения';
     }
 }
@@ -820,6 +821,11 @@ function initAutoUpdateToggle() {
         safeSetLocalStorage('dashboardAutoUpdateEnabled', dashboardAutoUpdateEnabled.toString());
         if (!dashboardAutoUpdateEnabled) {
             autoUpdateTriggeredForRevision = null;
+        } else if (!dashboardUpdateFeatureEnabled) {
+            showNotification(
+                'info',
+                'Автообновление включено в интерфейсе. Для запуска установки включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»'
+            );
         }
     });
     syncAutoUpdateToggleUi();
@@ -3811,14 +3817,21 @@ function renderAppConfigForm(data) {
 
     let html = '';
 
-    html += '<div class="settings-section"><h4 class="settings-section-title">Авторизация</h4>';
+    const tokenMeta = data.fields?.find((f) => f.key === 'token');
+    const tokenLabel = tokenMeta?.label ?? 'Токен (cookie: auth-token)';
+    const tokenHint = tokenMeta?.hint ?? 'Application → Cookies → auth-token';
+
+    html += '<div class="settings-section"><h4 class="settings-section-title">Авторизация (Application → Cookies)</h4>';
     html += '<div class="settings-item">';
-    html += '<label class="settings-label" for="appCfg_token">Twitch auth-token</label>';
+    html += `<label class="settings-label" for="appCfg_token">${escapeHtml(tokenLabel)}</label>`;
     html += `<input type="password" id="appCfg_token" class="settings-select" style="width:100%" autocomplete="off" placeholder="${data.tokenSet ? 'Оставьте пустым, чтобы не менять' : 'Вставьте auth-token'}"`;
     if (data.tokenMasked) {
         html += ` data-masked="${escapeHtml(data.tokenMasked)}"`;
     }
     html += '></div>';
+    if (tokenHint) {
+        html += `<p class="settings-hint">${escapeHtml(tokenHint)}</p>`;
+    }
     if (data.tokenMasked) {
         html += `<p class="settings-hint">Текущий: ${escapeHtml(data.tokenMasked)}</p>`;
     }

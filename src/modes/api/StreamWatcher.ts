@@ -223,7 +223,7 @@ export class StreamWatcher {
               }, 2000);
             } else {
               logger.warn(
-                '⚠️  Токен невалиден — процесс продолжает работу (AUTO_EXIT_ON_INVALID_TOKEN=false или не-Docker)'
+                '⚠️  Токен невалиден — процесс продолжает работу (AUTO_EXIT_ON_INVALID_TOKEN не включён)'
               );
             }
           },
@@ -326,8 +326,8 @@ export class StreamWatcher {
 
       if (!userId) {
         if (lastValidation.errorType === 'network') {
-          logger.error('❌  Не удалось подключиться к Twitch (id.twitch.tv). Проверьте DNS Docker или прокси.');
-          logger.error('   На хосте: curl.exe validate. В .env: TWITCH_USER_ID=ваш_user_id, proxy=host.docker.internal:ПОРТ');
+          logger.error('❌  Не удалось подключиться к Twitch (id.twitch.tv). Проверьте DNS или прокси.');
+          logger.error('   Укажите TWITCH_USER_ID в «Конфиг бота» или настройте proxy при недоступности id.twitch.tv');
         } else {
           logger.error('❌  Token validation failed or user_id not found');
           logger.error(`   Token valid: ${lastValidation.isValid}`);
@@ -1938,7 +1938,7 @@ export class StreamWatcher {
       return;
     }
 
-    logger.verbose('ℹ️  Health check auto-exit enabled (Docker or AUTO_EXIT_ON_UNHEALTHY=true)');
+    logger.verbose('ℹ️  Health check auto-exit enabled (AUTO_EXIT_ON_UNHEALTHY=true)');
 
     const checkInterval = 10000; // Проверяем каждые 10 секунд
     const monitoringStartDelayMs = 20000; // Даём health-серверу подняться до первой проверки

@@ -372,7 +372,7 @@ export class GraphQLClient {
         this.lastNetworkFailureAt = Date.now();
         logger.error(`❌  [Helix API] Сетевая ошибка при подключении к api.twitch.tv`);
         logger.error(`   Возможные причины:`);
-        logger.error(`   - Проблемы с DNS (проверьте настройки DNS в docker-compose.yml)`);
+        logger.error(`   - Проблемы с DNS (проверьте резолвинг gql.twitch.tv)`);
         logger.error(`   - Проблемы с интернет-соединением`);
         logger.error(`   - Блокировка доступа к Twitch (прокси, файрвол)`);
         logger.error(`   - Таймаут соединения`);
@@ -385,7 +385,7 @@ export class GraphQLClient {
         if (error.hostname) {
           logger.error(`   Хост: ${error.hostname}`);
         }
-        logger.error(`   Решение: проверьте сетевые настройки Docker контейнера`);
+        logger.error(`   Решение: проверьте сеть, прокси и файрвол`);
       } else if (errorMessage.includes('timeout')) {
         logger.error(`❌  [Helix API] Таймаут при запросе к api.twitch.tv`);
         logger.error(`   Возможные причины: медленное соединение или перегрузка сервера`);

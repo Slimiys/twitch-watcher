@@ -404,7 +404,7 @@ export class WebSocketManager {
             logger.error(`   - Проблемы с DNS сервером`);
             logger.error(`   - Проблемы с интернет-соединением`);
             logger.error(`   - Блокировка доступа к Twitch`);
-            logger.error(`   Решение: проверьте DNS настройки (в Docker используйте dns: [8.8.8.8, 8.8.4.4])`);
+            logger.error(`   Решение: проверьте DNS и доступность gql.twitch.tv`);
 
             this.criticalErrors.push({
               timestamp: Date.now(),

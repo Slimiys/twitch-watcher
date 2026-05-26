@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=8">
-    <script src="dashboard.js?v=36" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=9">
+    <script src="dashboard.js?v=38" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -452,7 +452,7 @@
             <div class="modal-body app-config-modal-body">
                 <p class="settings-hint app-config-intro">
                     Параметры сохраняются в <code>config.json</code> (секция <code>app</code> и поле <code>token</code>).
-                    Файл <code>.env</code> больше не используется.
+                    В подписях в скобках — имена из DevTools (Cookies / Request Headers запроса <code>gql</code>).
                 </p>
                 <p class="settings-hint" id="appConfigLoadHint">Загрузка…</p>
                 <div id="appConfigFormRoot" class="app-config-form-root"></div>

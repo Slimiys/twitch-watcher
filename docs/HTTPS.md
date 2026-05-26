@@ -41,10 +41,6 @@ npm run certs:generate
 | `SSL_EXTRA_SANS` | Доп. SAN: IP и DNS через запятую |
 | `SSL_CERT_CN` | Common Name (по умолчанию `twitch-watcher`) |
 
-## Docker
-
-Проброс порта 3001 без изменений. Примонтируйте том с сертификатами или задайте `SSL_EXTRA_SANS` и сгенерируйте сертификат при старте внутри контейнера (нужен openssl в образе).
-
 ## Доверенный сертификат (опционально)
 
 Для ПК без предупреждения используйте [mkcert](https://github.com/FiloSottile/mkcert): создайте сертификат для IP, укажите пути в `SSL_CERT_PATH` и `SSL_KEY_PATH`.
