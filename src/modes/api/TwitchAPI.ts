@@ -10,7 +10,12 @@ import { fetchWithRetry, RetryConfig } from './retry';
 import { loadRetryConfig } from './configLoader';
 import { CLIENT_ID } from './constants';
 import { isNetworkError } from './errorUtils';
-import { getWebSocketOnlineGraceMs } from './streamOnlineGrace';
+import {
+  applyBriefOfflineResume,
+  beginTentativeOfflineState,
+  canResumeFromBriefOffline,
+  getWebSocketOnlineGraceMs,
+} from './streamOnlineGrace';
 
 /**
  * API клиент для работы с Twitch
@@ -41,7 +46,14 @@ export class TwitchAPI {
       this.validatedUserId = validatedUserId;
     }
   }
-  
+
+  /**
+   * Сбрасывает кэш integrity после обновления токена из браузера
+   */
+  invalidateIntegrityCache(): void {
+    this.graphqlClient.getIntegrityProvider().invalidate();
+  }
+
   /**
    * Устанавливает валидированный user_id
    * @param userId User ID из валидации токена
@@ -429,20 +441,24 @@ export class TwitchAPI {
       );
 
       if (streamInfo) {
-        // Стример онлайн
+        const resumeBrief = canResumeFromBriefOffline(streamerInfo);
         const wasOnline = streamerInfo.isOnline;
-        streamerInfo.isOnline = true;
+
+        if (resumeBrief) {
+          applyBriefOfflineResume(streamerInfo);
+        } else {
+          streamerInfo.isOnline = true;
+          if (!wasOnline) {
+            streamerInfo.startTime = Date.now();
+          } else if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
+            streamerInfo.startTime = Date.now();
+          }
+        }
+
         streamerInfo.broadcastId = streamInfo.broadcastId;
         streamerInfo.title = streamInfo.title;
         streamerInfo.game = streamInfo.game?.name || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
-        
-        // startTime: при переходе в онлайн или если уже онлайн, но время не задано (GraphQL при init)
-        if (!wasOnline) {
-          streamerInfo.startTime = Date.now();
-        } else if (!streamerInfo.startTime || streamerInfo.startTime <= 0) {
-          streamerInfo.startTime = Date.now();
-        }
 
         // Получаем spade_url, если еще не получен
         if (!streamerInfo.spadeUrl) {
@@ -503,9 +519,7 @@ export class TwitchAPI {
             );
           } else {
             logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
-            streamerInfo.isOnline = false;
-            streamerInfo.webSocketOnlineAt = undefined;
-            streamerInfo.startTime = 0;
+            beginTentativeOfflineState(streamerInfo);
           }
         } else if (streamerInfo.isOnline && graphqlUnavailable) {
           // GraphQL недоступен — не помечаем офлайн, полагаемся на WebSocket

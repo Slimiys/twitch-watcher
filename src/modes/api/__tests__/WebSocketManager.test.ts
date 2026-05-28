@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebSocketManager } from '../WebSocketManager';
 import { StreamerInfo } from '../types';
+import { beginTentativeOfflineState } from '../streamOnlineGrace';
 
 // Мокаем ws модуль - создаем класс внутри factory функции
 vi.mock('ws', () => {
@@ -362,6 +363,10 @@ describe('WebSocketManager', () => {
         lastChannelPoints: 1000,
         streamPointsEarned: 0,
       };
+
+      mockEventHandlers.onStreamDown.mockImplementation((info: StreamerInfo) => {
+        beginTentativeOfflineState(info);
+      });
       
       (manager as any).streamers.set('123', streamerInfo);
 
@@ -372,8 +377,10 @@ describe('WebSocketManager', () => {
 
       (manager as any).handleVideoPlaybackMessage('123', message);
 
+      expect(mockEventHandlers.onStreamDown).toHaveBeenCalledWith(streamerInfo);
       expect(streamerInfo.isOnline).toBe(false);
       expect(streamerInfo.startTime).toBe(0);
+      expect(streamerInfo.offlineWatchSnapshot?.startTime).toBeGreaterThan(0);
     });
   });
 });

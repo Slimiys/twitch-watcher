@@ -19,8 +19,15 @@ import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
 import { DatabaseStorage } from './DatabaseStorage';
 import {
+  applyBriefOfflineResume,
+  beginTentativeOfflineState,
+  canResumeFromBriefOffline,
+  finalizeOfflineState,
+  getDisplayStreamStatus,
   getEffectiveWatchStartTime,
+  getOfflineResumeGraceMs,
   isEffectivelyOnline,
+  shouldFinalizeOffline,
 } from './streamOnlineGrace';
 import { loadStatisticsConfig } from './configLoader';
 import * as fs from 'fs';
@@ -711,6 +718,11 @@ export class StreamWatcher {
       onClaimAvailable: (streamerInfo, claimId) =>
         this.handleClaimAvailable(streamerInfo, claimId, graphqlClient),
       onStreamUp: async (streamerInfo) => {
+        if (canResumeFromBriefOffline(streamerInfo)) {
+          await this.resumeFromBriefOffline(streamerInfo, 'websocket');
+          return;
+        }
+
         logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
         const onlineAt = Date.now();
         this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
@@ -746,20 +758,7 @@ export class StreamWatcher {
         this.savePointsState();
       },
       onStreamDown: (streamerInfo) => {
-        logger.info(`😴  [${streamerInfo.username}] Stream went OFFLINE`);
-        streamerInfo.webSocketOnlineAt = undefined;
-        this.syncStreamPointsEarned(streamerInfo);
-        this.persistLastStreamEnd(streamerInfo.username, Date.now());
-        this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
-
-        const sessionId = this.activeSessions.get(streamerInfo.username);
-        if (this.statisticsStorage && sessionId) {
-          const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
-          this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
-          this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
-          this.activeSessions.delete(streamerInfo.username);
-        }
-        this.savePointsState();
+        this.beginTentativeOffline(streamerInfo, 'websocket');
       },
       onRaidAvailable: async (streamerInfo, raidId, targetLogin) => {
         const now = Date.now();
@@ -866,11 +865,98 @@ export class StreamWatcher {
    * Гарантирует startTime для онлайн-стримера (счётчик Active Watches в dashboard)
    */
   private ensureWatchSessionStarted(streamerInfo: StreamerInfo): void {
-    if (!streamerInfo.isOnline || streamerInfo.startTime > 0) {
+    if (!isEffectivelyOnline(streamerInfo) || streamerInfo.startTime > 0) {
+      return;
+    }
+    const snap = streamerInfo.offlineWatchSnapshot;
+    if (snap && snap.startTime > 0) {
+      streamerInfo.startTime = snap.startTime;
       return;
     }
     streamerInfo.startTime = Date.now();
     logger.verbose(`⏱️  [${streamerInfo.username}] Сессия просмотра: startTime установлен`);
+  }
+
+  /**
+   * Кратковременный офлайн: логируем OFFLINE, сессию не завершаем (grace до 5 мин)
+   */
+  private beginTentativeOffline(streamerInfo: StreamerInfo, source: string): void {
+    if (!beginTentativeOfflineState(streamerInfo)) {
+      return;
+    }
+    const graceMin = Math.round(getOfflineResumeGraceMs() / 60_000);
+    logger.info(
+      `😴  [${streamerInfo.username}] Stream went OFFLINE (${source}); сессия сохранена до ${graceMin} мин`
+    );
+    this.syncStreamPointsEarned(streamerInfo);
+    this.addEvent('stream-down', streamerInfo.username, 'Stream went offline');
+    this.savePointsState();
+  }
+
+  /**
+   * Окончательный офлайн после истечения grace или явного завершения
+   */
+  private finalizeStreamerOffline(streamerInfo: StreamerInfo, source: string): void {
+    if ((streamerInfo.offlineAt ?? 0) <= 0 && streamerInfo.isOnline) {
+      beginTentativeOfflineState(streamerInfo);
+    }
+
+    logger.info(`😴  [${streamerInfo.username}] Stream OFFLINE confirmed (${source})`);
+    this.syncStreamPointsEarned(streamerInfo);
+    const streamEndTime = Date.now();
+    this.persistLastStreamEnd(streamerInfo.username, streamEndTime);
+
+    const sessionId = this.activeSessions.get(streamerInfo.username);
+    if (this.statisticsStorage && sessionId) {
+      const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
+      this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
+      this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
+      this.activeSessions.delete(streamerInfo.username);
+    }
+
+    finalizeOfflineState(streamerInfo);
+    this.savePointsState();
+  }
+
+  /**
+   * Возврат в онлайн в пределах grace — без новой сессии и сброса баллов
+   */
+  private async resumeFromBriefOffline(
+    streamerInfo: StreamerInfo,
+    source: string
+  ): Promise<void> {
+    const offlineSec = Math.round((Date.now() - (streamerInfo.offlineAt ?? Date.now())) / 1000);
+    if (!applyBriefOfflineResume(streamerInfo)) {
+      return;
+    }
+
+    logger.info(
+      `🥳  [${streamerInfo.username}] Stream ONLINE again (${source}, офлайн ${offlineSec}s) — сессия продолжена`
+    );
+    this.recordLastOnlineTransition(streamerInfo.username, Date.now());
+    this.addEvent('stream-up', streamerInfo.username, 'Stream resumed after brief offline');
+
+    try {
+      await this.twitchAPI.updateStreamerInfo(streamerInfo, { allowOfflineDemotion: false });
+    } catch (error: any) {
+      logger.verbose(
+        `⚠️  [${streamerInfo.username}] Failed to refresh streamer info on resume: ${error.message || error}`
+      );
+    }
+
+    this.ensureWatchSessionStarted(streamerInfo);
+    this.savePointsState();
+  }
+
+  /**
+   * Завершает watch для стримеров с истёкшим grace краткого офлайна
+   */
+  private finalizeExpiredOfflineGraces(): void {
+    for (const streamerInfo of this.streamers.values()) {
+      if (shouldFinalizeOffline(streamerInfo)) {
+        this.finalizeStreamerOffline(streamerInfo, 'offline-grace-expired');
+      }
+    }
   }
 
   /**
@@ -1607,7 +1693,7 @@ export class StreamWatcher {
       this.syncStreamPointsEarned(streamerInfo);
       const pointsEarned = streamerInfo.streamPointsEarned ?? 0;
 
-      const status = effectivelyOnline ? 'ONLINE' : 'OFFLINE';
+      const status = getDisplayStreamStatus(streamerInfo);
       
       stats.push({
         streamerName: streamerInfo.username,
@@ -1727,9 +1813,12 @@ export class StreamWatcher {
    * Проверяет статус всех стримеров с graceful degradation
    */
   private async checkStreamersStatus(): Promise<void> {
+    this.finalizeExpiredOfflineGraces();
+
     for (const streamerInfo of this.streamers.values()) {
       try {
         const wasOnline = streamerInfo.isOnline;
+        const wasBriefOfflinePending = canResumeFromBriefOffline(streamerInfo);
         const previousGame = streamerInfo.game;
         await this.twitchAPI.updateStreamerInfo(streamerInfo);
         
@@ -1737,6 +1826,18 @@ export class StreamWatcher {
         this.saveGameToDatabaseIfChanged(streamerInfo, previousGame);
 
         if (!wasOnline && streamerInfo.isOnline) {
+          if (wasBriefOfflinePending || canResumeFromBriefOffline(streamerInfo)) {
+            if (canResumeFromBriefOffline(streamerInfo)) {
+              await this.resumeFromBriefOffline(streamerInfo, 'status-check');
+            } else {
+              logger.verbose(
+                `🥳  [${streamerInfo.username}] Краткий офлайн завершён (GraphQL), сессия без сброса`
+              );
+              this.recordLastOnlineTransition(streamerInfo.username, Date.now());
+              this.ensureWatchSessionStarted(streamerInfo);
+            }
+            continue;
+          }
           // Стример перешел из офлайн в онлайн
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
           const streamStartTime = Date.now();
@@ -1770,25 +1871,9 @@ export class StreamWatcher {
           this.addPointsHistory(streamerInfo.username, 0, totalPoints);
         this.ensureWatchSessionStarted(streamerInfo);
       } else if (wasOnline && !streamerInfo.isOnline) {
-          // Стример перешел из онлайн в офлайн
-          logger.info(`😴  [${streamerInfo.username}] is now OFFLINE - stopping watch`);
-          streamerInfo.startTime = 0;
-          streamerInfo.webSocketOnlineAt = undefined;
-          this.syncStreamPointsEarned(streamerInfo);
-          const streamEndTime = Date.now();
-          this.persistLastStreamEnd(streamerInfo.username, streamEndTime);
-
-          // Завершаем сессию просмотра
-          const sessionId = this.activeSessions.get(streamerInfo.username);
-          if (this.statisticsStorage && sessionId) {
-            const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
-            this.statisticsStorage.endSession(sessionId, finalPoints, 'completed');
-            
-            // Сохраняем время просмотра в базу данных
-            this.saveWatchTimeToDatabase(streamerInfo.username, sessionId);
-            
-            this.activeSessions.delete(streamerInfo.username);
-          }
+          this.beginTentativeOffline(streamerInfo, 'status-check');
+        } else if (!wasOnline && !streamerInfo.isOnline && shouldFinalizeOffline(streamerInfo)) {
+          this.finalizeStreamerOffline(streamerInfo, 'status-check');
         }
       } catch (error: any) {
         // Graceful degradation: при ошибке проверки статуса изолируем этого стримера и продолжаем с остальными
@@ -2271,6 +2356,14 @@ export class StreamWatcher {
     if (stats.length === 0) {
       this.addPointsHistory('system', 0, 0);
     }
+  }
+
+  /**
+   * Сбрасывает кэш integrity во всех GraphQL-клиентах процесса
+   */
+  invalidateIntegrityProviders(): void {
+    this.graphqlClient?.getIntegrityProvider().invalidate();
+    this.twitchAPI.invalidateIntegrityCache();
   }
 
   /**

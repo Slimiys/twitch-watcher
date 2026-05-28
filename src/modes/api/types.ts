@@ -31,6 +31,13 @@ export interface StreamerInfo {
   lastWatchPrepAt?: number; // Время последней подготовки перед minute-watched
   /** Последний stream-up по WebSocket (для grace и dashboard) */
   webSocketOnlineAt?: number;
+  /** Время перехода в офлайн (краткий офлайн < grace — сессия не завершается) */
+  offlineAt?: number;
+  /** Снимок watch-сессии при кратковременном офлайне */
+  offlineWatchSnapshot?: {
+    startTime: number;
+    webSocketOnlineAt?: number;
+  };
 }
 
 /**

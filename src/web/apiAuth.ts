@@ -10,6 +10,7 @@ const PUBLIC_API_PATHS = new Set([
   '/api/initialization-status',
   '/api/app-update-check',
   '/api/overall',
+  '/api/integrity/capture/status',
 ]);
 
 /**

@@ -1,0 +1,92 @@
+body {
+  width: 320px;
+  margin: 0;
+  padding: 14px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: #efeff1;
+  background: #18181b;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.hint {
+  margin: 0 0 12px;
+  color: #adadb8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+label span {
+  display: block;
+  margin-bottom: 4px;
+  color: #adadb8;
+  font-size: 11px;
+}
+
+label.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+label.row span {
+  margin: 0;
+}
+
+input[type="url"],
+input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid #3a3a3d;
+  border-radius: 4px;
+  background: #0e0e10;
+  color: #efeff1;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 4px;
+  background: #9147ff;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button#test {
+  background: #3a3a3d;
+}
+
+.status {
+  margin-top: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  background: #1f1f23;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.status.ok {
+  color: #00d166;
+}
+
+.status.err {
+  color: #ef4444;
+}

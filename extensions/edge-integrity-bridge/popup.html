@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Integrity Bridge</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <h1>Integrity Bridge</h1>
+  <p class="hint">Откройте twitch.tv в этой же сессии Edge — токен подхватится из gql.</p>
+
+  <label>
+    <span>URL бота</span>
+    <input id="botUrl" type="url" placeholder="http://127.0.0.1:3001" />
+  </label>
+
+  <label>
+    <span>API-ключ (WEB_DASHBOARD_API_KEY)</span>
+    <input id="apiKey" type="password" placeholder="если задан в config" autocomplete="off" />
+  </label>
+
+  <label class="row">
+    <input id="enabled" type="checkbox" checked />
+    <span>Передавать в бот</span>
+  </label>
+
+  <div class="actions">
+    <button id="save" type="button">Сохранить</button>
+    <button id="test" type="button">Проверить связь</button>
+  </div>
+
+  <p id="status" class="status">—</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

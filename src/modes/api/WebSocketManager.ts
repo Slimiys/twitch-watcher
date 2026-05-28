@@ -820,11 +820,6 @@ export class WebSocketManager {
       }
     } else if (videoMessage.type === 'stream-down') {
       if (streamerInfo.isOnline) {
-        streamerInfo.isOnline = false;
-        streamerInfo.webSocketOnlineAt = undefined;
-        streamerInfo.startTime = 0; // Сбрасываем время просмотра при уходе офлайн
-        logger.verbose(`🔄  [${streamerInfo.username}] Stream went down, resetting watch time`);
-        
         if (this.eventHandlers.onStreamDown) {
           this.eventHandlers.onStreamDown(streamerInfo);
         }

@@ -15,6 +15,7 @@ import {
   resolveHttpsCredentialPaths,
 } from './httpsCredentials';
 import { createDashboardApiKeyMiddleware } from './apiAuth';
+import { getIntegrityCaptureStatus, postIntegrityCapture } from './integrityCaptureApi';
 import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
 import { getAppVersionParts } from '../appVersion';
 import {
@@ -650,6 +651,27 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error applying app settings:', error);
         res.status(400).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/integrity/capture/status', (_req: Request, res: Response) => {
+      try {
+        res.json(getIntegrityCaptureStatus(this.port));
+      } catch (error: any) {
+        logger.error('Error getting integrity capture status:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/integrity/capture', (req: Request, res: Response) => {
+      try {
+        const streamWatcher = this.statisticsProvider as StreamWatcher | null;
+        const result = postIntegrityCapture(req.body ?? {}, streamWatcher);
+        const status = result.applied ? 200 : result.skipped ? 200 : 400;
+        res.status(status).json(result);
+      } catch (error: any) {
+        logger.error('Error applying integrity capture:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });
 
