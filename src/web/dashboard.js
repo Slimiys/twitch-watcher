@@ -1534,6 +1534,37 @@ function describeCircuitBreaker(graphql) {
 }
 
 /**
+ * Отсоединяет панель Integrity перед перерисовкой сетки (чтобы не потерять DOM и обработчики).
+ */
+function detachClientIntegrityPanel() {
+    const panel = document.getElementById('clientIntegrityPanel');
+    if (panel?.parentElement) {
+        panel.remove();
+    }
+    return panel;
+}
+
+/**
+ * Вставляет панель Integrity сразу после карточки «Версия» (второй элемент сетки).
+ */
+function placeClientIntegrityPanelAfterVersion(grid) {
+    const panel = document.getElementById('clientIntegrityPanel');
+    const versionCard = document.getElementById('botHealthVersionCard');
+    if (!panel || !grid) {
+        return;
+    }
+    if (versionCard) {
+        if (panel.previousElementSibling !== versionCard) {
+            versionCard.insertAdjacentElement('afterend', panel);
+        }
+        return;
+    }
+    if (!grid.contains(panel)) {
+        grid.prepend(panel);
+    }
+}
+
+/**
  * Обновляет панель «Статус бота»
  */
 async function updateBotHealth() {
@@ -1543,13 +1574,17 @@ async function updateBotHealth() {
         return;
     }
 
+    detachClientIntegrityPanel();
+
     const health = await fetchData('/bot-health');
     if (!health || health.error) {
         grid.innerHTML = `<p class="bot-health-empty">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
+        placeClientIntegrityPanelAfterVersion(grid);
         if (claimsEl) {
             claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
         }
         updateConnectionStatus(false);
+        await renderClientIntegrityPanel(health);
         return;
     }
 
@@ -1571,6 +1606,9 @@ async function updateBotHealth() {
 
     grid.innerHTML = cards.join('');
     bindBotHealthVersionCardClick();
+    placeClientIntegrityPanelAfterVersion(grid);
+
+    await renderClientIntegrityPanel(health);
 
     if (!claimsEl) {
         return;
@@ -1603,14 +1641,54 @@ async function updateBotHealth() {
             `;
         })
         .join('');
-
-    await renderClientIntegrityPanel(health);
 }
 
 const DASHBOARD_BRIDGE_MESSAGE_SOURCE = 'twitch-watcher-dashboard';
 const INTEGRITY_CAPTURE_REQUEST_POLL_MS = 2000;
 const INTEGRITY_CAPTURE_REQUEST_TIMEOUT_MS = 120000;
+const INTEGRITY_PANEL_CAPTURE_TITLE =
+    'Нажмите, чтобы запросить Client-Integrity (расширение Edge, twitch.tv)';
+const INTEGRITY_PANEL_CAPTURE_BUSY_TITLE =
+    'Ожидание передачи Client-Integrity от расширения…';
 let integrityCapturePollTimer = null;
+
+function isIntegrityCaptureRequestBusy() {
+    const panel = document.getElementById('clientIntegrityPanel');
+    return panel?.dataset.busy === '1';
+}
+
+function setIntegrityPanelCaptureBusy(busy) {
+    const panel = document.getElementById('clientIntegrityPanel');
+    if (!panel) {
+        return;
+    }
+    panel.dataset.state = busy ? 'requesting' : 'idle';
+    panel.dataset.busy = busy ? '1' : '0';
+    panel.title = busy ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE : INTEGRITY_PANEL_CAPTURE_TITLE;
+    if (busy) {
+        panel.setAttribute('aria-busy', 'true');
+    } else {
+        panel.removeAttribute('aria-busy');
+    }
+}
+
+function bindClientIntegrityPanelClick() {
+    const panel = document.getElementById('clientIntegrityPanel');
+    if (!panel || panel.dataset.bound === '1') {
+        return;
+    }
+    panel.dataset.bound = '1';
+    const activate = () => {
+        void requestIntegrityCaptureFromBridge();
+    };
+    panel.addEventListener('click', activate);
+    panel.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activate();
+        }
+    });
+}
 
 /**
  * Сообщение content script расширения Integrity Bridge
@@ -1744,12 +1822,17 @@ async function renderClientIntegrityPanel(health, captureStatus = null) {
 
     const claim = formatIntegrityClaimState(integrity?.bonusClaim);
     setIntegrityPanelValue('integrityClaimState', claim.text, claim.kind);
+
+    const captureBusy = Boolean(
+        captureStatus?.captureRequestPending || integrityCapturePollTimer != null
+    );
+    setIntegrityPanelCaptureBusy(captureBusy);
 }
 
 function startIntegrityCapturePoll(requestedAt) {
     stopIntegrityCapturePoll();
     const deadline = Date.now() + INTEGRITY_CAPTURE_REQUEST_TIMEOUT_MS;
-    const btn = document.getElementById('requestIntegrityCaptureBtn');
+    setIntegrityPanelCaptureBusy(true);
 
     integrityCapturePollTimer = setInterval(async () => {
         const status = await fetchData('/integrity/capture/status');
@@ -1759,9 +1842,7 @@ function startIntegrityCapturePoll(requestedAt) {
         const last = status?.lastCaptureAt ?? 0;
         if (last >= requestedAt) {
             stopIntegrityCapturePoll();
-            if (btn) {
-                btn.disabled = false;
-            }
+            setIntegrityPanelCaptureBusy(false);
             await updateBotHealth();
             return;
         }
@@ -1771,27 +1852,24 @@ function startIntegrityCapturePoll(requestedAt) {
                 'Таймаут. Откройте twitch.tv в Edge с расширением и обновите страницу.',
                 'err'
             );
-            if (btn) {
-                btn.disabled = false;
-            }
+            setIntegrityPanelCaptureBusy(false);
         }
     }, INTEGRITY_CAPTURE_REQUEST_POLL_MS);
 }
 
 async function requestIntegrityCaptureFromBridge() {
-    const btn = document.getElementById('requestIntegrityCaptureBtn');
-    if (!btn || btn.disabled) {
+    if (isIntegrityCaptureRequestBusy()) {
         return;
     }
 
-    btn.disabled = true;
+    setIntegrityPanelCaptureBusy(true);
     setIntegrityCaptureHint('Запрос отправлен…');
     notifyIntegrityBridgeExtension();
 
     const result = await postApi('/integrity/capture/request', {});
     if (!result.ok) {
         setIntegrityCaptureHint(result.message || 'Ошибка запроса', 'err');
-        btn.disabled = false;
+        setIntegrityPanelCaptureBusy(false);
         return;
     }
 
@@ -3527,12 +3605,7 @@ window.addEventListener('load', () => {
         settingsBtn.addEventListener('click', showSettingsModal);
     }
 
-    const requestIntegrityBtn = document.getElementById('requestIntegrityCaptureBtn');
-    if (requestIntegrityBtn) {
-        requestIntegrityBtn.addEventListener('click', () => {
-            void requestIntegrityCaptureFromBridge();
-        });
-    }
+    bindClientIntegrityPanelClick();
     
     // Раздел событий удален
     
