@@ -2546,6 +2546,31 @@ th.notify-header-clickable:active {
     margin-bottom: 0;
 }
 
+.bot-health-card-span-2 {
+    grid-column: span 2;
+}
+
+.bot-health-card-network .bot-health-network-block + .bot-health-network-block {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #2f2f35;
+}
+
+.bot-health-network-value {
+    font-size: 14px;
+}
+
+.bot-health-network-name {
+    display: inline-block;
+    min-width: 88px;
+    margin-right: 4px;
+    color: #adadb8;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 .bot-health-grid .bot-health-grid-message {
     grid-column: 1 / -1;
     margin: 0;
@@ -2872,6 +2897,10 @@ th.notify-header-clickable:active {
 @media (max-width: 600px) {
     .bot-health-grid {
         grid-template-columns: 1fr;
+    }
+
+    .bot-health-card-span-2 {
+        grid-column: span 1;
     }
 }
 

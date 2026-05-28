@@ -1534,6 +1534,30 @@ function describeCircuitBreaker(graphql) {
 }
 
 /**
+ * Карточка WebSocket + GraphQL CB
+ */
+function renderNetworkHealthCard(ws, graphql) {
+    const wsInfo = describeWebSocketHealth(ws);
+    const gqlInfo = describeCircuitBreaker(graphql);
+    const wsDot = `<span class="bot-health-status-dot ${healthStatusDotClass(wsInfo.kind)}"></span>`;
+    const gqlDot = `<span class="bot-health-status-dot ${healthStatusDotClass(gqlInfo.kind)}"></span>`;
+
+    return `
+        <div class="bot-health-card bot-health-card-network">
+            <div class="bot-health-card-title">WebSocket / GraphQL</div>
+            <div class="bot-health-network-block">
+                <div class="bot-health-card-value bot-health-network-value">${wsDot}<span class="bot-health-network-name">WebSocket</span> ${escapeHtml(wsInfo.label)}</div>
+                ${wsInfo.detail ? `<div class="bot-health-card-detail">${wsInfo.detail}</div>` : ''}
+            </div>
+            <div class="bot-health-network-block">
+                <div class="bot-health-card-value bot-health-network-value">${gqlDot}<span class="bot-health-network-name">GraphQL CB</span> ${escapeHtml(gqlInfo.label)}</div>
+                ${gqlInfo.detail ? `<div class="bot-health-card-detail">${gqlInfo.detail}</div>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Собирает HTML карточки Integrity (вторая в сетке «Статус бота»)
  */
 async function renderIntegrityHealthCard(health, captureStatus = null) {
@@ -1565,7 +1589,7 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
         : INTEGRITY_PANEL_CAPTURE_TITLE;
 
     return `
-        <div class="bot-health-card bot-health-card-integrity client-integrity-panel-clickable" id="clientIntegrityPanel" role="button" tabindex="0" data-state="${captureBusy ? 'requesting' : 'idle'}" data-busy="${captureBusy ? '1' : '0'}" title="${escapeHtml(panelTitle)}" aria-live="polite"${captureBusy ? ' aria-busy="true"' : ''}>
+        <div class="bot-health-card bot-health-card-integrity bot-health-card-span-2 client-integrity-panel-clickable" id="clientIntegrityPanel" role="button" tabindex="0" data-state="${captureBusy ? 'requesting' : 'idle'}" data-busy="${captureBusy ? '1' : '0'}" title="${escapeHtml(panelTitle)}" aria-live="polite"${captureBusy ? ' aria-busy="true"' : ''}>
             <div class="bot-health-card-title">Integrity</div>
             <p class="client-integrity-click-hint">Нажмите на карточку для запроса токена</p>
             <dl class="client-integrity-rows">
@@ -1623,9 +1647,6 @@ async function updateBotHealth() {
     updateConnectionStatus(health.websocket?.status === 'connected');
     lastBotHealthForVersion = health;
 
-    const ws = describeWebSocketHealth(health.websocket);
-    const gql = describeCircuitBreaker(health.graphql);
-
     let watcherKind = health.watcherRunning ? 'ok' : 'err';
     const watcherLabel = health.watcherRunning ? 'Работает' : 'Остановлен';
 
@@ -1633,8 +1654,7 @@ async function updateBotHealth() {
         renderVersionHealthCard(health),
         integrityCard,
         renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
-        renderBotHealthCard('WebSocket', escapeHtml(ws.label), ws.detail, ws.kind),
-        renderBotHealthCard('GraphQL CB', escapeHtml(gql.label), gql.detail, gql.kind),
+        renderNetworkHealthCard(health.websocket, health.graphql),
     ];
 
     grid.innerHTML = cards.join('');
