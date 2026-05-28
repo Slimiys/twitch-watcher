@@ -248,8 +248,9 @@
                 <div id="botHealthContent" class="bot-health-content">
                     <div id="botHealthGrid" class="bot-health-grid">
                         <p class="bot-health-loading">Загрузка…</p>
-                        <div class="client-integrity-panel client-integrity-panel-clickable bot-health-grid-integrity" id="clientIntegrityPanel" role="button" tabindex="0" data-state="idle" data-busy="0" title="Нажмите, чтобы запросить Client-Integrity (расширение Edge, twitch.tv)" aria-live="polite">
-                            <h3 class="client-integrity-title">Client Integrity</h3>
+                        <div class="bot-health-card bot-health-card-integrity client-integrity-panel-clickable bot-health-grid-integrity" id="clientIntegrityPanel" role="button" tabindex="0" data-state="idle" data-busy="0" title="Нажмите, чтобы запросить Client-Integrity (расширение Edge, twitch.tv)" aria-live="polite">
+                            <div class="bot-health-card-title">Client Integrity</div>
+                            <p class="client-integrity-click-hint">Нажмите на карточку для запроса токена</p>
                             <dl class="client-integrity-rows">
                                 <div class="client-integrity-row">
                                     <dt>Обновлён</dt>
@@ -258,6 +259,14 @@
                                 <div class="client-integrity-row">
                                     <dt>Токен</dt>
                                     <dd id="integrityTokenState">—</dd>
+                                </div>
+                                <div class="client-integrity-row">
+                                    <dt>Прошлый токен</dt>
+                                    <dd id="integrityPreviousToken" class="integrity-token-prefix">—</dd>
+                                </div>
+                                <div class="client-integrity-row">
+                                    <dt>Текущий токен</dt>
+                                    <dd id="integrityCurrentToken" class="integrity-token-prefix">—</dd>
                                 </div>
                                 <div class="client-integrity-row">
                                     <dt>Сбор бонусов</dt>

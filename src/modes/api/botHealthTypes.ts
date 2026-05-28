@@ -51,6 +51,10 @@ export interface IntegrityHealthSnapshot {
   lastUpdatedAtEstimated?: boolean;
   /** Удаётся ли собирать бонусы с текущим токеном; заполняется в getBotHealth */
   bonusClaim?: IntegrityBonusClaimSnapshot;
+  /** Первые 32 символа предыдущего токена (после последней смены) */
+  tokenPreviousPrefix?: string | null;
+  /** Первые 32 символа текущего токена */
+  tokenCurrentPrefix?: string | null;
 }
 
 /** GraphQL / Circuit Breaker */

@@ -1580,6 +1580,7 @@ async function updateBotHealth() {
     if (!health || health.error) {
         grid.innerHTML = `<p class="bot-health-empty">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
         placeClientIntegrityPanelAfterVersion(grid);
+        bindClientIntegrityPanelClick();
         if (claimsEl) {
             claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
         }
@@ -1607,6 +1608,7 @@ async function updateBotHealth() {
     grid.innerHTML = cards.join('');
     bindBotHealthVersionCardClick();
     placeClientIntegrityPanelAfterVersion(grid);
+    bindClientIntegrityPanelClick();
 
     await renderClientIntegrityPanel(health);
 
@@ -1679,6 +1681,9 @@ function bindClientIntegrityPanelClick() {
     }
     panel.dataset.bound = '1';
     const activate = () => {
+        if (isIntegrityCaptureRequestBusy()) {
+            return;
+        }
         void requestIntegrityCaptureFromBridge();
     };
     panel.addEventListener('click', activate);
@@ -1739,6 +1744,15 @@ function setIntegrityPanelValue(elementId, text, kind) {
     }
     el.textContent = text;
     el.className = integrityPanelStateClass(kind);
+}
+
+function setIntegrityPanelTokenPrefix(elementId, prefix) {
+    const el = document.getElementById(elementId);
+    if (!el) {
+        return;
+    }
+    el.textContent = prefix || '—';
+    el.className = `integrity-token-prefix ${integrityPanelStateClass(prefix ? 'ok' : 'muted')}`;
 }
 
 function formatIntegrityLastUpdated(integrity, captureStatus) {
@@ -1820,6 +1834,9 @@ async function renderClientIntegrityPanel(health, captureStatus = null) {
     const token = formatIntegrityTokenState(integrity);
     setIntegrityPanelValue('integrityTokenState', token.text, token.kind);
 
+    setIntegrityPanelTokenPrefix('integrityPreviousToken', integrity?.tokenPreviousPrefix);
+    setIntegrityPanelTokenPrefix('integrityCurrentToken', integrity?.tokenCurrentPrefix);
+
     const claim = formatIntegrityClaimState(integrity?.bonusClaim);
     setIntegrityPanelValue('integrityClaimState', claim.text, claim.kind);
 
@@ -1863,7 +1880,7 @@ async function requestIntegrityCaptureFromBridge() {
     }
 
     setIntegrityPanelCaptureBusy(true);
-    setIntegrityCaptureHint('Запрос отправлен…');
+    setIntegrityCaptureHint('Ожидание передачи от расширения…');
     notifyIntegrityBridgeExtension();
 
     const result = await postApi('/integrity/capture/request', {});

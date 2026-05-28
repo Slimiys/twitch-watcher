@@ -5,6 +5,7 @@ import {
   normalizeClientIntegrityToken,
   resetIntegrityCaptureThrottleForTests,
 } from '../integrityBrowserCapture';
+import { resetIntegrityTokenDisplayForTests } from '../integrityTokenDisplay';
 
 describe('integrityBrowserCapture', () => {
   const envBackup = { ...process.env };
@@ -12,6 +13,7 @@ describe('integrityBrowserCapture', () => {
   afterEach(() => {
     process.env = { ...envBackup };
     resetIntegrityCaptureThrottleForTests();
+    resetIntegrityTokenDisplayForTests();
   });
 
   it('normalizeClientIntegrityToken отклоняет короткие значения', () => {

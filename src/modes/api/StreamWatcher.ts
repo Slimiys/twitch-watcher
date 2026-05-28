@@ -13,6 +13,7 @@ import {
   deriveIntegrityBonusClaimStatus,
   resolveLastIntegrityUpdatedAt,
 } from './integrityBonusClaimStatus';
+import { getIntegrityTokenDisplay } from './integrityTokenDisplay';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
@@ -2399,11 +2400,14 @@ export class StreamWatcher {
             base.expiresAtMs,
             now
           );
+          const tokenDisplay = getIntegrityTokenDisplay();
           return {
             ...base,
             lastUpdatedAtMs: lastUpdated.atMs,
             lastUpdatedAtEstimated: lastUpdated.estimated,
             bonusClaim: deriveIntegrityBonusClaimStatus(base, [], null),
+            tokenPreviousPrefix: tokenDisplay.previousPrefix,
+            tokenCurrentPrefix: tokenDisplay.currentPrefix,
           };
         })();
 
@@ -2428,6 +2432,7 @@ export class StreamWatcher {
       getLastIntegrityCaptureAt(),
       integrity.expiresAtMs
     );
+    const tokenDisplay = getIntegrityTokenDisplay();
     const enrichedIntegrity = {
       ...integrity,
       lastUpdatedAtMs: lastUpdated.atMs,
@@ -2437,6 +2442,8 @@ export class StreamWatcher {
         claimByStreamer,
         this.lastIntegrityFailure
       ),
+      tokenPreviousPrefix: tokenDisplay.previousPrefix,
+      tokenCurrentPrefix: tokenDisplay.currentPrefix,
     };
 
     return {

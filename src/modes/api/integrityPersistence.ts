@@ -9,6 +9,7 @@ import {
   writeAppConfigFile,
 } from './appSettings';
 import { shouldPersistIntegrityToConfig } from './integrityConfig';
+import { recordIntegrityTokenForDisplay } from './integrityTokenDisplay';
 
 /**
  * Записывает integrity и срок в config.app и process.env
@@ -18,6 +19,7 @@ export function persistIntegrityToAppConfig(
   expiresAtMs: number,
   deviceId?: string
 ): void {
+  recordIntegrityTokenForDisplay(token);
   const expiresSec = Math.floor(expiresAtMs / 1000);
   process.env.TWITCH_CLIENT_INTEGRITY = token;
   process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES = String(expiresSec);
