@@ -79,7 +79,24 @@ export function postIntegrityCapture(
 ): BrowserIntegrityCaptureResult {
   const input: BrowserIntegrityCaptureInput = {
     clientIntegrity: String(body.clientIntegrity ?? body.integrity ?? ''),
-    deviceId: body.deviceId != null ? String(body.deviceId) : undefined,
+    deviceId:
+      body.deviceId != null
+        ? String(body.deviceId)
+        : body['X-Device-Id'] != null
+          ? String(body['X-Device-Id'])
+          : undefined,
+    clientVersion:
+      body.clientVersion != null
+        ? String(body.clientVersion)
+        : body['Client-Version'] != null
+          ? String(body['Client-Version'])
+          : undefined,
+    clientSessionId:
+      body.clientSessionId != null
+        ? String(body.clientSessionId)
+        : body['Client-Session-Id'] != null
+          ? String(body['Client-Session-Id'])
+          : undefined,
     expiresAt:
       body.expiresAt != null
         ? Number(body.expiresAt)
@@ -93,7 +110,7 @@ export function postIntegrityCapture(
 
   if (result.applied) {
     clearIntegrityCaptureRequest();
-    if (statisticsProvider) {
+    if (statisticsProvider && result.integrityApplied) {
       statisticsProvider.invalidateIntegrityProviders();
     }
   }

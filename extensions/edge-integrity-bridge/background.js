@@ -1,5 +1,5 @@
 /**
- * Перехват Client-Integrity из gql Twitch и отправка в бот
+ * Перехват Client-Integrity и GQL-заголовков из gql Twitch и отправка в бот
  */
 
 const DEFAULT_BOT_URL = 'http://127.0.0.1:3001';
@@ -8,9 +8,9 @@ const GQL_URL_PATTERNS = ['https://gql.twitch.tv/*'];
 const CAPTURE_REQUEST_POLL_MS = 5_000;
 const TWITCH_TAB_URLS = ['*://*.twitch.tv/*', '*://twitch.tv/*'];
 
-/** @type {{ lastToken: string, lastSentAt: number, enabled: boolean }} */
+/** @type {{ lastFingerprint: string, lastSentAt: number, enabled: boolean }} */
 let state = {
-  lastToken: '',
+  lastFingerprint: '',
   lastSentAt: 0,
   enabled: true,
 };
@@ -41,16 +41,45 @@ function readHeader(headers, name) {
 }
 
 /**
- * @param {string} token
- * @param {string|null} deviceId
+ * @param {chrome.webRequest.HttpHeader[]|undefined} headers
  */
-async function sendToBot(token, deviceId) {
+function capturePayloadFromHeaders(headers) {
+  return {
+    clientIntegrity: readHeader(headers, 'Client-Integrity'),
+    deviceId: readHeader(headers, 'X-Device-Id'),
+    clientVersion: readHeader(headers, 'Client-Version'),
+    clientSessionId: readHeader(headers, 'Client-Session-Id'),
+    source: 'edge-extension',
+  };
+}
+
+/**
+ * @param {{ clientIntegrity: string|null, deviceId: string|null, clientVersion: string|null, clientSessionId: string|null }} payload
+ */
+function payloadFingerprint(payload) {
+  return JSON.stringify([
+    payload.clientIntegrity || '',
+    payload.deviceId || '',
+    payload.clientVersion || '',
+    payload.clientSessionId || '',
+  ]);
+}
+
+/**
+ * @param {{ clientIntegrity: string|null, deviceId: string|null, clientVersion: string|null, clientSessionId: string|null, source: string }} payload
+ */
+async function sendToBot(payload) {
   if (!state.enabled) {
     return;
   }
 
+  if (!payload.clientIntegrity) {
+    return;
+  }
+
+  const fingerprint = payloadFingerprint(payload);
   const now = Date.now();
-  if (token === state.lastToken && now - state.lastSentAt < MIN_SEND_INTERVAL_MS) {
+  if (fingerprint === state.lastFingerprint && now - state.lastSentAt < MIN_SEND_INTERVAL_MS) {
     return;
   }
 
@@ -63,35 +92,45 @@ async function sendToBot(token, deviceId) {
     headers['X-API-Key'] = apiKey;
   }
 
+  const body = {
+    clientIntegrity: payload.clientIntegrity,
+    source: payload.source,
+  };
+  if (payload.deviceId) {
+    body.deviceId = payload.deviceId;
+  }
+  if (payload.clientVersion) {
+    body.clientVersion = payload.clientVersion;
+  }
+  if (payload.clientSessionId) {
+    body.clientSessionId = payload.clientSessionId;
+  }
+
   try {
     const res = await fetch(`${botUrl}/api/integrity/capture`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        clientIntegrity: token,
-        deviceId: deviceId || undefined,
-        source: 'edge-extension',
-      }),
+      body: JSON.stringify(body),
     });
 
-    const body = await res.json().catch(() => ({}));
+    const responseBody = await res.json().catch(() => ({}));
 
-    if (res.ok && body.applied) {
-      state.lastToken = token;
+    if (res.ok && responseBody.applied) {
+      state.lastFingerprint = fingerprint;
       state.lastSentAt = now;
       await chrome.storage.local.set({
         lastSuccessAt: now,
-        lastMessage: body.message || 'OK',
+        lastMessage: responseBody.message || 'OK',
       });
-      console.log('[Integrity Bridge] applied:', body.message);
-    } else if (res.ok && body.skipped) {
-      console.log('[Integrity Bridge] skipped:', body.message);
+      console.log('[Integrity Bridge] applied:', responseBody.message);
+    } else if (res.ok && responseBody.skipped) {
+      console.log('[Integrity Bridge] skipped:', responseBody.message);
     } else {
       await chrome.storage.local.set({
         lastErrorAt: now,
-        lastMessage: body.message || body.error || res.statusText,
+        lastMessage: responseBody.message || responseBody.error || res.statusText,
       });
-      console.warn('[Integrity Bridge] error:', res.status, body);
+      console.warn('[Integrity Bridge] error:', res.status, responseBody);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -102,12 +141,8 @@ async function sendToBot(token, deviceId) {
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
-    const integrity = readHeader(details.requestHeaders, 'Client-Integrity');
-    if (!integrity) {
-      return;
-    }
-    const deviceId = readHeader(details.requestHeaders, 'X-Device-Id');
-    void sendToBot(integrity, deviceId);
+    const payload = capturePayloadFromHeaders(details.requestHeaders);
+    void sendToBot(payload);
   },
   { urls: GQL_URL_PATTERNS },
   ['requestHeaders', 'extraHeaders']
@@ -121,7 +156,7 @@ let captureRequestPollTimer = null;
  */
 async function triggerTwitchIntegrityCapture() {
   state.lastSentAt = 0;
-  state.lastToken = '';
+  state.lastFingerprint = '';
 
   const tabs = await chrome.tabs.query({ url: TWITCH_TAB_URLS });
   const tabId = tabs.find((t) => t.id != null)?.id;

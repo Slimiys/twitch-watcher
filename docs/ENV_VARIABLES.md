@@ -36,7 +36,7 @@
 - `INTEGRITY_BRIDGE_ENABLED` - Приём `Client-Integrity` от расширения `extensions/edge-integrity-bridge` (по умолчанию включено; `false` / `0` — отключить)
 - `WEB_DASHBOARD_API_KEY` - Если задан, тот же ключ укажите в popup расширения (заголовок `X-API-Key`)
 
-Расширение отправляет токен в `POST /api/integrity/capture`. Перезапуск бота не нужен. Подробнее: `extensions/edge-integrity-bridge/README.md`.
+Расширение отправляет в `POST /api/integrity/capture`: `Client-Integrity`, `Client-Version`, `Client-Session-Id`, `X-Device-Id` (из заголовков gql.twitch.tv). Значения попадают в `TWITCH_CLIENT_*` / `TWITCH_DEVICE_ID`. Перезапуск бота не нужен. Подробнее: `extensions/edge-integrity-bridge/README.md`.
 
 ## Неиспользуемые переменные (можно удалить из .env)
 

@@ -94,7 +94,8 @@ export class TwitchIntegrityProvider {
    * Возвращает стабильный device id для заголовков Twitch
    */
   getDeviceId(): string {
-    return this.deviceId;
+    const fromEnv = process.env.TWITCH_DEVICE_ID?.trim();
+    return fromEnv || this.deviceId;
   }
 
   /**

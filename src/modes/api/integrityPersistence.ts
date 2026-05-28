@@ -8,6 +8,7 @@ import {
   readAppConfigFile,
   writeAppConfigFile,
 } from './appSettings';
+import { applyBrowserGqlContext } from './browserGqlContextCapture';
 import { shouldPersistIntegrityToConfig } from './integrityConfig';
 import { recordIntegrityTokenForDisplay } from './integrityTokenDisplay';
 
@@ -20,13 +21,12 @@ export function persistIntegrityToAppConfig(
   deviceId?: string
 ): void {
   recordIntegrityTokenForDisplay(token);
+  if (deviceId?.trim()) {
+    applyBrowserGqlContext({ deviceId: deviceId.trim() });
+  }
   const expiresSec = Math.floor(expiresAtMs / 1000);
   process.env.TWITCH_CLIENT_INTEGRITY = token;
   process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES = String(expiresSec);
-
-  if (deviceId?.trim()) {
-    process.env.TWITCH_DEVICE_ID = deviceId.trim();
-  }
 
   if (!shouldPersistIntegrityToConfig()) {
     return;
@@ -40,9 +40,6 @@ export function persistIntegrityToAppConfig(
     }
     config.app.TWITCH_CLIENT_INTEGRITY = token;
     config.app.TWITCH_CLIENT_INTEGRITY_EXPIRES = String(expiresSec);
-    if (deviceId?.trim()) {
-      config.app.TWITCH_DEVICE_ID = deviceId.trim();
-    }
     writeAppConfigFile(config, configPath);
     logger.info(
       `🔐  Client-Integrity обновлён автоматически (сохранён в config.json, истекает через ${formatExpiresIn(

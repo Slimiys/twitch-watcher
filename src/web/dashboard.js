@@ -1534,34 +1534,65 @@ function describeCircuitBreaker(graphql) {
 }
 
 /**
- * Отсоединяет панель Integrity перед перерисовкой сетки (чтобы не потерять DOM и обработчики).
+ * Собирает HTML карточки Integrity (вторая в сетке «Статус бота»)
  */
-function detachClientIntegrityPanel() {
-    const panel = document.getElementById('clientIntegrityPanel');
-    if (panel?.parentElement) {
-        panel.remove();
+async function renderIntegrityHealthCard(health, captureStatus = null) {
+    if (captureStatus == null) {
+        captureStatus = await fetchData('/integrity/capture/status');
     }
-    return panel;
-}
 
-/**
- * Вставляет панель Integrity сразу после карточки «Версия» (второй элемент сетки).
- */
-function placeClientIntegrityPanelAfterVersion(grid) {
-    const panel = document.getElementById('clientIntegrityPanel');
-    const versionCard = document.getElementById('botHealthVersionCard');
-    if (!panel || !grid) {
-        return;
+    const integrity = health?.integrity;
+    const lastUp = formatIntegrityLastUpdated(integrity, captureStatus);
+    const token = formatIntegrityTokenState(integrity);
+    const claim = formatIntegrityClaimState(integrity?.bonusClaim);
+    const prevPrefix = integrity?.tokenPreviousPrefix || '';
+    const curPrefix = integrity?.tokenCurrentPrefix || '';
+
+    let hintText = '';
+    let hintClass = 'integrity-capture-hint';
+    if (captureStatus?.captureRequestPending) {
+        hintText = 'Ожидание передачи от расширения…';
+    } else if (captureStatus?.enabled === false) {
+        hintText = 'Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)';
+        hintClass += ' err';
     }
-    if (versionCard) {
-        if (panel.previousElementSibling !== versionCard) {
-            versionCard.insertAdjacentElement('afterend', panel);
-        }
-        return;
-    }
-    if (!grid.contains(panel)) {
-        grid.prepend(panel);
-    }
+
+    const captureBusy = Boolean(
+        captureStatus?.captureRequestPending || integrityCapturePollTimer != null
+    );
+    const panelTitle = captureBusy
+        ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE
+        : INTEGRITY_PANEL_CAPTURE_TITLE;
+
+    return `
+        <div class="bot-health-card bot-health-card-integrity client-integrity-panel-clickable" id="clientIntegrityPanel" role="button" tabindex="0" data-state="${captureBusy ? 'requesting' : 'idle'}" data-busy="${captureBusy ? '1' : '0'}" title="${escapeHtml(panelTitle)}" aria-live="polite"${captureBusy ? ' aria-busy="true"' : ''}>
+            <div class="bot-health-card-title">Integrity</div>
+            <p class="client-integrity-click-hint">Нажмите на карточку для запроса токена</p>
+            <dl class="client-integrity-rows">
+                <div class="client-integrity-row">
+                    <dt>Обновлён</dt>
+                    <dd id="integrityLastUpdated" class="${integrityPanelStateClass(lastUp.kind)}">${escapeHtml(lastUp.text)}</dd>
+                </div>
+                <div class="client-integrity-row">
+                    <dt>Токен</dt>
+                    <dd id="integrityTokenState" class="${integrityPanelStateClass(token.kind)}">${escapeHtml(token.text)}</dd>
+                </div>
+                <div class="client-integrity-row">
+                    <dt>Прошлый токен</dt>
+                    <dd id="integrityPreviousToken" class="integrity-token-prefix ${integrityPanelStateClass(prevPrefix ? 'ok' : 'muted')}">${escapeHtml(prevPrefix || '—')}</dd>
+                </div>
+                <div class="client-integrity-row">
+                    <dt>Текущий токен</dt>
+                    <dd id="integrityCurrentToken" class="integrity-token-prefix ${integrityPanelStateClass(curPrefix ? 'ok' : 'muted')}">${escapeHtml(curPrefix || '—')}</dd>
+                </div>
+                <div class="client-integrity-row">
+                    <dt>Сбор бонусов</dt>
+                    <dd id="integrityClaimState" class="${integrityPanelStateClass(claim.kind)}">${escapeHtml(claim.text)}</dd>
+                </div>
+            </dl>
+            <p id="integrityCaptureHint" class="${hintClass}">${escapeHtml(hintText)}</p>
+        </div>
+    `;
 }
 
 /**
@@ -1574,18 +1605,18 @@ async function updateBotHealth() {
         return;
     }
 
-    detachClientIntegrityPanel();
-
     const health = await fetchData('/bot-health');
+    const integrityCard = await renderIntegrityHealthCard(health);
+
     if (!health || health.error) {
-        grid.innerHTML = `<p class="bot-health-empty">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
-        placeClientIntegrityPanelAfterVersion(grid);
+        grid.innerHTML =
+            integrityCard +
+            `<p class="bot-health-empty bot-health-grid-message">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
         bindClientIntegrityPanelClick();
         if (claimsEl) {
             claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
         }
         updateConnectionStatus(false);
-        await renderClientIntegrityPanel(health);
         return;
     }
 
@@ -1600,6 +1631,7 @@ async function updateBotHealth() {
 
     const cards = [
         renderVersionHealthCard(health),
+        integrityCard,
         renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
         renderBotHealthCard('WebSocket', escapeHtml(ws.label), ws.detail, ws.kind),
         renderBotHealthCard('GraphQL CB', escapeHtml(gql.label), gql.detail, gql.kind),
@@ -1607,10 +1639,7 @@ async function updateBotHealth() {
 
     grid.innerHTML = cards.join('');
     bindBotHealthVersionCardClick();
-    placeClientIntegrityPanelAfterVersion(grid);
     bindClientIntegrityPanelClick();
-
-    await renderClientIntegrityPanel(health);
 
     if (!claimsEl) {
         return;
@@ -1676,10 +1705,9 @@ function setIntegrityPanelCaptureBusy(busy) {
 
 function bindClientIntegrityPanelClick() {
     const panel = document.getElementById('clientIntegrityPanel');
-    if (!panel || panel.dataset.bound === '1') {
+    if (!panel) {
         return;
     }
-    panel.dataset.bound = '1';
     const activate = () => {
         if (isIntegrityCaptureRequestBusy()) {
             return;

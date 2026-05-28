@@ -29,8 +29,32 @@ describe('integrityBrowserCapture', () => {
     const result = applyBrowserIntegrityCapture({ clientIntegrity: token });
 
     expect(result.applied).toBe(true);
+    expect(result.integrityApplied).toBe(true);
     expect(process.env.TWITCH_CLIENT_INTEGRITY).toBe(token);
     expect(process.env.TWITCH_INTEGRITY_SOURCE).toBe('manual');
+  });
+
+  it('applyBrowserIntegrityCapture применяет GQL-контекст вместе с integrity', () => {
+    delete process.env.INTEGRITY_BRIDGE_ENABLED;
+    process.env.TWITCH_INTEGRITY_AUTO_PERSIST = 'false';
+
+    const token = 'z'.repeat(40);
+    const version = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const session = 'd'.repeat(32);
+    const device = 'e'.repeat(32);
+
+    const result = applyBrowserIntegrityCapture({
+      clientIntegrity: token,
+      clientVersion: version,
+      clientSessionId: session,
+      deviceId: device,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.gqlContextApplied).toBe(true);
+    expect(process.env.TWITCH_CLIENT_VERSION).toBe(version);
+    expect(process.env.TWITCH_CLIENT_SESSION_ID).toBe(session);
+    expect(process.env.TWITCH_DEVICE_ID).toBe(device);
   });
 
   it('троттлит повтор той же передачи', () => {

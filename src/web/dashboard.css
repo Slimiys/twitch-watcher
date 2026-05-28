@@ -2546,6 +2546,11 @@ th.notify-header-clickable:active {
     margin-bottom: 0;
 }
 
+.bot-health-grid .bot-health-grid-message {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
 .client-integrity-click-hint {
     margin: -4px 0 10px;
     font-size: 11px;

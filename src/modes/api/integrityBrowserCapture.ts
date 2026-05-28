@@ -2,6 +2,7 @@
  * Приём Client-Integrity из браузерного расширения (DevTools / gql)
  */
 
+import { applyBrowserGqlContext, BrowserGqlContextInput } from './browserGqlContextCapture';
 import { logger } from './logger';
 import { persistIntegrityToAppConfig } from './integrityPersistence';
 import { integrityExpirationToMs } from './integrityConfig';
@@ -12,7 +13,7 @@ const DEFAULT_BROWSER_INTEGRITY_TTL_MS = 4 * 60 * 60 * 1000;
 /** Минимальный интервал между одинаковыми токенами (мс) */
 const DUPLICATE_CAPTURE_INTERVAL_MS = 15_000;
 
-export interface BrowserIntegrityCaptureInput {
+export interface BrowserIntegrityCaptureInput extends BrowserGqlContextInput {
   clientIntegrity: string;
   deviceId?: string;
   /** Unix sec или ms; если не задан — +4 ч */
@@ -23,6 +24,8 @@ export interface BrowserIntegrityCaptureInput {
 export interface BrowserIntegrityCaptureResult {
   applied: boolean;
   skipped: boolean;
+  integrityApplied: boolean;
+  gqlContextApplied: boolean;
   message: string;
   expiresAtMs: number;
   deviceIdPrefix: string | null;
@@ -65,6 +68,8 @@ export function applyBrowserIntegrityCapture(
     return {
       applied: false,
       skipped: true,
+      integrityApplied: false,
+      gqlContextApplied: false,
       message: 'Приём integrity от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)',
       expiresAtMs: 0,
       deviceIdPrefix: null,
@@ -72,11 +77,31 @@ export function applyBrowserIntegrityCapture(
     };
   }
 
+  const gqlContextApplied = applyBrowserGqlContext({
+    clientVersion: input.clientVersion,
+    clientSessionId: input.clientSessionId,
+    deviceId: input.deviceId,
+  });
+
   const token = normalizeClientIntegrityToken(input.clientIntegrity);
   if (!token) {
+    if (gqlContextApplied) {
+      return {
+        applied: true,
+        skipped: false,
+        integrityApplied: false,
+        gqlContextApplied: true,
+        message: 'GQL-контекст применён (Client-Integrity не передан или некорректен)',
+        expiresAtMs: 0,
+        deviceIdPrefix: input.deviceId?.trim().slice(0, 8) ?? null,
+        capturedAt: now,
+      };
+    }
     return {
       applied: false,
       skipped: true,
+      integrityApplied: false,
+      gqlContextApplied: false,
       message: 'Некорректный Client-Integrity',
       expiresAtMs: 0,
       deviceIdPrefix: null,
@@ -92,9 +117,23 @@ export function applyBrowserIntegrityCapture(
     const expiresAtMs = manualExpires
       ? integrityExpirationToMs(Number(manualExpires), now)
       : now + DEFAULT_BROWSER_INTEGRITY_TTL_MS;
+    if (gqlContextApplied) {
+      return {
+        applied: true,
+        skipped: false,
+        integrityApplied: false,
+        gqlContextApplied: true,
+        message: 'GQL-контекст обновлён (тот же Client-Integrity недавно уже применён)',
+        expiresAtMs,
+        deviceIdPrefix: input.deviceId?.trim().slice(0, 8) ?? null,
+        capturedAt: now,
+      };
+    }
     return {
       applied: false,
       skipped: true,
+      integrityApplied: false,
+      gqlContextApplied: false,
       message: 'Тот же токен недавно уже применён',
       expiresAtMs,
       deviceIdPrefix: input.deviceId?.trim().slice(0, 8) ?? null,
@@ -107,10 +146,13 @@ export function applyBrowserIntegrityCapture(
       ? integrityExpirationToMs(Number(input.expiresAt), now)
       : now + DEFAULT_BROWSER_INTEGRITY_TTL_MS;
 
-  const deviceId = input.deviceId?.trim() || undefined;
-
   process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
-  persistIntegrityToAppConfig(token, expiresAtMs, deviceId);
+  persistIntegrityToAppConfig(token, expiresAtMs);
+
+  const deviceIdPrefix =
+    process.env.TWITCH_DEVICE_ID?.trim().slice(0, 8) ??
+    input.deviceId?.trim().slice(0, 8) ??
+    null;
 
   lastCaptureToken = token;
   lastCaptureAt = now;
@@ -120,12 +162,18 @@ export function applyBrowserIntegrityCapture(
     `🔐  Client-Integrity обновлён из ${sourceLabel} (истекает через ${formatExpiresIn(expiresAtMs, now)})`
   );
 
+  const message = gqlContextApplied
+    ? 'Client-Integrity и GQL-контекст применены'
+    : 'Client-Integrity применён';
+
   return {
     applied: true,
     skipped: false,
-    message: 'Client-Integrity применён',
+    integrityApplied: true,
+    gqlContextApplied,
+    message,
     expiresAtMs,
-    deviceIdPrefix: deviceId ? deviceId.slice(0, 8) : null,
+    deviceIdPrefix,
     capturedAt: now,
   };
 }

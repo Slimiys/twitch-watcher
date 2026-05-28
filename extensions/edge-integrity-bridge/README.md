@@ -18,7 +18,7 @@
 
 1. Откройте [twitch.tv](https://www.twitch.tv) в Edge (тот же профиль, где установлено расширение).
 2. Перейдите на любой канал или обновите страницу — пойдут gql-запросы.
-3. Расширение отправит `Client-Integrity` (и `X-Device-Id`, если есть) в `POST /api/integrity/capture`.
+3. Расширение отправит в `POST /api/integrity/capture`: `Client-Integrity`, `Client-Version`, `Client-Session-Id`, `X-Device-Id` (из заголовков gql).
 4. Бот сохранит токен в `config.json` (если включено **Сохранять integrity**) и применит без перезапуска.
 
 ## Настройки бота
