@@ -1648,6 +1648,135 @@ async function updateBotHealth() {
             `;
         })
         .join('');
+
+    await refreshIntegrityCaptureHint();
+}
+
+const DASHBOARD_BRIDGE_MESSAGE_SOURCE = 'twitch-watcher-dashboard';
+const INTEGRITY_CAPTURE_REQUEST_POLL_MS = 2000;
+const INTEGRITY_CAPTURE_REQUEST_TIMEOUT_MS = 120000;
+let integrityCapturePollTimer = null;
+
+/**
+ * Сообщение content script расширения Integrity Bridge
+ */
+function notifyIntegrityBridgeExtension() {
+    window.postMessage(
+        {
+            source: DASHBOARD_BRIDGE_MESSAGE_SOURCE,
+            type: 'REQUEST_INTEGRITY_CAPTURE',
+        },
+        window.location.origin
+    );
+}
+
+function stopIntegrityCapturePoll() {
+    if (integrityCapturePollTimer != null) {
+        clearInterval(integrityCapturePollTimer);
+        integrityCapturePollTimer = null;
+    }
+}
+
+function setIntegrityCaptureHint(text, kind) {
+    const hint = document.getElementById('integrityCaptureHint');
+    if (!hint) {
+        return;
+    }
+    hint.textContent = text;
+    hint.className = 'integrity-capture-hint' + (kind ? ` ${kind}` : '');
+}
+
+function formatIntegrityCaptureAgo(timestamp) {
+    if (!timestamp) {
+        return '';
+    }
+    const sec = Math.round((Date.now() - timestamp) / 1000);
+    if (sec < 60) {
+        return `${sec} с назад`;
+    }
+    const min = Math.round(sec / 60);
+    if (min < 60) {
+        return `${min} мин назад`;
+    }
+    return `${Math.round(min / 60)} ч назад`;
+}
+
+async function refreshIntegrityCaptureHint() {
+    const status = await fetchData('/integrity/capture/status');
+    if (!status) {
+        return;
+    }
+    if (integrityCapturePollTimer != null) {
+        return;
+    }
+    if (status.captureRequestPending) {
+        setIntegrityCaptureHint('Ожидание передачи от расширения…');
+        return;
+    }
+    if (status.lastCaptureAt) {
+        setIntegrityCaptureHint(
+            `Последняя передача: ${formatIntegrityCaptureAgo(status.lastCaptureAt)}`,
+            'ok'
+        );
+        return;
+    }
+    if (status.enabled === false) {
+        setIntegrityCaptureHint('Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)', 'err');
+        return;
+    }
+    setIntegrityCaptureHint('Расширение Integrity Bridge + открытый twitch.tv в Edge');
+}
+
+function startIntegrityCapturePoll(requestedAt) {
+    stopIntegrityCapturePoll();
+    const deadline = Date.now() + INTEGRITY_CAPTURE_REQUEST_TIMEOUT_MS;
+    const btn = document.getElementById('requestIntegrityCaptureBtn');
+
+    integrityCapturePollTimer = setInterval(async () => {
+        const status = await fetchData('/integrity/capture/status');
+        const last = status?.lastCaptureAt ?? 0;
+        if (last >= requestedAt) {
+            stopIntegrityCapturePoll();
+            setIntegrityCaptureHint('Client-Integrity обновлён', 'ok');
+            if (btn) {
+                btn.disabled = false;
+            }
+            await updateBotHealth();
+            return;
+        }
+        if (Date.now() > deadline) {
+            stopIntegrityCapturePoll();
+            setIntegrityCaptureHint(
+                'Таймаут. Откройте twitch.tv в Edge с расширением и обновите страницу.',
+                'err'
+            );
+            if (btn) {
+                btn.disabled = false;
+            }
+        }
+    }, INTEGRITY_CAPTURE_REQUEST_POLL_MS);
+}
+
+async function requestIntegrityCaptureFromBridge() {
+    const btn = document.getElementById('requestIntegrityCaptureBtn');
+    if (!btn || btn.disabled) {
+        return;
+    }
+
+    btn.disabled = true;
+    setIntegrityCaptureHint('Запрос отправлен…');
+    notifyIntegrityBridgeExtension();
+
+    const result = await postApi('/integrity/capture/request', {});
+    if (!result.ok) {
+        setIntegrityCaptureHint(result.message || 'Ошибка запроса', 'err');
+        btn.disabled = false;
+        return;
+    }
+
+    const requestedAt = result.data?.requestedAt ?? Date.now();
+    setIntegrityCaptureHint(result.data?.message || 'Ожидание передачи от расширения…');
+    startIntegrityCapturePoll(requestedAt);
 }
 
 // Сохраняем предыдущие значения для анимации изменений
@@ -3370,6 +3499,13 @@ window.addEventListener('load', () => {
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', showSettingsModal);
+    }
+
+    const requestIntegrityBtn = document.getElementById('requestIntegrityCaptureBtn');
+    if (requestIntegrityBtn) {
+        requestIntegrityBtn.addEventListener('click', () => {
+            void requestIntegrityCaptureFromBridge();
+        });
     }
     
     // Раздел событий удален

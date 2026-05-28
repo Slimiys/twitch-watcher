@@ -2542,6 +2542,53 @@ th.notify-header-clickable:active {
 }
 
 /* Панель «Статус бота» */
+.integrity-bridge-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-color, #3a3a3d);
+}
+
+.btn-integrity-capture {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #9147ff;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-integrity-capture:hover:not(:disabled) {
+    background: #7c3aed;
+}
+
+.btn-integrity-capture:disabled {
+    opacity: 0.65;
+    cursor: wait;
+}
+
+.integrity-capture-hint {
+    margin: 0;
+    flex: 1;
+    min-width: 200px;
+    font-size: 12px;
+    color: var(--text-muted, #adadb8);
+    line-height: 1.4;
+}
+
+.integrity-capture-hint.ok {
+    color: #00d166;
+}
+
+.integrity-capture-hint.err {
+    color: #ef4444;
+}
+
 .bot-health-section h2 {
     margin-bottom: 16px;
 }

@@ -131,6 +131,13 @@ export function applyBrowserIntegrityCapture(
 }
 
 /**
+ * Время последнего успешного применения токена из браузера
+ */
+export function getLastIntegrityCaptureAt(): number {
+  return lastCaptureAt;
+}
+
+/**
  * Сброс троттлинга (тесты)
  */
 export function resetIntegrityCaptureThrottleForTests(): void {

@@ -15,7 +15,11 @@ import {
   resolveHttpsCredentialPaths,
 } from './httpsCredentials';
 import { createDashboardApiKeyMiddleware } from './apiAuth';
-import { getIntegrityCaptureStatus, postIntegrityCapture } from './integrityCaptureApi';
+import {
+  getIntegrityCaptureStatus,
+  postIntegrityCapture,
+  postIntegrityCaptureRequest,
+} from './integrityCaptureApi';
 import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
 import { getAppVersionParts } from '../appVersion';
 import {
@@ -671,6 +675,16 @@ export class WebServer {
         res.status(status).json(result);
       } catch (error: any) {
         logger.error('Error applying integrity capture:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/integrity/capture/request', (_req: Request, res: Response) => {
+      try {
+        const result = postIntegrityCaptureRequest();
+        res.status(result.ok ? 200 : 400).json(result);
+      } catch (error: any) {
+        logger.error('Error requesting integrity capture:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });
