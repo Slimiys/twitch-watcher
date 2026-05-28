@@ -8,6 +8,11 @@ import { ClaimBonusResult, StreamerInfo, WatchStatistics } from './types';
 import { BotHealthSnapshot, StreamerClaimHealth } from './botHealthTypes';
 import { getAppVersionParts } from '../../appVersion';
 import { allowApiIntegrityFallback, getManualIntegrityFromEnv, resolveIntegritySource } from './integrityConfig';
+import { getLastIntegrityCaptureAt } from './integrityBrowserCapture';
+import {
+  deriveIntegrityBonusClaimStatus,
+  resolveLastIntegrityUpdatedAt,
+} from './integrityBonusClaimStatus';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
 import { logger } from './logger';
@@ -2379,7 +2384,7 @@ export class StreamWatcher {
           const manual = getManualIntegrityFromEnv();
           const now = Date.now();
           const expiresAtMs = manual?.expiresAtMs ?? null;
-          return {
+          const base = {
             source: resolveIntegritySource(),
             configured: Boolean(manual?.token),
             valid: manual ? now < manual.expiresAtMs - 60_000 : false,
@@ -2388,6 +2393,17 @@ export class StreamWatcher {
               expiresAtMs != null && expiresAtMs > now ? expiresAtMs - now : expiresAtMs != null ? 0 : null,
             fallbackApiEnabled: allowApiIntegrityFallback(),
             deviceIdPrefix: (process.env.TWITCH_DEVICE_ID?.trim() || '—').slice(0, 8),
+          };
+          const lastUpdated = resolveLastIntegrityUpdatedAt(
+            getLastIntegrityCaptureAt(),
+            base.expiresAtMs,
+            now
+          );
+          return {
+            ...base,
+            lastUpdatedAtMs: lastUpdated.atMs,
+            lastUpdatedAtEstimated: lastUpdated.estimated,
+            bonusClaim: deriveIntegrityBonusClaimStatus(base, [], null),
           };
         })();
 
@@ -2408,6 +2424,21 @@ export class StreamWatcher {
 
     const claimByStreamer = [...this.claimHealthRecent];
 
+    const lastUpdated = resolveLastIntegrityUpdatedAt(
+      getLastIntegrityCaptureAt(),
+      integrity.expiresAtMs
+    );
+    const enrichedIntegrity = {
+      ...integrity,
+      lastUpdatedAtMs: lastUpdated.atMs,
+      lastUpdatedAtEstimated: lastUpdated.estimated,
+      bonusClaim: deriveIntegrityBonusClaimStatus(
+        integrity,
+        claimByStreamer,
+        this.lastIntegrityFailure
+      ),
+    };
+
     return {
       timestamp: Date.now(),
       appVersion: label,
@@ -2415,7 +2446,7 @@ export class StreamWatcher {
       gitRevision: revision,
       watcherRunning: this.isRunning,
       websocket,
-      integrity,
+      integrity: enrichedIntegrity,
       graphql,
       lastIntegrityFailure: this.lastIntegrityFailure
         ? { ...this.lastIntegrityFailure }

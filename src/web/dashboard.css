@@ -2542,14 +2542,67 @@ th.notify-header-clickable:active {
 }
 
 /* Панель «Статус бота» */
-.integrity-bridge-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
+.client-integrity-panel {
     margin-bottom: 14px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--border-color, #3a3a3d);
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--card-bg, #1f1f23);
+    border: 1px solid var(--border-color, #3a3a3d);
+}
+
+.client-integrity-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.client-integrity-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.client-integrity-rows {
+    margin: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.client-integrity-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 13px;
+}
+
+.client-integrity-row dt {
+    margin: 0;
+    color: var(--text-muted, #adadb8);
+    font-weight: 500;
+}
+
+.client-integrity-row dd {
+    margin: 0;
+    color: #efeff1;
+}
+
+.client-integrity-row dd.state-ok {
+    color: #00d166;
+}
+
+.client-integrity-row dd.state-warn {
+    color: #fbbf24;
+}
+
+.client-integrity-row dd.state-err {
+    color: #ef4444;
+}
+
+.client-integrity-row dd.state-muted {
+    color: #adadb8;
 }
 
 .btn-integrity-capture {
@@ -2561,6 +2614,12 @@ th.notify-header-clickable:active {
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-integrity-capture-compact {
+    padding: 6px 12px;
+    font-size: 12px;
 }
 
 .btn-integrity-capture:hover:not(:disabled) {
@@ -2573,12 +2632,14 @@ th.notify-header-clickable:active {
 }
 
 .integrity-capture-hint {
-    margin: 0;
-    flex: 1;
-    min-width: 200px;
+    margin: 10px 0 0;
     font-size: 12px;
     color: var(--text-muted, #adadb8);
     line-height: 1.4;
+}
+
+.integrity-capture-hint:empty {
+    display: none;
 }
 
 .integrity-capture-hint.ok {

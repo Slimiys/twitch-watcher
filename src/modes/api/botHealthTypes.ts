@@ -21,6 +21,21 @@ export interface WebSocketHealthSnapshot {
   lastCriticalError: { timestamp: number; error: string; code?: string } | null;
 }
 
+/** Статус сбора бонусов (claim) относительно integrity */
+export type IntegrityBonusClaimStatusKind =
+  | 'ok'
+  | 'integrity_blocked'
+  | 'claim_failed'
+  | 'no_attempts'
+  | 'token_invalid';
+
+export interface IntegrityBonusClaimSnapshot {
+  status: IntegrityBonusClaimStatusKind;
+  message: string;
+  lastClaimAtMs?: number;
+  lastClaimStreamer?: string;
+}
+
 /** Client-Integrity без раскрытия токена */
 export interface IntegrityHealthSnapshot {
   source: 'manual' | 'api';
@@ -30,6 +45,12 @@ export interface IntegrityHealthSnapshot {
   expiresInMs: number | null;
   fallbackApiEnabled: boolean;
   deviceIdPrefix: string;
+  /** Когда токен последний раз обновлялся (bridge или оценка); заполняется в getBotHealth */
+  lastUpdatedAtMs?: number | null;
+  /** true — время оценено по сроку действия, а не зафиксировано bridge */
+  lastUpdatedAtEstimated?: boolean;
+  /** Удаётся ли собирать бонусы с текущим токеном; заполняется в getBotHealth */
+  bonusClaim?: IntegrityBonusClaimSnapshot;
 }
 
 /** GraphQL / Circuit Breaker */

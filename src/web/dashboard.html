@@ -246,11 +246,28 @@
             <div class="section bot-health-section collapsible-section" id="botHealthSection">
                 <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>
                 <div id="botHealthContent" class="bot-health-content">
-                    <div class="integrity-bridge-actions">
-                        <button type="button" id="requestIntegrityCaptureBtn" class="btn-integrity-capture" title="Обновить Client-Integrity через расширение Edge и twitch.tv">
-                            Запросить Client-Integrity
-                        </button>
-                        <p id="integrityCaptureHint" class="integrity-capture-hint" aria-live="polite">Расширение Integrity Bridge + открытый twitch.tv в Edge</p>
+                    <div class="client-integrity-panel" id="clientIntegrityPanel" aria-live="polite">
+                        <div class="client-integrity-panel-header">
+                            <h3 class="client-integrity-title">Client Integrity</h3>
+                            <button type="button" id="requestIntegrityCaptureBtn" class="btn-integrity-capture btn-integrity-capture-compact" title="Обновить Client-Integrity через расширение Edge и twitch.tv">
+                                Запросить
+                            </button>
+                        </div>
+                        <dl class="client-integrity-rows">
+                            <div class="client-integrity-row">
+                                <dt>Обновлён</dt>
+                                <dd id="integrityLastUpdated">—</dd>
+                            </div>
+                            <div class="client-integrity-row">
+                                <dt>Токен</dt>
+                                <dd id="integrityTokenState">—</dd>
+                            </div>
+                            <div class="client-integrity-row">
+                                <dt>Сбор бонусов</dt>
+                                <dd id="integrityClaimState">—</dd>
+                            </div>
+                        </dl>
+                        <p id="integrityCaptureHint" class="integrity-capture-hint"></p>
                     </div>
                     <div id="botHealthGrid" class="bot-health-grid">
                         <p class="bot-health-loading">Загрузка…</p>

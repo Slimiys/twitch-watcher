@@ -1519,33 +1519,6 @@ function describeWebSocketHealth(ws) {
     return { label: labels[ws.status] || ws.status, kind, detail };
 }
 
-function describeIntegrityHealth(integrity) {
-    if (!integrity) {
-        return { label: '—', kind: 'off', detail: '' };
-    }
-    const sourceLabel = integrity.source === 'manual' ? 'manual (DevTools)' : 'api (POST /integrity)';
-    let kind = 'off';
-    let label = 'Не настроен';
-    if (!integrity.configured) {
-        label = integrity.source === 'manual' ? 'Токен не задан' : '—';
-    } else if (integrity.valid) {
-        kind = 'ok';
-        label = 'Действует';
-    } else {
-        kind = 'warn';
-        label = 'Истёк / недействителен';
-    }
-    let detail = `Режим: ${escapeHtml(sourceLabel)}`;
-    if (integrity.expiresInMs != null) {
-        detail += `<br>Истекает через: ${escapeHtml(formatHealthDuration(integrity.expiresInMs))}`;
-    }
-    detail += `<br>Device: ${escapeHtml(integrity.deviceIdPrefix || '—')}…`;
-    if (integrity.fallbackApiEnabled) {
-        detail += '<br>Fallback API: включён';
-    }
-    return { label, kind, detail };
-}
-
 function describeCircuitBreaker(graphql) {
     const state = graphql?.circuitBreaker || 'CLOSED';
     const labels = { CLOSED: 'Закрыт (OK)', OPEN: 'Открыт (блокировка)', HALF_OPEN: 'Полуоткрыт' };
@@ -1584,35 +1557,17 @@ async function updateBotHealth() {
     lastBotHealthForVersion = health;
 
     const ws = describeWebSocketHealth(health.websocket);
-    const integrity = describeIntegrityHealth(health.integrity);
     const gql = describeCircuitBreaker(health.graphql);
 
     let watcherKind = health.watcherRunning ? 'ok' : 'err';
     const watcherLabel = health.watcherRunning ? 'Работает' : 'Остановлен';
 
-    let integrityFailDetail = '';
-    if (health.lastIntegrityFailure) {
-        integrityFailDetail = `Последний integrity: ${escapeHtml(health.lastIntegrityFailure.streamer)} — ${escapeHtml(formatHealthTimeAgo(health.lastIntegrityFailure.timestamp))}`;
-    }
-
     const cards = [
         renderVersionHealthCard(health),
         renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
         renderBotHealthCard('WebSocket', escapeHtml(ws.label), ws.detail, ws.kind),
-        renderBotHealthCard('Integrity', escapeHtml(integrity.label), integrity.detail, integrity.kind),
         renderBotHealthCard('GraphQL CB', escapeHtml(gql.label), gql.detail, gql.kind),
     ];
-
-    if (integrityFailDetail) {
-        cards.push(
-            renderBotHealthCard(
-                'Integrity ошибка',
-                'failed integrity check',
-                integrityFailDetail,
-                'warn'
-            )
-        );
-    }
 
     grid.innerHTML = cards.join('');
     bindBotHealthVersionCardClick();
@@ -1649,7 +1604,7 @@ async function updateBotHealth() {
         })
         .join('');
 
-    await refreshIntegrityCaptureHint();
+    await renderClientIntegrityPanel(health);
 }
 
 const DASHBOARD_BRIDGE_MESSAGE_SOURCE = 'twitch-watcher-dashboard';
@@ -1682,49 +1637,113 @@ function setIntegrityCaptureHint(text, kind) {
     if (!hint) {
         return;
     }
-    hint.textContent = text;
+    hint.textContent = text || '';
     hint.className = 'integrity-capture-hint' + (kind ? ` ${kind}` : '');
 }
 
-function formatIntegrityCaptureAgo(timestamp) {
-    if (!timestamp) {
-        return '';
+function integrityPanelStateClass(kind) {
+    if (kind === 'ok') {
+        return 'state-ok';
     }
-    const sec = Math.round((Date.now() - timestamp) / 1000);
-    if (sec < 60) {
-        return `${sec} с назад`;
+    if (kind === 'warn') {
+        return 'state-warn';
     }
-    const min = Math.round(sec / 60);
-    if (min < 60) {
-        return `${min} мин назад`;
+    if (kind === 'err') {
+        return 'state-err';
     }
-    return `${Math.round(min / 60)} ч назад`;
+    return 'state-muted';
 }
 
-async function refreshIntegrityCaptureHint() {
-    const status = await fetchData('/integrity/capture/status');
-    if (!status) {
+function setIntegrityPanelValue(elementId, text, kind) {
+    const el = document.getElementById(elementId);
+    if (!el) {
         return;
     }
-    if (integrityCapturePollTimer != null) {
+    el.textContent = text;
+    el.className = integrityPanelStateClass(kind);
+}
+
+function formatIntegrityLastUpdated(integrity, captureStatus) {
+    const captureAt = captureStatus?.lastCaptureAt ?? 0;
+    const atMs = Math.max(captureAt, integrity?.lastUpdatedAtMs ?? 0);
+    if (!atMs) {
+        if (integrity?.configured) {
+            return { text: 'неизвестно (токен из config)', kind: 'warn' };
+        }
+        return { text: 'не обновлялся', kind: 'muted' };
+    }
+    const estimated = Boolean(integrity?.lastUpdatedAtEstimated) && captureAt <= 0;
+    const suffix = estimated ? ' (прибл.)' : '';
+    return { text: `${formatHealthTimeAgo(atMs)}${suffix}`, kind: 'ok' };
+}
+
+function formatIntegrityTokenState(integrity) {
+    if (!integrity) {
+        return { text: '—', kind: 'muted' };
+    }
+    const sourceLabel = integrity.source === 'manual' ? 'manual' : 'API';
+    if (!integrity.configured) {
+        return { text: `не задан (${sourceLabel})`, kind: 'err' };
+    }
+    if (!integrity.valid) {
+        return { text: `истёк (${sourceLabel})`, kind: 'err' };
+    }
+    let text = `действует (${sourceLabel})`;
+    if (integrity.expiresInMs != null && integrity.expiresInMs > 0) {
+        text += `, истекает через ${formatHealthDuration(integrity.expiresInMs)}`;
+    }
+    return { text, kind: 'ok' };
+}
+
+function formatIntegrityClaimState(bonusClaim) {
+    if (!bonusClaim) {
+        return { text: 'нет данных', kind: 'muted' };
+    }
+    const kindByStatus = {
+        ok: 'ok',
+        no_attempts: 'muted',
+        token_invalid: 'err',
+        integrity_blocked: 'err',
+        claim_failed: 'warn',
+    };
+    let text = bonusClaim.message;
+    if (bonusClaim.lastClaimAtMs) {
+        text += ` (${formatHealthTimeAgo(bonusClaim.lastClaimAtMs)})`;
+    }
+    return { text, kind: kindByStatus[bonusClaim.status] || 'muted' };
+}
+
+/**
+ * Панель Client Integrity в секции «Статус бота»
+ */
+async function renderClientIntegrityPanel(health, captureStatus = null) {
+    const updatedEl = document.getElementById('integrityLastUpdated');
+    if (!updatedEl) {
         return;
     }
-    if (status.captureRequestPending) {
+
+    if (captureStatus == null) {
+        captureStatus = await fetchData('/integrity/capture/status');
+    }
+
+    const integrity = health?.integrity;
+
+    if (captureStatus?.captureRequestPending) {
         setIntegrityCaptureHint('Ожидание передачи от расширения…');
-        return;
-    }
-    if (status.lastCaptureAt) {
-        setIntegrityCaptureHint(
-            `Последняя передача: ${formatIntegrityCaptureAgo(status.lastCaptureAt)}`,
-            'ok'
-        );
-        return;
-    }
-    if (status.enabled === false) {
+    } else if (captureStatus?.enabled === false) {
         setIntegrityCaptureHint('Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)', 'err');
-        return;
+    } else {
+        setIntegrityCaptureHint('');
     }
-    setIntegrityCaptureHint('Расширение Integrity Bridge + открытый twitch.tv в Edge');
+
+    const lastUp = formatIntegrityLastUpdated(integrity, captureStatus);
+    setIntegrityPanelValue('integrityLastUpdated', lastUp.text, lastUp.kind);
+
+    const token = formatIntegrityTokenState(integrity);
+    setIntegrityPanelValue('integrityTokenState', token.text, token.kind);
+
+    const claim = formatIntegrityClaimState(integrity?.bonusClaim);
+    setIntegrityPanelValue('integrityClaimState', claim.text, claim.kind);
 }
 
 function startIntegrityCapturePoll(requestedAt) {
@@ -1734,10 +1753,12 @@ function startIntegrityCapturePoll(requestedAt) {
 
     integrityCapturePollTimer = setInterval(async () => {
         const status = await fetchData('/integrity/capture/status');
+        if (lastBotHealthForVersion) {
+            await renderClientIntegrityPanel(lastBotHealthForVersion, status);
+        }
         const last = status?.lastCaptureAt ?? 0;
         if (last >= requestedAt) {
             stopIntegrityCapturePoll();
-            setIntegrityCaptureHint('Client-Integrity обновлён', 'ok');
             if (btn) {
                 btn.disabled = false;
             }
@@ -1775,8 +1796,13 @@ async function requestIntegrityCaptureFromBridge() {
     }
 
     const requestedAt = result.data?.requestedAt ?? Date.now();
-    setIntegrityCaptureHint(result.data?.message || 'Ожидание передачи от расширения…');
     startIntegrityCapturePoll(requestedAt);
+    if (lastBotHealthForVersion) {
+        await renderClientIntegrityPanel(lastBotHealthForVersion, {
+            captureRequestPending: true,
+            captureRequestedAt: requestedAt,
+        });
+    }
 }
 
 // Сохраняем предыдущие значения для анимации изменений
