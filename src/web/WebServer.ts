@@ -374,6 +374,8 @@ export class WebServer {
         
         if (databaseStorage && databaseStorage.isReady()) {
           const streamCountsByWindow = databaseStorage.getStreamCountsByUsernameByWindows();
+          const categoryStreamCountsByUsername =
+            databaseStorage.getCategoryStreamCountsByUsername();
           const enrichedStatistics = statistics.map((stat: any) => {
             const dbStats = databaseStorage.getStreamerStats(stat.streamerName);
             const windows =
@@ -390,6 +392,8 @@ export class WebServer {
               60: windows.d60,
             };
             const streamsLast30Days = windows.d30;
+            const categoryStreamCounts =
+              categoryStreamCountsByUsername.get(String(stat.streamerName).toLowerCase()) ?? [];
             if (dbStats) {
               return {
                 ...stat,
@@ -398,12 +402,14 @@ export class WebServer {
                 lastStreamDurationMs: dbStats.lastStreamDurationMs,
                 streamCounts,
                 streamsLast30Days,
+                categoryStreamCounts,
               };
             }
             return {
               ...stat,
               streamCounts,
               streamsLast30Days,
+              categoryStreamCounts,
             };
           });
           res.json(enrichedStatistics);

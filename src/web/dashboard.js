@@ -164,6 +164,133 @@ function setStreamsCountWindowDays(days) {
     updateStatistics({ skipFetch: true });
 }
 
+/** Открытое меню статистики категорий (имя стримера) */
+let openCategoryStreamStatsStreamer = null;
+
+/**
+ * Закрывает меню статистики категорий стримера
+ */
+function hideCategoryStreamStatsMenu() {
+    const menu = document.getElementById('categoryStreamStatsMenu');
+    if (menu) {
+        menu.remove();
+    }
+    openCategoryStreamStatsStreamer = null;
+}
+
+/**
+ * Строит HTML пунктов меню категорий
+ * @param {Array<{category:string, streamCount:number}>} categoryStreamCounts
+ * @returns {string}
+ */
+function buildCategoryStreamStatsMenuItems(categoryStreamCounts) {
+    if (!Array.isArray(categoryStreamCounts) || categoryStreamCounts.length === 0) {
+        return '<div class="category-stream-stats-empty">Пока нет данных по категориям</div>';
+    }
+
+    return categoryStreamCounts.map((entry) => {
+        const category = escapeHtml(entry.category || '—');
+        const count = Number(entry.streamCount) || 0;
+        return `<div class="category-stream-stats-item"><span class="category-stream-stats-name">${category}</span><span class="category-stream-stats-count">${count}</span></div>`;
+    }).join('');
+}
+
+/**
+ * Открывает или закрывает меню статистики категорий под ячейкой
+ * @param {string} streamerName
+ * @param {HTMLElement} anchorEl
+ */
+function toggleCategoryStreamStatsMenu(streamerName, anchorEl) {
+    if (openCategoryStreamStatsStreamer === streamerName) {
+        hideCategoryStreamStatsMenu();
+        return;
+    }
+
+    hideCategoryStreamStatsMenu();
+    hideStreamsCountWindowMenu();
+
+    const stat = (cachedStatisticsRows || []).find((row) => row.streamerName === streamerName);
+    const itemsHtml = buildCategoryStreamStatsMenuItems(stat?.categoryStreamCounts);
+
+    const menu = document.createElement('div');
+    menu.id = 'categoryStreamStatsMenu';
+    menu.className = 'category-stream-stats-menu show';
+    menu.innerHTML = `
+        <div class="category-stream-stats-title">Стримы по категориям</div>
+        ${itemsHtml}
+    `;
+
+    document.body.appendChild(menu);
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    let left = anchorRect.left;
+    let top = anchorRect.bottom + 4;
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - rect.width - 8);
+        menu.style.left = `${left}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+        top = Math.max(8, anchorRect.top - rect.height - 4);
+        menu.style.top = `${top}px`;
+    }
+
+    openCategoryStreamStatsStreamer = streamerName;
+}
+
+/**
+ * Рендерит ячейку текущей категории стримера
+ * @param {object} stat
+ * @returns {string}
+ */
+function renderStreamerCategoryCell(stat) {
+    const game = stat?.game?.trim();
+    if (!game) {
+        return '<td>-</td>';
+    }
+
+    const safeAttr = String(stat.streamerName)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;');
+    const hasStats = Array.isArray(stat.categoryStreamCounts) && stat.categoryStreamCounts.length > 0;
+    const title = hasStats
+        ? 'Показать статистику по категориям'
+        : 'Статистика появится после смены категорий в стримах';
+
+    return `<td class="streamer-category-cell">
+        <button type="button" class="streamer-category-button" data-streamer="${safeAttr}" title="${title}">${escapeHtml(game)}</button>
+    </td>`;
+}
+
+/**
+ * Инициализирует клик по категории стримера
+ */
+function initCategoryStreamStatsMenu() {
+    const tableHost = document.getElementById('watchesTable');
+    if (!tableHost || tableHost.dataset.categoryStatsMenuBound === '1') {
+        return;
+    }
+    tableHost.dataset.categoryStatsMenuBound = '1';
+
+    tableHost.addEventListener('click', (e) => {
+        const button = e.target.closest('.streamer-category-button');
+        if (!button) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const streamerName = button.getAttribute('data-streamer');
+        if (!streamerName) {
+            return;
+        }
+        toggleCategoryStreamStatsMenu(streamerName, button);
+    });
+}
+
 /**
  * Инициализирует контекстное меню периода колонки Streams
  */
@@ -2627,6 +2754,7 @@ window.handleTableSort = function(column) {
 
 async function updateStatistics(options = {}) {
     const skipFetch = options.skipFetch === true;
+    hideCategoryStreamStatsMenu();
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
     const hasSkeleton = table && table.querySelector('.skeleton-table');
@@ -2832,7 +2960,7 @@ async function updateStatistics(options = {}) {
                             const currentCurrentPoints = s.currentPoints || 0;
                             return `<td>${generatePointsBadgeWithDiff(currentCurrentPoints, prevCurrentPoints)}</td>`;
                         })() : ''}
-                        ${visibleColumns.game !== false ? `<td>${s.game || '-'}</td>` : ''}
+                        ${visibleColumns.game !== false ? renderStreamerCategoryCell(s) : ''}
                         ${visibleColumns.streamsLast30Days !== false ? `<td>${getStreamerStreamCount(s)}</td>` : ''}
                         ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeWithColors(s.lastStreamStart, '#00d166') : '-'}</td>` : ''}
                         ${visibleColumns.lastStreamEnd !== false ? (() => {
@@ -3933,9 +4061,19 @@ window.addEventListener('load', () => {
         if (streamsCountWindowMenu && !streamsCountWindowMenu.contains(e.target)) {
             hideStreamsCountWindowMenu();
         }
+
+        const categoryStreamStatsMenu = document.getElementById('categoryStreamStatsMenu');
+        if (
+            categoryStreamStatsMenu &&
+            !categoryStreamStatsMenu.contains(e.target) &&
+            !e.target.closest('.streamer-category-button')
+        ) {
+            hideCategoryStreamStatsMenu();
+        }
     });
 
     initStreamsCountWindowMenu();
+    initCategoryStreamStatsMenu();
     
     // Инициализируем чекбоксы для колонок
     const columnCheckboxes = document.querySelectorAll('#columnSettingsDropdown input[type="checkbox"]');

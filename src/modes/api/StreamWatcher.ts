@@ -24,7 +24,7 @@ import { GQL_URL, CLIENT_ID } from './constants';
 import { WebServer, StatisticsProvider } from '../../web';
 import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
-import { DatabaseStorage } from './DatabaseStorage';
+import { DatabaseStorage, buildStreamSessionKey } from './DatabaseStorage';
 import {
   applyBriefOfflineResume,
   beginTentativeOfflineState,
@@ -100,6 +100,8 @@ export class StreamWatcher {
   private statisticsStorage: StatisticsStorage | null = null;
   private databaseStorage: DatabaseStorage | null = null;
   private activeSessions: Map<string, string> = new Map(); // Map<streamerName, sessionId>
+  /** Активные ключи сессий стримов для учёта категорий (username -> sessionKey) */
+  private activeStreamSessionKeys: Map<string, string> = new Map();
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
   private claimCheckInterval: NodeJS.Timeout | null = null;
@@ -754,6 +756,7 @@ export class StreamWatcher {
           onlineAt,
           streamerInfo.broadcastId
         );
+        this.beginStreamSessionCategoryTracking(streamerInfo, onlineAt);
 
         await this.updateInitialPoints(streamerInfo);
 
@@ -837,6 +840,7 @@ export class StreamWatcher {
       logger.info(
         `⏱️  [${streamerInfo.username}] Просмотр возобновлён (тот же стрим): ${formatElapsedTime(now - streamerInfo.startTime)}`
       );
+      this.restoreStreamSessionCategoryTracking(streamerInfo);
       return;
     }
 
@@ -852,6 +856,7 @@ export class StreamWatcher {
       logger.info(
         `⏱️  [${streamerInfo.username}] Просмотр возобновлён (сохранённое состояние): ${formatElapsedTime(now - streamerInfo.startTime)}`
       );
+      this.restoreStreamSessionCategoryTracking(streamerInfo);
       return;
     }
 
@@ -866,6 +871,7 @@ export class StreamWatcher {
         logger.info(
           `⏱️  [${streamerInfo.username}] Просмотр возобновлён (из БД): ${formatElapsedTime(now - streamerInfo.startTime)}`
         );
+        this.restoreStreamSessionCategoryTracking(streamerInfo);
         return;
       }
     }
@@ -930,6 +936,7 @@ export class StreamWatcher {
     }
 
     finalizeOfflineState(streamerInfo);
+    this.activeStreamSessionKeys.delete(streamerInfo.username);
     this.savePointsState();
   }
 
@@ -1829,6 +1836,64 @@ export class StreamWatcher {
   }
 
   /**
+   * Начинает отслеживание категорий для новой сессии стрима
+   */
+  private beginStreamSessionCategoryTracking(
+    streamerInfo: StreamerInfo,
+    startedAt: number
+  ): void {
+    const sessionKey = buildStreamSessionKey(startedAt, streamerInfo.broadcastId);
+    this.activeStreamSessionKeys.set(streamerInfo.username, sessionKey);
+    this.trackStreamCategoryForSession(streamerInfo);
+  }
+
+  /**
+   * Восстанавливает отслеживание категорий после перезапуска или краткого офлайна
+   */
+  private restoreStreamSessionCategoryTracking(streamerInfo: StreamerInfo): void {
+    if (!streamerInfo.isOnline) {
+      return;
+    }
+
+    const startedAt =
+      streamerInfo.startTime > 0
+        ? streamerInfo.startTime
+        : streamerInfo.webSocketOnlineAt ?? Date.now();
+    const sessionKey = buildStreamSessionKey(startedAt, streamerInfo.broadcastId);
+    this.activeStreamSessionKeys.set(streamerInfo.username, sessionKey);
+
+    if (this.databaseStorage?.isReady()) {
+      this.databaseStorage.recordStreamSession(
+        streamerInfo.username,
+        startedAt,
+        streamerInfo.broadcastId
+      );
+      this.trackStreamCategoryForSession(streamerInfo);
+    }
+  }
+
+  /**
+   * Сохраняет текущую категорию в активной сессии стрима (без дубликатов)
+   */
+  private trackStreamCategoryForSession(streamerInfo: StreamerInfo): void {
+    const category = streamerInfo.game?.trim();
+    if (!category || !this.databaseStorage?.isReady()) {
+      return;
+    }
+
+    const sessionKey = this.activeStreamSessionKeys.get(streamerInfo.username);
+    if (!sessionKey) {
+      return;
+    }
+
+    this.databaseStorage.recordStreamSessionCategory(
+      streamerInfo.username,
+      sessionKey,
+      category
+    );
+  }
+
+  /**
    * Дожидается БД и подгружает агрегаты стримов за 30 суток (для API дашборда)
    */
   private async loadStreamCountsFromDatabase(): Promise<void> {
@@ -1839,8 +1904,9 @@ export class StreamWatcher {
     for (let attempt = 0; attempt < 100; attempt++) {
       if (this.databaseStorage.isReady()) {
         const counts = this.databaseStorage.getStreamCountsLast30DaysByUsername();
+        const categoryCounts = this.databaseStorage.getCategoryStreamCountsByUsername();
         logger.verbose(
-          `📊  Статистика стримов за 30 суток загружена из БД (${counts.size} стримеров с записями)`
+          `📊  Статистика стримов загружена из БД (${counts.size} стримеров с записями, ${categoryCounts.size} с категориями)`
         );
         return;
       }
@@ -1902,6 +1968,7 @@ export class StreamWatcher {
             streamStartTime,
             streamerInfo.broadcastId
           );
+          this.beginStreamSessionCategoryTracking(streamerInfo, streamStartTime);
           
           try {
             await this.updateInitialPoints(streamerInfo);
@@ -3027,6 +3094,9 @@ export class StreamWatcher {
     // Сохраняем категорию, если она изменилась и не пустая
     if (streamerInfo.game !== previousGame && streamerInfo.game) {
       this.databaseStorage.updateLastGame(streamerInfo.username, streamerInfo.game);
+      if (streamerInfo.isOnline && this.activeStreamSessionKeys.has(streamerInfo.username)) {
+        this.trackStreamCategoryForSession(streamerInfo);
+      }
     }
   }
 

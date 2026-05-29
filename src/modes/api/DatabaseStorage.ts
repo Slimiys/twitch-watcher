@@ -103,11 +103,31 @@ export interface StreamCountsByWindow {
   d60: number;
 }
 
+/** Статистика стримов по категории для дашборда */
+export interface StreamerCategoryStreamCount {
+  category: string;
+  streamCount: number;
+}
+
 /**
  * Преобразует период в миллисекунды
  */
 export function streamCountWindowMs(days: StreamCountWindowDays): number {
   return days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Формирует уникальный ключ сессии стрима (broadcast id или метка времени старта)
+ */
+export function buildStreamSessionKey(
+  startedAt: number,
+  broadcastId?: string | null
+): string {
+  const trimmed = broadcastId?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  return `ts:${startedAt}`;
 }
 
 /**
@@ -352,6 +372,18 @@ export class DatabaseStorage {
       )
     `);
 
+    // Уникальные категории в рамках одной сессии стрима
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS stream_session_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_session_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        first_seen_at INTEGER NOT NULL,
+        FOREIGN KEY (stream_session_id) REFERENCES stream_sessions(id) ON DELETE CASCADE,
+        UNIQUE(stream_session_id, category)
+      )
+    `);
+
     // Создаем индексы для быстрого поиска
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_daily_points_streamer_date 
@@ -362,6 +394,9 @@ export class DatabaseStorage {
 
       CREATE INDEX IF NOT EXISTS idx_stream_sessions_streamer_started
       ON stream_sessions(streamer_id, started_at);
+
+      CREATE INDEX IF NOT EXISTS idx_stream_session_categories_session
+      ON stream_session_categories(stream_session_id);
     `);
 
     logger.verbose(`📊  Database tables created`);
@@ -371,11 +406,26 @@ export class DatabaseStorage {
    * Формирует уникальный ключ сессии стрима (broadcast id или метка времени старта)
    */
   private buildStreamSessionKey(startedAt: number, broadcastId?: string | null): string {
-    const trimmed = broadcastId?.trim();
-    if (trimmed) {
-      return trimmed;
+    return buildStreamSessionKey(startedAt, broadcastId);
+  }
+
+  /**
+   * Возвращает id сессии стрима по ключу
+   */
+  private getStreamSessionId(streamerId: number, sessionKey: string): number | null {
+    if (!this.db) {
+      return null;
     }
-    return `ts:${startedAt}`;
+
+    const stmt = this.db.prepare(`
+      SELECT id FROM stream_sessions
+      WHERE streamer_id = ? AND session_key = ?
+      LIMIT 1
+    `);
+    stmt.bind([streamerId, sessionKey]);
+    const row = stmt.step() ? (stmt.getAsObject() as { id: number }) : null;
+    stmt.free();
+    return row?.id ?? null;
   }
 
   /**
@@ -425,6 +475,106 @@ export class DatabaseStorage {
       logger.error(`❌  Failed to record stream session: ${error.message || error}`);
       return false;
     }
+  }
+
+  /**
+   * Регистрирует категорию в рамках сессии стрима (один раз на категорию за стрим)
+   */
+  recordStreamSessionCategory(
+    username: string,
+    sessionKey: string,
+    category: string
+  ): boolean {
+    const normalizedCategory = category?.trim();
+    const normalizedSessionKey = sessionKey?.trim();
+    if (
+      !isDatabaseAvailable ||
+      !this.db ||
+      !normalizedCategory ||
+      !normalizedSessionKey
+    ) {
+      return false;
+    }
+
+    try {
+      const streamerId = this.getOrCreateStreamer(username);
+      const streamSessionId = this.getStreamSessionId(streamerId, normalizedSessionKey);
+      if (!streamSessionId) {
+        return false;
+      }
+
+      const now = Date.now();
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO stream_session_categories (stream_session_id, category, first_seen_at)
+        VALUES (?, ?, ?)
+      `);
+      stmt.bind([streamSessionId, normalizedCategory, now]);
+      stmt.step();
+      stmt.free();
+
+      const changesResult = this.db.exec('SELECT changes() AS c');
+      const inserted = Number(changesResult[0]?.values[0]?.[0] ?? 0) > 0;
+
+      if (inserted && this.config.autoSave) {
+        this.saveDatabase();
+      }
+
+      if (inserted) {
+        logger.verbose(
+          `🎮  Recorded stream category for ${username}: ${normalizedCategory} (session=${normalizedSessionKey})`
+        );
+      }
+
+      return inserted;
+    } catch (error: any) {
+      logger.error(`❌  Failed to record stream category: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Количество стримов по категориям для всех стримеров
+   */
+  getCategoryStreamCountsByUsername(): Map<string, StreamerCategoryStreamCount[]> {
+    const result = new Map<string, StreamerCategoryStreamCount[]>();
+    if (!isDatabaseAvailable || !this.db) {
+      return result;
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT s.username, ssc.category, COUNT(DISTINCT ss.id) AS stream_count
+        FROM stream_session_categories ssc
+        INNER JOIN stream_sessions ss ON ss.id = ssc.stream_session_id
+        INNER JOIN streamers s ON s.id = ss.streamer_id
+        GROUP BY s.id, ssc.category
+        ORDER BY s.username ASC, stream_count DESC, ssc.category ASC
+      `);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as {
+          username: string;
+          category: string;
+          stream_count: number;
+        };
+        if (!row.username || !row.category) {
+          continue;
+        }
+        const key = String(row.username).toLowerCase();
+        const entry: StreamerCategoryStreamCount = {
+          category: String(row.category),
+          streamCount: Number(row.stream_count) || 0,
+        };
+        const list = result.get(key) ?? [];
+        list.push(entry);
+        result.set(key, list);
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(`❌  Failed to get category stream counts: ${error.message || error}`);
+    }
+
+    return result;
   }
 
   /**

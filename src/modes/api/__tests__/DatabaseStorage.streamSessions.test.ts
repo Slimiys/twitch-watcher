@@ -97,4 +97,46 @@ describe('DatabaseStorage stream sessions', () => {
     expect(storage.getStreamCountsByUsername(14).get('window_user')).toBe(2);
     expect(storage.getStreamCountsByUsername(60).get('window_user')).toBe(4);
   });
+
+  it('учитывает категорию один раз за сессию стрима', async () => {
+    await waitForDatabase(storage);
+
+    const now = Date.now();
+    const sessionKey = 'broadcast-categories';
+    storage.recordStreamSession('cat_user', now, sessionKey);
+
+    expect(
+      storage.recordStreamSessionCategory('cat_user', sessionKey, 'Path of Exile')
+    ).toBe(true);
+    expect(
+      storage.recordStreamSessionCategory('cat_user', sessionKey, 'Torchlight')
+    ).toBe(true);
+    expect(
+      storage.recordStreamSessionCategory('cat_user', sessionKey, 'Path of Exile')
+    ).toBe(false);
+
+    const stats = storage.getCategoryStreamCountsByUsername().get('cat_user') ?? [];
+    expect(stats).toEqual([
+      { category: 'Path of Exile', streamCount: 1 },
+      { category: 'Torchlight', streamCount: 1 },
+    ]);
+  });
+
+  it('считает категории по разным стримам', async () => {
+    await waitForDatabase(storage);
+
+    const now = Date.now();
+    storage.recordStreamSession('cat_user2', now - 1000, 'stream-1');
+    storage.recordStreamSessionCategory('cat_user2', 'stream-1', 'Just Chatting');
+
+    storage.recordStreamSession('cat_user2', now, 'stream-2');
+    storage.recordStreamSessionCategory('cat_user2', 'stream-2', 'Just Chatting');
+    storage.recordStreamSessionCategory('cat_user2', 'stream-2', 'Path of Exile');
+
+    const stats = storage.getCategoryStreamCountsByUsername().get('cat_user2') ?? [];
+    expect(stats).toEqual([
+      { category: 'Just Chatting', streamCount: 2 },
+      { category: 'Path of Exile', streamCount: 1 },
+    ]);
+  });
 });
