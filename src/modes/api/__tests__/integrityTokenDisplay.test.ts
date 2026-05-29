@@ -28,12 +28,12 @@ describe('integrityTokenDisplay', () => {
     expect(display.currentPrefix).toBe(integrityTokenPrefix(second));
   });
 
-  it('recordIntegrityTokenForDisplay пишет прошлый даже при том же префиксе', () => {
+  it('recordIntegrityTokenForDisplay не меняет прошлый при том же префиксе', () => {
     const token = 't'.repeat(40);
     recordIntegrityTokenForDisplay(token);
-    recordIntegrityTokenForDisplay(token);
+    expect(recordIntegrityTokenForDisplay(token)).toBe(false);
     const display = getIntegrityTokenDisplay();
-    expect(display.previousPrefix).toBe(integrityTokenPrefix(token));
+    expect(display.previousPrefix).toBeNull();
     expect(display.currentPrefix).toBe(integrityTokenPrefix(token));
   });
 

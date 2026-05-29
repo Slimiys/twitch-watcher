@@ -29,11 +29,11 @@ describe('gqlContextHealth', () => {
     expect(snap.deviceId.lastUpdatedAtMs).toBe(now);
   });
 
-  it('обновляет lastUpdatedAt при повторной передаче того же значения', () => {
+  it('не обновляет lastUpdatedAt при том же значении', () => {
     process.env.TWITCH_INTEGRITY_AUTO_PERSIST = 'false';
     const version = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     applyBrowserGqlContext({ clientVersion: version }, 1000);
     applyBrowserGqlContext({ clientVersion: version }, 2000);
-    expect(getGqlContextHealthSnapshot().clientVersion.lastUpdatedAtMs).toBe(2000);
+    expect(getGqlContextHealthSnapshot().clientVersion.lastUpdatedAtMs).toBe(1000);
   });
 });

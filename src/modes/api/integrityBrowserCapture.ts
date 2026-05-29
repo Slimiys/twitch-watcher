@@ -11,9 +11,6 @@ import { persistIntegrityToAppConfig } from './integrityPersistence';
 /** Срок действия токена из браузера по умолчанию (4 ч) */
 const DEFAULT_BROWSER_INTEGRITY_TTL_MS = 4 * 60 * 60 * 1000;
 
-/** Минимальный интервал между одинаковыми токенами (мс) */
-const DUPLICATE_CAPTURE_INTERVAL_MS = 15_000;
-
 export interface BrowserIntegrityCaptureInput extends BrowserGqlContextInput {
   clientIntegrity: string;
   deviceId?: string;
@@ -85,9 +82,6 @@ export function applyBrowserIntegrityCapture(
   });
 
   const token = normalizeClientIntegrityToken(input.clientIntegrity);
-  if (token) {
-    recordIntegrityTokenForDisplay(token);
-  }
   if (!token) {
     if (gqlContextApplied) {
       return {
@@ -113,10 +107,8 @@ export function applyBrowserIntegrityCapture(
     };
   }
 
-  if (
-    token === lastCaptureToken &&
-    now - lastCaptureAt < DUPLICATE_CAPTURE_INTERVAL_MS
-  ) {
+  const existingToken = process.env.TWITCH_CLIENT_INTEGRITY?.trim();
+  if (existingToken === token) {
     const manualExpires = process.env.TWITCH_CLIENT_INTEGRITY_EXPIRES?.trim();
     const expiresAtMs = manualExpires
       ? integrityExpirationToMs(Number(manualExpires), now)
@@ -127,7 +119,7 @@ export function applyBrowserIntegrityCapture(
         skipped: false,
         integrityApplied: false,
         gqlContextApplied: true,
-        message: 'GQL-контекст обновлён (тот же Client-Integrity недавно уже применён)',
+        message: 'GQL-контекст обновлён (Client-Integrity без изменений)',
         expiresAtMs,
         deviceIdPrefix: input.deviceId?.trim().slice(0, 8) ?? null,
         capturedAt: now,
@@ -138,7 +130,7 @@ export function applyBrowserIntegrityCapture(
       skipped: true,
       integrityApplied: false,
       gqlContextApplied: false,
-      message: 'Тот же токен недавно уже применён',
+      message: 'Client-Integrity не изменился',
       expiresAtMs,
       deviceIdPrefix: input.deviceId?.trim().slice(0, 8) ?? null,
       capturedAt: now,
@@ -152,6 +144,7 @@ export function applyBrowserIntegrityCapture(
 
   process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
   persistIntegrityToAppConfig(token, expiresAtMs);
+  recordIntegrityTokenForDisplay(token);
 
   const deviceIdPrefix =
     process.env.TWITCH_DEVICE_ID?.trim().slice(0, 8) ??

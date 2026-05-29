@@ -57,11 +57,14 @@ describe('integrityBrowserCapture', () => {
     expect(process.env.TWITCH_DEVICE_ID).toBe(device);
   });
 
-  it('троттлит повтор той же передачи', () => {
+  it('пропускает повтор того же Client-Integrity', () => {
+    process.env.TWITCH_INTEGRITY_AUTO_PERSIST = 'false';
     const token = 'y'.repeat(40);
     applyBrowserIntegrityCapture({ clientIntegrity: token });
     const second = applyBrowserIntegrityCapture({ clientIntegrity: token });
     expect(second.skipped).toBe(true);
+    expect(second.integrityApplied).toBe(false);
+    expect(second.message).toContain('не изменился');
   });
 
   it('isIntegrityBridgeEnabled false при INTEGRITY_BRIDGE_ENABLED=false', () => {

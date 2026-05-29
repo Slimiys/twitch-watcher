@@ -32,18 +32,22 @@ function ensureInitializedFromEnv(): void {
 }
 
 /**
- * Фиксирует применение токена для dashboard: прошлый ← был текущий (даже если совпадает с новым)
+ * Фиксирует смену токена для dashboard (только если префикс изменился)
  */
-export function recordIntegrityTokenForDisplay(token: string): void {
+export function recordIntegrityTokenForDisplay(token: string): boolean {
   const prefix = integrityTokenPrefix(token);
   if (!prefix) {
-    return;
+    return false;
   }
   ensureInitializedFromEnv();
+  if (currentTokenPrefix === prefix) {
+    return false;
+  }
   if (currentTokenPrefix) {
     previousTokenPrefix = currentTokenPrefix;
   }
   currentTokenPrefix = prefix;
+  return true;
 }
 
 /**

@@ -27,18 +27,6 @@ function displayGqlContextValue(raw: string | null | undefined): string | null {
   return v.length <= GQL_CONTEXT_DISPLAY_LEN ? v : v.slice(0, GQL_CONTEXT_DISPLAY_LEN);
 }
 
-function recordGqlContextCaptureTimestamps(input: BrowserGqlContextInput, now: number): void {
-  if (normalizeClientVersion(input.clientVersion)) {
-    versionUpdatedAt = now;
-  }
-  if (normalizeClientSessionId(input.clientSessionId)) {
-    sessionUpdatedAt = now;
-  }
-  if (normalizeDeviceId(input.deviceId)) {
-    deviceUpdatedAt = now;
-  }
-}
-
 /**
  * Снимок GQL-заголовков для /api/bot-health
  */
@@ -138,20 +126,21 @@ export function applyBrowserGqlContext(input: BrowserGqlContextInput, now = Date
   const clientSessionId = normalizeClientSessionId(input.clientSessionId);
   const deviceId = normalizeDeviceId(input.deviceId);
 
-  recordGqlContextCaptureTimestamps(input, now);
-
   let changed = false;
 
   if (clientVersion && process.env.TWITCH_CLIENT_VERSION?.trim() !== clientVersion) {
     process.env.TWITCH_CLIENT_VERSION = clientVersion;
+    versionUpdatedAt = now;
     changed = true;
   }
   if (clientSessionId && process.env.TWITCH_CLIENT_SESSION_ID?.trim() !== clientSessionId) {
     process.env.TWITCH_CLIENT_SESSION_ID = clientSessionId;
+    sessionUpdatedAt = now;
     changed = true;
   }
   if (deviceId && process.env.TWITCH_DEVICE_ID?.trim() !== deviceId) {
     process.env.TWITCH_DEVICE_ID = deviceId;
+    deviceUpdatedAt = now;
     changed = true;
   }
 
