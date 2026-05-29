@@ -4,6 +4,7 @@ import {
   normalizeClientSessionId,
   normalizeClientVersion,
   normalizeDeviceId,
+  resetGqlContextHealthForTests,
 } from '../browserGqlContextCapture';
 
 describe('browserGqlContextCapture', () => {
@@ -11,6 +12,7 @@ describe('browserGqlContextCapture', () => {
 
   afterEach(() => {
     process.env = { ...envBackup };
+    resetGqlContextHealthForTests();
   });
 
   it('normalizeClientVersion принимает twilight build id', () => {

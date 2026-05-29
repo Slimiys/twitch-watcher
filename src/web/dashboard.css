@@ -2571,6 +2571,17 @@ th.notify-header-clickable:active {
     letter-spacing: 0.03em;
 }
 
+.bot-health-card-gql-context .gql-context-value {
+    font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    word-break: break-all;
+}
+
+.client-integrity-row-sub dt {
+    padding-left: 8px;
+    font-size: 10px;
+}
+
 .bot-health-grid .bot-health-grid-message {
     grid-column: 1 / -1;
     margin: 0;

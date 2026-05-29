@@ -3,9 +3,10 @@
  */
 
 import { applyBrowserGqlContext, BrowserGqlContextInput } from './browserGqlContextCapture';
+import { integrityExpirationToMs } from './integrityConfig';
+import { recordIntegrityTokenForDisplay } from './integrityTokenDisplay';
 import { logger } from './logger';
 import { persistIntegrityToAppConfig } from './integrityPersistence';
-import { integrityExpirationToMs } from './integrityConfig';
 
 /** Срок действия токена из браузера по умолчанию (4 ч) */
 const DEFAULT_BROWSER_INTEGRITY_TTL_MS = 4 * 60 * 60 * 1000;
@@ -84,6 +85,9 @@ export function applyBrowserIntegrityCapture(
   });
 
   const token = normalizeClientIntegrityToken(input.clientIntegrity);
+  if (token) {
+    recordIntegrityTokenForDisplay(token);
+  }
   if (!token) {
     if (gqlContextApplied) {
       return {

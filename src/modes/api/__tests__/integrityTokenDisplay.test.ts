@@ -28,6 +28,15 @@ describe('integrityTokenDisplay', () => {
     expect(display.currentPrefix).toBe(integrityTokenPrefix(second));
   });
 
+  it('recordIntegrityTokenForDisplay пишет прошлый даже при том же префиксе', () => {
+    const token = 't'.repeat(40);
+    recordIntegrityTokenForDisplay(token);
+    recordIntegrityTokenForDisplay(token);
+    const display = getIntegrityTokenDisplay();
+    expect(display.previousPrefix).toBe(integrityTokenPrefix(token));
+    expect(display.currentPrefix).toBe(integrityTokenPrefix(token));
+  });
+
   it('инициализирует текущий префикс из env', () => {
     process.env.TWITCH_CLIENT_INTEGRITY = 'env-token-' + 'x'.repeat(40);
     const display = getIntegrityTokenDisplay();

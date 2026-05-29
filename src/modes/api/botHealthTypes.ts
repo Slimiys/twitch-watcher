@@ -63,6 +63,19 @@ export interface GraphqlHealthSnapshot {
   hadRecentNetworkFailure: boolean;
 }
 
+/** Поле GQL-контекста из браузера */
+export interface GqlContextFieldSnapshot {
+  value: string | null;
+  lastUpdatedAtMs: number | null;
+}
+
+/** Client-Version, Client-Session-Id, X-Device-Id */
+export interface GqlContextHealthSnapshot {
+  clientVersion: GqlContextFieldSnapshot;
+  clientSessionId: GqlContextFieldSnapshot;
+  deviceId: GqlContextFieldSnapshot;
+}
+
 /** Полный ответ /api/bot-health */
 export interface BotHealthSnapshot {
   timestamp: number;
@@ -72,6 +85,7 @@ export interface BotHealthSnapshot {
   watcherRunning: boolean;
   websocket: WebSocketHealthSnapshot;
   integrity: IntegrityHealthSnapshot;
+  gqlContext: GqlContextHealthSnapshot;
   graphql: GraphqlHealthSnapshot;
   lastIntegrityFailure: { timestamp: number; streamer: string } | null;
   /** Последние попытки claim (до 5, по убыванию времени) */

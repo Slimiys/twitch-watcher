@@ -8,7 +8,69 @@ import {
   readAppConfigFile,
   writeAppConfigFile,
 } from './appSettings';
+import { GqlContextHealthSnapshot } from './botHealthTypes';
 import { shouldPersistIntegrityToConfig } from './integrityConfig';
+
+/** Длина отображаемого значения в dashboard */
+export const GQL_CONTEXT_DISPLAY_LEN = 32;
+
+let versionUpdatedAt: number | null = null;
+let sessionUpdatedAt: number | null = null;
+let deviceUpdatedAt: number | null = null;
+let gqlContextInitializedFromEnv = false;
+
+function displayGqlContextValue(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) {
+    return null;
+  }
+  const v = raw.trim();
+  return v.length <= GQL_CONTEXT_DISPLAY_LEN ? v : v.slice(0, GQL_CONTEXT_DISPLAY_LEN);
+}
+
+function recordGqlContextCaptureTimestamps(input: BrowserGqlContextInput, now: number): void {
+  if (normalizeClientVersion(input.clientVersion)) {
+    versionUpdatedAt = now;
+  }
+  if (normalizeClientSessionId(input.clientSessionId)) {
+    sessionUpdatedAt = now;
+  }
+  if (normalizeDeviceId(input.deviceId)) {
+    deviceUpdatedAt = now;
+  }
+}
+
+/**
+ * Снимок GQL-заголовков для /api/bot-health
+ */
+export function getGqlContextHealthSnapshot(): GqlContextHealthSnapshot {
+  if (!gqlContextInitializedFromEnv) {
+    gqlContextInitializedFromEnv = true;
+  }
+  return {
+    clientVersion: {
+      value: displayGqlContextValue(process.env.TWITCH_CLIENT_VERSION),
+      lastUpdatedAtMs: versionUpdatedAt,
+    },
+    clientSessionId: {
+      value: displayGqlContextValue(process.env.TWITCH_CLIENT_SESSION_ID),
+      lastUpdatedAtMs: sessionUpdatedAt,
+    },
+    deviceId: {
+      value: displayGqlContextValue(process.env.TWITCH_DEVICE_ID),
+      lastUpdatedAtMs: deviceUpdatedAt,
+    },
+  };
+}
+
+/**
+ * Сброс меток времени (тесты)
+ */
+export function resetGqlContextHealthForTests(): void {
+  versionUpdatedAt = null;
+  sessionUpdatedAt = null;
+  deviceUpdatedAt = null;
+  gqlContextInitializedFromEnv = false;
+}
 
 /** Twilight build id (Client-Version) */
 const CLIENT_VERSION_PATTERN =
@@ -71,10 +133,12 @@ export function normalizeDeviceId(raw: unknown): string | null {
 /**
  * Применяет заголовки gql из браузера в process.env (и config при включённом persist)
  */
-export function applyBrowserGqlContext(input: BrowserGqlContextInput): boolean {
+export function applyBrowserGqlContext(input: BrowserGqlContextInput, now = Date.now()): boolean {
   const clientVersion = normalizeClientVersion(input.clientVersion);
   const clientSessionId = normalizeClientSessionId(input.clientSessionId);
   const deviceId = normalizeDeviceId(input.deviceId);
+
+  recordGqlContextCaptureTimestamps(input, now);
 
   let changed = false;
 

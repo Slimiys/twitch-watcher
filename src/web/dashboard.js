@@ -1534,17 +1534,25 @@ function describeCircuitBreaker(graphql) {
 }
 
 /**
- * Карточка WebSocket + GraphQL CB
+ * Карточка Просмотр + WebSocket + GraphQL CB
  */
-function renderNetworkHealthCard(ws, graphql) {
+function renderNetworkHealthCard(health) {
+    const ws = health?.websocket;
+    const graphql = health?.graphql;
     const wsInfo = describeWebSocketHealth(ws);
     const gqlInfo = describeCircuitBreaker(graphql);
+    const watcherKind = health?.watcherRunning ? 'ok' : 'err';
+    const watcherLabel = health?.watcherRunning ? 'Работает' : 'Остановлен';
+    const watcherDot = `<span class="bot-health-status-dot ${healthStatusDotClass(watcherKind)}"></span>`;
     const wsDot = `<span class="bot-health-status-dot ${healthStatusDotClass(wsInfo.kind)}"></span>`;
     const gqlDot = `<span class="bot-health-status-dot ${healthStatusDotClass(gqlInfo.kind)}"></span>`;
 
     return `
         <div class="bot-health-card bot-health-card-network">
             <div class="bot-health-card-title">WebSocket / GraphQL</div>
+            <div class="bot-health-network-block">
+                <div class="bot-health-card-value bot-health-network-value">${watcherDot}<span class="bot-health-network-name">Просмотр</span> ${escapeHtml(watcherLabel)}</div>
+            </div>
             <div class="bot-health-network-block">
                 <div class="bot-health-card-value bot-health-network-value">${wsDot}<span class="bot-health-network-name">WebSocket</span> ${escapeHtml(wsInfo.label)}</div>
                 ${wsInfo.detail ? `<div class="bot-health-card-detail">${wsInfo.detail}</div>` : ''}
@@ -1553,6 +1561,42 @@ function renderNetworkHealthCard(ws, graphql) {
                 <div class="bot-health-card-value bot-health-network-value">${gqlDot}<span class="bot-health-network-name">GraphQL CB</span> ${escapeHtml(gqlInfo.label)}</div>
                 ${gqlInfo.detail ? `<div class="bot-health-card-detail">${gqlInfo.detail}</div>` : ''}
             </div>
+        </div>
+    `;
+}
+
+function formatGqlContextFieldRow(label, field) {
+    const value = field?.value || '—';
+    const updated = field?.lastUpdatedAtMs
+        ? formatHealthTimeAgo(field.lastUpdatedAtMs)
+        : '—';
+    const valueKind = field?.value ? 'ok' : 'muted';
+    const updatedKind = field?.lastUpdatedAtMs ? 'ok' : 'muted';
+    return `
+        <div class="client-integrity-row">
+            <dt>${escapeHtml(label)}</dt>
+            <dd class="gql-context-value ${integrityPanelStateClass(valueKind)}">${escapeHtml(value)}</dd>
+        </div>
+        <div class="client-integrity-row client-integrity-row-sub">
+            <dt>Обновлено</dt>
+            <dd class="${integrityPanelStateClass(updatedKind)}">${escapeHtml(updated)}</dd>
+        </div>
+    `;
+}
+
+/**
+ * Карточка Client-Version / Session-Id / Device-Id из браузера
+ */
+function renderGqlContextHealthCard(gqlContext) {
+    const ctx = gqlContext || {};
+    return `
+        <div class="bot-health-card bot-health-card-gql-context">
+            <div class="bot-health-card-title">GQL-заголовки</div>
+            <dl class="client-integrity-rows">
+                ${formatGqlContextFieldRow('Client-Version', ctx.clientVersion)}
+                ${formatGqlContextFieldRow('Client-Session-Id', ctx.clientSessionId)}
+                ${formatGqlContextFieldRow('X-Device-Id', ctx.deviceId)}
+            </dl>
         </div>
     `;
 }
@@ -1647,14 +1691,11 @@ async function updateBotHealth() {
     updateConnectionStatus(health.websocket?.status === 'connected');
     lastBotHealthForVersion = health;
 
-    let watcherKind = health.watcherRunning ? 'ok' : 'err';
-    const watcherLabel = health.watcherRunning ? 'Работает' : 'Остановлен';
-
     const cards = [
         renderVersionHealthCard(health),
         integrityCard,
-        renderBotHealthCard('Просмотр', escapeHtml(watcherLabel), '', watcherKind),
-        renderNetworkHealthCard(health.websocket, health.graphql),
+        renderGqlContextHealthCard(health.gqlContext),
+        renderNetworkHealthCard(health),
     ];
 
     grid.innerHTML = cards.join('');

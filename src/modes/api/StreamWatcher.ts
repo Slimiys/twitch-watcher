@@ -13,6 +13,7 @@ import {
   deriveIntegrityBonusClaimStatus,
   resolveLastIntegrityUpdatedAt,
 } from './integrityBonusClaimStatus';
+import { getGqlContextHealthSnapshot } from './browserGqlContextCapture';
 import { getIntegrityTokenDisplay } from './integrityTokenDisplay';
 import { GraphQLClient } from './GraphQLClient';
 import { formatElapsedTime, setSafeAsyncInterval, runSafeAsync, withTimeout } from './utils';
@@ -2454,6 +2455,7 @@ export class StreamWatcher {
       watcherRunning: this.isRunning,
       websocket,
       integrity: enrichedIntegrity,
+      gqlContext: getGqlContextHealthSnapshot(),
       graphql,
       lastIntegrityFailure: this.lastIntegrityFailure
         ? { ...this.lastIntegrityFailure }
