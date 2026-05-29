@@ -3,7 +3,8 @@
  */
 
 const DEFAULT_BOT_URL = 'http://127.0.0.1:3001';
-const MIN_SEND_INTERVAL_MS = 15_000;
+/** Минимальный интервал повторной отправки тех же заголовков в бот */
+const MIN_SEND_INTERVAL_MS = 60_000;
 const GQL_URL_PATTERNS = ['https://gql.twitch.tv/*'];
 const CAPTURE_REQUEST_POLL_MS = 5_000;
 const TWITCH_TAB_URLS = ['*://*.twitch.tv/*', '*://twitch.tv/*'];
