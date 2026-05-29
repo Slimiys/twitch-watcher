@@ -373,17 +373,38 @@ export class WebServer {
         const databaseStorage = streamWatcher.getDatabaseStorage?.();
         
         if (databaseStorage && databaseStorage.isReady()) {
+          const streamCountsByWindow = databaseStorage.getStreamCountsByUsernameByWindows();
           const enrichedStatistics = statistics.map((stat: any) => {
             const dbStats = databaseStorage.getStreamerStats(stat.streamerName);
+            const windows =
+              streamCountsByWindow.get(String(stat.streamerName).toLowerCase()) ?? {
+                d7: 0,
+                d14: 0,
+                d30: 0,
+                d60: 0,
+              };
+            const streamCounts = {
+              7: windows.d7,
+              14: windows.d14,
+              30: windows.d30,
+              60: windows.d60,
+            };
+            const streamsLast30Days = windows.d30;
             if (dbStats) {
               return {
                 ...stat,
                 lastStreamStart: dbStats.lastStreamStart,
                 lastStreamEnd: dbStats.lastStreamEnd,
                 lastStreamDurationMs: dbStats.lastStreamDurationMs,
+                streamCounts,
+                streamsLast30Days,
               };
             }
-            return stat;
+            return {
+              ...stat,
+              streamCounts,
+              streamsLast30Days,
+            };
           });
           res.json(enrichedStatistics);
         } else {

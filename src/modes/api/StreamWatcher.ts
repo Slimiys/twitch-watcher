@@ -303,6 +303,8 @@ export class StreamWatcher {
     // Небольшая задержка, чтобы веб-сервер успел запуститься
     await new Promise(resolve => setTimeout(resolve, 100));
 
+    await this.loadStreamCountsFromDatabase();
+
     // Инициализируем WebSocket
     try {
       logger.verbose('🔌  Initializing WebSocket connection...');
@@ -746,6 +748,12 @@ export class StreamWatcher {
             `⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up: ${error.message || error}`
           );
         }
+
+        this.persistStreamSession(
+          streamerInfo.username,
+          onlineAt,
+          streamerInfo.broadcastId
+        );
 
         await this.updateInitialPoints(streamerInfo);
 
@@ -1808,6 +1816,41 @@ export class StreamWatcher {
   }
 
   /**
+   * Сохраняет сессию стрима в БД (дедуп по broadcast id или времени старта)
+   */
+  private persistStreamSession(
+    username: string,
+    startedAt: number,
+    broadcastId?: string | null
+  ): void {
+    if (this.databaseStorage?.isReady()) {
+      this.databaseStorage.recordStreamSession(username, startedAt, broadcastId);
+    }
+  }
+
+  /**
+   * Дожидается БД и подгружает агрегаты стримов за 30 суток (для API дашборда)
+   */
+  private async loadStreamCountsFromDatabase(): Promise<void> {
+    if (!this.databaseStorage) {
+      return;
+    }
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (this.databaseStorage.isReady()) {
+        const counts = this.databaseStorage.getStreamCountsLast30DaysByUsername();
+        logger.verbose(
+          `📊  Статистика стримов за 30 суток загружена из БД (${counts.size} стримеров с записями)`
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    logger.verbose('ℹ️  База данных недоступна — счётчик стримов (30д) не загружен');
+  }
+
+  /**
    * Сохраняет время окончания стрима в БД (WebSocket и GraphQL fallback)
    */
   private persistLastStreamEnd(username: string, timestamp: number): void {
@@ -1853,6 +1896,12 @@ export class StreamWatcher {
           streamerInfo.startTime = streamStartTime;
           streamerInfo.webSocketOnlineAt = streamStartTime;
           this.persistLastStreamStart(streamerInfo.username, streamStartTime);
+
+          this.persistStreamSession(
+            streamerInfo.username,
+            streamStartTime,
+            streamerInfo.broadcastId
+          );
           
           try {
             await this.updateInitialPoints(streamerInfo);

@@ -38,6 +38,18 @@
 
 **Уникальный индекс:** `(streamer_id, date)` - гарантирует одну запись на стримера в день
 
+### Таблица `stream_sessions`
+
+Учёт отдельных стримов для колонки «Streams» на дашборде (периоды 7 / 14 / 30 / 60 суток):
+
+- `id` - Уникальный идентификатор (INTEGER PRIMARY KEY)
+- `streamer_id` - ID стримера (INTEGER, FOREIGN KEY)
+- `started_at` - Время начала стрима (INTEGER, timestamp)
+- `session_key` - Ключ сессии: `broadcast_id` Twitch или `ts:<started_at>` (TEXT NOT NULL)
+- `created_at` - Время создания записи (INTEGER - timestamp)
+
+**Уникальный индекс:** `(streamer_id, session_key)` — одна запись на сессию стрима
+
 ## Автоматическое сохранение
 
 Данные автоматически сохраняются в базу данных при следующих событиях:
@@ -51,6 +63,10 @@
 
 3. **Окончание трансляции** (offline / WebSocket stream-down):
    - Обновляются `last_stream_end` и `last_stream_duration_ms` (разница с `last_stream_start`)
+
+4. **Начало трансляции** (WebSocket stream-up или переход в онлайн через GraphQL):
+   - Добавляется запись в `stream_sessions` (без дубликатов для той же сессии)
+   - При кратком офлайне (brief offline resume) новая сессия не создаётся
 
 ## Расположение базы данных
 

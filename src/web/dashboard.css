@@ -1289,6 +1289,48 @@ td.invalid-time span {
     background: #3a3a3d;
 }
 
+.streams-window-menu {
+    display: none;
+    position: fixed;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 6px;
+    min-width: 120px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    z-index: 2000;
+    padding: 4px 0;
+}
+
+.streams-window-menu.show {
+    display: block;
+}
+
+.streams-window-menu-item {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    color: #efeff1;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.streams-window-menu-item:hover {
+    background: #26262c;
+}
+
+.streams-window-menu-item.active {
+    color: #00d166;
+    font-weight: 600;
+}
+
+.streams-count-header {
+    cursor: context-menu;
+}
+
 .column-settings-menu {
     position: relative;
 }

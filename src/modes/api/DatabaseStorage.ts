@@ -87,6 +87,29 @@ const DEFAULT_CONFIG: DatabaseStorageConfig = {
   autoSave: true,
 };
 
+/** Окно подсчёта стримов для дашборда (30 суток) */
+export const STREAM_COUNT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Допустимые периоды подсчёта стримов на дашборде (сутки) */
+export const STREAM_COUNT_WINDOW_DAYS = [7, 14, 30, 60] as const;
+
+export type StreamCountWindowDays = (typeof STREAM_COUNT_WINDOW_DAYS)[number];
+
+/** Количество стримов стримера по периодам */
+export interface StreamCountsByWindow {
+  d7: number;
+  d14: number;
+  d30: number;
+  d60: number;
+}
+
+/**
+ * Преобразует период в миллисекунды
+ */
+export function streamCountWindowMs(days: StreamCountWindowDays): number {
+  return days * 24 * 60 * 60 * 1000;
+}
+
 /**
  * Статистика стримера из базы данных
  */
@@ -316,6 +339,19 @@ export class DatabaseStorage {
       )
     `);
 
+    // Сессии стримов (для подсчёта количества стримов за период)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS stream_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        streamer_id INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        session_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (streamer_id) REFERENCES streamers(id) ON DELETE CASCADE,
+        UNIQUE(streamer_id, session_key)
+      )
+    `);
+
     // Создаем индексы для быстрого поиска
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_daily_points_streamer_date 
@@ -323,9 +359,176 @@ export class DatabaseStorage {
       
       CREATE INDEX IF NOT EXISTS idx_streamers_username 
       ON streamers(username);
+
+      CREATE INDEX IF NOT EXISTS idx_stream_sessions_streamer_started
+      ON stream_sessions(streamer_id, started_at);
     `);
 
     logger.verbose(`📊  Database tables created`);
+  }
+
+  /**
+   * Формирует уникальный ключ сессии стрима (broadcast id или метка времени старта)
+   */
+  private buildStreamSessionKey(startedAt: number, broadcastId?: string | null): string {
+    const trimmed = broadcastId?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+    return `ts:${startedAt}`;
+  }
+
+  /**
+   * Регистрирует начало стрима (одна запись на сессию; повторы с тем же ключом игнорируются)
+   * @param username Имя стримера
+   * @param startedAt Время начала стрима (timestamp)
+   * @param broadcastId Идентификатор трансляции Twitch (если известен)
+   * @returns true, если добавлена новая сессия
+   */
+  recordStreamSession(
+    username: string,
+    startedAt: number,
+    broadcastId?: string | null
+  ): boolean {
+    if (!isDatabaseAvailable || !this.db || !Number.isFinite(startedAt) || startedAt <= 0) {
+      return false;
+    }
+
+    try {
+      const streamerId = this.getOrCreateStreamer(username);
+      const sessionKey = this.buildStreamSessionKey(startedAt, broadcastId);
+      const now = Date.now();
+
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO stream_sessions (streamer_id, started_at, session_key, created_at)
+        VALUES (?, ?, ?, ?)
+      `);
+      stmt.bind([streamerId, startedAt, sessionKey, now]);
+      stmt.step();
+      stmt.free();
+
+      const changesResult = this.db.exec('SELECT changes() AS c');
+      const inserted = Number(changesResult[0]?.values[0]?.[0] ?? 0) > 0;
+
+      if (inserted && this.config.autoSave) {
+        this.saveDatabase();
+      }
+
+      if (inserted) {
+        logger.verbose(
+          `📺  Recorded stream session for ${username} (key=${sessionKey})`
+        );
+      }
+
+      return inserted;
+    } catch (error: any) {
+      logger.error(`❌  Failed to record stream session: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Количество стримов стримера за последние 30 суток
+   */
+  getStreamCountLast30Days(username: string): number {
+    const counts = this.getStreamCountsLast30DaysByUsername();
+    return counts.get(username.toLowerCase()) ?? 0;
+  }
+
+  /**
+   * Количество стримов за 30 суток для всех стримеров (ключ — username в нижнем регистре)
+   */
+  getStreamCountsLast30DaysByUsername(): Map<string, number> {
+    const all = this.getStreamCountsByUsernameByWindows();
+    const result = new Map<string, number>();
+    for (const [username, windows] of all) {
+      result.set(username, windows.d30);
+    }
+    return result;
+  }
+
+  /**
+   * Количество стримов за указанный период для всех стримеров (ключ — username в нижнем регистре)
+   */
+  getStreamCountsByUsername(windowDays: StreamCountWindowDays): Map<string, number> {
+    const all = this.getStreamCountsByUsernameByWindows();
+    const field = this.streamCountWindowField(windowDays);
+    const result = new Map<string, number>();
+    for (const [username, windows] of all) {
+      result.set(username, windows[field]);
+    }
+    return result;
+  }
+
+  /**
+   * Количество стримов по периодам 7/14/30/60 суток для всех стримеров
+   */
+  getStreamCountsByUsernameByWindows(): Map<string, StreamCountsByWindow> {
+    const result = new Map<string, StreamCountsByWindow>();
+    if (!isDatabaseAvailable || !this.db) {
+      return result;
+    }
+
+    const now = Date.now();
+    const since7 = now - streamCountWindowMs(7);
+    const since14 = now - streamCountWindowMs(14);
+    const since30 = now - streamCountWindowMs(30);
+    const since60 = now - streamCountWindowMs(60);
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT s.username,
+          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c7,
+          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c14,
+          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c30,
+          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c60
+        FROM stream_sessions ss
+        INNER JOIN streamers s ON s.id = ss.streamer_id
+        WHERE ss.started_at >= ?
+        GROUP BY s.id
+      `);
+      stmt.bind([since7, since14, since30, since60, since60]);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as {
+          username: string;
+          c7: number;
+          c14: number;
+          c30: number;
+          c60: number;
+        };
+        if (row.username) {
+          result.set(String(row.username).toLowerCase(), {
+            d7: Number(row.c7) || 0,
+            d14: Number(row.c14) || 0,
+            d30: Number(row.c30) || 0,
+            d60: Number(row.c60) || 0,
+          });
+        }
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(`❌  Failed to get stream counts by windows: ${error.message || error}`);
+    }
+
+    return result;
+  }
+
+  private streamCountWindowField(
+    windowDays: StreamCountWindowDays
+  ): keyof StreamCountsByWindow {
+    switch (windowDays) {
+      case 7:
+        return 'd7';
+      case 14:
+        return 'd14';
+      case 30:
+        return 'd30';
+      case 60:
+        return 'd60';
+      default:
+        return 'd30';
+    }
   }
 
   /**
