@@ -38,6 +38,8 @@ export interface StreamerInfo {
     startTime: number;
     webSocketOnlineAt?: number;
   };
+  /** Текущее число зрителей (GraphQL), null если офлайн или неизвестно */
+  viewersCount?: number | null;
 }
 
 /**
@@ -152,6 +154,8 @@ export interface WatchStatistics {
   currentPoints: number;
   status: 'ONLINE' | 'OFFLINE';
   game: string | null; // Категория/игра, которую стримит стример
+  /** Число зрителей в данный момент (только для ONLINE) */
+  viewersCount: number | null;
 }
 
 /**

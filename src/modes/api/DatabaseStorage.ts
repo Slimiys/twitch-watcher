@@ -109,6 +109,14 @@ export interface StreamerCategoryStreamCount {
   streamCount: number;
 }
 
+/** Даты начала стримов по периодам для дашборда */
+export interface StreamSessionStartsByWindow {
+  d7: number[];
+  d14: number[];
+  d30: number[];
+  d60: number[];
+}
+
 /**
  * Преобразует период в миллисекунды
  */
@@ -572,6 +580,69 @@ export class DatabaseStorage {
       stmt.free();
     } catch (error: any) {
       logger.error(`❌  Failed to get category stream counts: ${error.message || error}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Даты начала стримов по периодам для всех стримеров (ключ — username в нижнем регистре)
+   */
+  getStreamSessionStartsByUsernameByWindows(): Map<string, StreamSessionStartsByWindow> {
+    const result = new Map<string, StreamSessionStartsByWindow>();
+    if (!isDatabaseAvailable || !this.db) {
+      return result;
+    }
+
+    const now = Date.now();
+    const since7 = now - streamCountWindowMs(7);
+    const since14 = now - streamCountWindowMs(14);
+    const since30 = now - streamCountWindowMs(30);
+    const since60 = now - streamCountWindowMs(60);
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT s.username, ss.started_at
+        FROM stream_sessions ss
+        INNER JOIN streamers s ON s.id = ss.streamer_id
+        WHERE ss.started_at >= ?
+        ORDER BY ss.started_at DESC
+      `);
+      stmt.bind([since60]);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as { username: string; started_at: number };
+        if (!row.username || !row.started_at) {
+          continue;
+        }
+        const key = String(row.username).toLowerCase();
+        const startedAt = Number(row.started_at);
+        if (!Number.isFinite(startedAt) || startedAt <= 0) {
+          continue;
+        }
+
+        let windows = result.get(key);
+        if (!windows) {
+          windows = { d7: [], d14: [], d30: [], d60: [] };
+          result.set(key, windows);
+        }
+
+        if (startedAt >= since60) {
+          windows.d60.push(startedAt);
+        }
+        if (startedAt >= since30) {
+          windows.d30.push(startedAt);
+        }
+        if (startedAt >= since14) {
+          windows.d14.push(startedAt);
+        }
+        if (startedAt >= since7) {
+          windows.d7.push(startedAt);
+        }
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(`❌  Failed to get stream session starts: ${error.message || error}`);
     }
 
     return result;

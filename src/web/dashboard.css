@@ -1416,6 +1416,69 @@ td.invalid-time span {
     text-decoration: underline;
 }
 
+.stream-sessions-menu {
+    display: none;
+    position: fixed;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 8px;
+    min-width: 200px;
+    max-width: min(320px, calc(100vw - 16px));
+    max-height: min(320px, calc(100vh - 16px));
+    overflow: auto;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 2000;
+    padding: 8px 0;
+}
+
+.stream-sessions-menu.show {
+    display: block;
+}
+
+.stream-sessions-title {
+    padding: 4px 14px 8px;
+    font-size: 12px;
+    color: #adadb8;
+    border-bottom: 1px solid #26262c;
+    margin-bottom: 4px;
+}
+
+.stream-sessions-item {
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #efeff1;
+}
+
+.stream-sessions-item:hover {
+    background: #26262c;
+}
+
+.stream-sessions-empty {
+    padding: 10px 14px 12px;
+    font-size: 13px;
+    color: #adadb8;
+}
+
+.stream-sessions-cell {
+    text-align: center;
+}
+
+.stream-sessions-button {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
+
+.stream-sessions-button:hover {
+    color: #00d166;
+}
+
 .column-settings-menu {
     position: relative;
 }

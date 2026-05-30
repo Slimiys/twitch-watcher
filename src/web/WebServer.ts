@@ -376,6 +376,8 @@ export class WebServer {
           const streamCountsByWindow = databaseStorage.getStreamCountsByUsernameByWindows();
           const categoryStreamCountsByUsername =
             databaseStorage.getCategoryStreamCountsByUsername();
+          const streamSessionStartsByUsername =
+            databaseStorage.getStreamSessionStartsByUsernameByWindows();
           const enrichedStatistics = statistics.map((stat: any) => {
             const dbStats = databaseStorage.getStreamerStats(stat.streamerName);
             const windows =
@@ -394,6 +396,19 @@ export class WebServer {
             const streamsLast30Days = windows.d30;
             const categoryStreamCounts =
               categoryStreamCountsByUsername.get(String(stat.streamerName).toLowerCase()) ?? [];
+            const sessionStarts =
+              streamSessionStartsByUsername.get(String(stat.streamerName).toLowerCase()) ?? {
+                d7: [],
+                d14: [],
+                d30: [],
+                d60: [],
+              };
+            const streamSessionStarts = {
+              7: sessionStarts.d7,
+              14: sessionStarts.d14,
+              30: sessionStarts.d30,
+              60: sessionStarts.d60,
+            };
             if (dbStats) {
               return {
                 ...stat,
@@ -403,6 +418,7 @@ export class WebServer {
                 streamCounts,
                 streamsLast30Days,
                 categoryStreamCounts,
+                streamSessionStarts,
               };
             }
             return {
@@ -410,6 +426,7 @@ export class WebServer {
               streamCounts,
               streamsLast30Days,
               categoryStreamCounts,
+              streamSessionStarts,
             };
           });
           res.json(enrichedStatistics);

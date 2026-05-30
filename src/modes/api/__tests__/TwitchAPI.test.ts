@@ -97,6 +97,7 @@ describe('TwitchAPI', () => {
       expect(result.isOnline).toBe(true);
       expect(result.broadcastId).toBe('123456');
       expect(result.title).toBe('Test Stream');
+      expect(result.viewersCount).toBe(100);
     });
 
     it('должен установить isOnline в false когда стример офлайн', async () => {

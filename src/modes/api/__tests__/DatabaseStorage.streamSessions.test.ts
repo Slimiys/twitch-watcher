@@ -139,4 +139,23 @@ describe('DatabaseStorage stream sessions', () => {
       { category: 'Path of Exile', streamCount: 1 },
     ]);
   });
+
+  it('возвращает даты начала стримов по окнам', async () => {
+    await waitForDatabase(storage);
+
+    const now = Date.now();
+    const d5 = now - 5 * 24 * 60 * 60 * 1000;
+    const d10 = now - 10 * 24 * 60 * 60 * 1000;
+    const d45 = now - 45 * 24 * 60 * 60 * 1000;
+
+    storage.recordStreamSession('dates_user', d5, 's1');
+    storage.recordStreamSession('dates_user', d10, 's2');
+    storage.recordStreamSession('dates_user', d45, 's3');
+
+    const windows = storage.getStreamSessionStartsByUsernameByWindows().get('dates_user');
+    expect(windows?.d7).toEqual([d5]);
+    expect(windows?.d14).toEqual([d5, d10]);
+    expect(windows?.d30).toEqual([d5, d10]);
+    expect(windows?.d60).toEqual([d5, d10, d45]);
+  });
 });

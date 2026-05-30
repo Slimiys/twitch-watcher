@@ -935,6 +935,7 @@ export class StreamWatcher {
       this.activeSessions.delete(streamerInfo.username);
     }
 
+    streamerInfo.viewersCount = null;
     finalizeOfflineState(streamerInfo);
     this.activeStreamSessionKeys.delete(streamerInfo.username);
     this.savePointsState();
@@ -1021,6 +1022,7 @@ export class StreamWatcher {
         currentPoints: streamerInfo.channelPoints ?? 0,
         status: 'ONLINE',
         game: streamerInfo.game,
+        viewersCount: streamerInfo.viewersCount ?? null,
       });
     }
     return stats.length;
@@ -1724,6 +1726,10 @@ export class StreamWatcher {
         currentPoints,
         status,
         game: streamerInfo.game,
+        viewersCount:
+          effectivelyOnline && streamerInfo.viewersCount != null
+            ? streamerInfo.viewersCount
+            : null,
       });
     }
 
@@ -1905,8 +1911,9 @@ export class StreamWatcher {
       if (this.databaseStorage.isReady()) {
         const counts = this.databaseStorage.getStreamCountsLast30DaysByUsername();
         const categoryCounts = this.databaseStorage.getCategoryStreamCountsByUsername();
+        const sessionStarts = this.databaseStorage.getStreamSessionStartsByUsernameByWindows();
         logger.verbose(
-          `📊  Статистика стримов загружена из БД (${counts.size} стримеров с записями, ${categoryCounts.size} с категориями)`
+          `📊  Статистика стримов загружена из БД (${counts.size} стримеров с записями, ${categoryCounts.size} с категориями, ${sessionStarts.size} с датами стримов)`
         );
         return;
       }

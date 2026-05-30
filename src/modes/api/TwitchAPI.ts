@@ -459,6 +459,7 @@ export class TwitchAPI {
         streamerInfo.title = streamInfo.title;
         streamerInfo.game = streamInfo.game?.name || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
+        streamerInfo.viewersCount = streamInfo.viewersCount ?? 0;
 
         // Получаем spade_url, если еще не получен
         if (!streamerInfo.spadeUrl) {
@@ -519,6 +520,7 @@ export class TwitchAPI {
             );
           } else {
             logger.info(`📴  [${streamerInfo.username}] GraphQL check: streamer is OFFLINE`);
+            streamerInfo.viewersCount = null;
             beginTentativeOfflineState(streamerInfo);
           }
         } else if (streamerInfo.isOnline && graphqlUnavailable) {

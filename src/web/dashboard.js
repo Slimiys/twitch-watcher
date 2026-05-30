@@ -55,7 +55,7 @@ let botUptimeSyncTimer = null;
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "streamsLast30Days": true, "lastStreamStart": true, "lastStreamEnd": true, "lastStreamDuration": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "streamsLast30Days": true, "viewersCount": true, "lastStreamStart": true, "lastStreamEnd": true, "lastStreamDuration": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
     if (visibleColumns.lastStreamDuration === undefined) {
         visibleColumns.lastStreamDuration = true;
@@ -96,11 +96,36 @@ function getStreamerStreamCount(stat) {
 }
 
 /**
+ * Даты начала стримов стримера за выбранный период
+ * @param {object} stat
+ * @returns {number[]}
+ */
+function getStreamerStreamSessionStarts(stat) {
+    if (!stat?.streamSessionStarts) {
+        return [];
+    }
+    const dates = stat.streamSessionStarts[streamsCountWindowDays];
+    return Array.isArray(dates) ? dates : [];
+}
+
+/**
  * Подпись колонки Streams с текущим периодом
  * @returns {string}
  */
 function getStreamsCountColumnLabel() {
     return `Streams (${streamsCountWindowDays}d)`;
+}
+
+/**
+ * Форматирует число зрителей для таблицы
+ * @param {number|null|undefined} count
+ * @returns {string}
+ */
+function formatViewerCount(count) {
+    if (count == null || Number.isNaN(Number(count))) {
+        return '-';
+    }
+    return Number(count).toLocaleString('ru-RU');
 }
 
 /**
@@ -166,6 +191,8 @@ function setStreamsCountWindowDays(days) {
 
 /** Открытое меню статистики категорий (имя стримера) */
 let openCategoryStreamStatsStreamer = null;
+/** Открытое меню дат стримов (имя стримера) */
+let openStreamSessionsMenuStreamer = null;
 
 /**
  * Закрывает меню статистики категорий стримера
@@ -176,6 +203,102 @@ function hideCategoryStreamStatsMenu() {
         menu.remove();
     }
     openCategoryStreamStatsStreamer = null;
+}
+
+/**
+ * Закрывает меню списка дат стримов
+ */
+function hideStreamSessionsMenu() {
+    const menu = document.getElementById('streamSessionsMenu');
+    if (menu) {
+        menu.remove();
+    }
+    openStreamSessionsMenuStreamer = null;
+}
+
+/**
+ * Строит HTML списка дат начала стримов
+ * @param {number[]} startedAtList
+ * @returns {string}
+ */
+function buildStreamSessionsMenuItems(startedAtList) {
+    if (!Array.isArray(startedAtList) || startedAtList.length === 0) {
+        return '<div class="stream-sessions-empty">Нет стримов за выбранный период</div>';
+    }
+
+    return startedAtList.map((startedAt) => {
+        const label = formatTimeHHMM(startedAt);
+        return `<div class="stream-sessions-item">${escapeHtml(label)}</div>`;
+    }).join('');
+}
+
+/**
+ * Открывает или закрывает меню дат стримов под ячейкой Streams
+ * @param {string} streamerName
+ * @param {HTMLElement} anchorEl
+ */
+function toggleStreamSessionsMenu(streamerName, anchorEl) {
+    if (openStreamSessionsMenuStreamer === streamerName) {
+        hideStreamSessionsMenu();
+        return;
+    }
+
+    hideStreamSessionsMenu();
+    hideCategoryStreamStatsMenu();
+    hideStreamsCountWindowMenu();
+
+    const stat = (cachedStatisticsRows || []).find((row) => row.streamerName === streamerName);
+    const dates = getStreamerStreamSessionStarts(stat);
+    const itemsHtml = buildStreamSessionsMenuItems(dates);
+
+    const menu = document.createElement('div');
+    menu.id = 'streamSessionsMenu';
+    menu.className = 'stream-sessions-menu show';
+    menu.innerHTML = `
+        <div class="stream-sessions-title">Стримы (${streamsCountWindowDays}d)</div>
+        ${itemsHtml}
+    `;
+
+    document.body.appendChild(menu);
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    let left = anchorRect.left;
+    let top = anchorRect.bottom + 4;
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - rect.width - 8);
+        menu.style.left = `${left}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+        top = Math.max(8, anchorRect.top - rect.height - 4);
+        menu.style.top = `${top}px`;
+    }
+
+    openStreamSessionsMenuStreamer = streamerName;
+}
+
+/**
+ * Рендерит ячейку количества стримов
+ * @param {object} stat
+ * @returns {string}
+ */
+function renderStreamerStreamsCell(stat) {
+    const count = getStreamerStreamCount(stat);
+    const safeAttr = String(stat.streamerName)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;');
+    const dates = getStreamerStreamSessionStarts(stat);
+    const title = dates.length > 0
+        ? 'Показать даты начала стримов'
+        : 'Даты появятся после учёта стримов';
+
+    return `<td class="stream-sessions-cell">
+        <button type="button" class="stream-sessions-button" data-streamer="${safeAttr}" title="${title}">${count}</button>
+    </td>`;
 }
 
 /**
@@ -208,6 +331,7 @@ function toggleCategoryStreamStatsMenu(streamerName, anchorEl) {
 
     hideCategoryStreamStatsMenu();
     hideStreamsCountWindowMenu();
+    hideStreamSessionsMenu();
 
     const stat = (cachedStatisticsRows || []).find((row) => row.streamerName === streamerName);
     const itemsHtml = buildCategoryStreamStatsMenuItems(stat?.categoryStreamCounts);
@@ -288,6 +412,31 @@ function initCategoryStreamStatsMenu() {
             return;
         }
         toggleCategoryStreamStatsMenu(streamerName, button);
+    });
+}
+
+/**
+ * Инициализирует клик по количеству стримов
+ */
+function initStreamSessionsMenu() {
+    const tableHost = document.getElementById('watchesTable');
+    if (!tableHost || tableHost.dataset.streamSessionsMenuBound === '1') {
+        return;
+    }
+    tableHost.dataset.streamSessionsMenuBound = '1';
+
+    tableHost.addEventListener('click', (e) => {
+        const button = e.target.closest('.stream-sessions-button');
+        if (!button) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const streamerName = button.getAttribute('data-streamer');
+        if (!streamerName) {
+            return;
+        }
+        toggleStreamSessionsMenu(streamerName, button);
     });
 }
 
@@ -2669,6 +2818,10 @@ function sortTableData(data, sort) {
                 valueA = getStreamerStreamCount(a);
                 valueB = getStreamerStreamCount(b);
                 break;
+            case 'viewersCount':
+                valueA = a.viewersCount != null ? Number(a.viewersCount) : null;
+                valueB = b.viewersCount != null ? Number(b.viewersCount) : null;
+                break;
             case 'status':
                 valueA = a.status;
                 valueB = b.status;
@@ -2711,6 +2864,7 @@ function sortTableData(data, sort) {
             case 'pointsEarned':
             case 'currentPoints':
             case 'streamsLast30Days':
+            case 'viewersCount':
                 comparison = Number(valueA) - Number(valueB);
                 break;
             case 'status':
@@ -2733,7 +2887,7 @@ window.handleTableSort = function(column) {
     // Определяем, является ли колонка временной (для временных колонок начальное направление - desc)
     const isTimeColumn =
         column === 'lastStreamStart' || column === 'lastStreamEnd' || column === 'lastStreamDuration';
-    const isNumericDescDefault = isTimeColumn || column === 'streamsLast30Days';
+    const isNumericDescDefault = isTimeColumn || column === 'streamsLast30Days' || column === 'viewersCount';
     
     // Если кликнули на ту же колонку, меняем направление сортировки
     if (tableSort.column === column) {
@@ -2755,6 +2909,7 @@ window.handleTableSort = function(column) {
 async function updateStatistics(options = {}) {
     const skipFetch = options.skipFetch === true;
     hideCategoryStreamStatsMenu();
+    hideStreamSessionsMenu();
     const table = document.getElementById('watchesTable');
     const hasContent = table && table.querySelector('table');
     const hasSkeleton = table && table.querySelector('.skeleton-table');
@@ -2874,6 +3029,11 @@ async function updateStatistics(options = {}) {
             label: getStreamsCountColumnLabel(),
             visible: visibleColumns.streamsLast30Days !== false,
         },
+        {
+            key: 'viewersCount',
+            label: 'Viewers',
+            visible: visibleColumns.viewersCount !== false,
+        },
         { key: 'lastStreamStart', label: 'Last Stream Start', visible: visibleColumns.lastStreamStart !== false },
         { key: 'lastStreamEnd', label: 'Last Stream End', visible: visibleColumns.lastStreamEnd !== false },
         {
@@ -2892,7 +3052,7 @@ async function updateStatistics(options = {}) {
                 <tr>
                     ${visibleColumnsList.map(col => {
                         // Определяем, можно ли сортировать эту колонку
-                        const isSortable = ['streamer', 'streamsLast30Days', 'lastStreamStart', 'lastStreamEnd', 'lastStreamDuration'].includes(col.key);
+                        const isSortable = ['streamer', 'streamsLast30Days', 'viewersCount', 'lastStreamStart', 'lastStreamEnd', 'lastStreamDuration'].includes(col.key);
                         const isSorted = tableSort.column === col.key;
                         const sortIcon = isSorted 
                             ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
@@ -2961,7 +3121,8 @@ async function updateStatistics(options = {}) {
                             return `<td>${generatePointsBadgeWithDiff(currentCurrentPoints, prevCurrentPoints)}</td>`;
                         })() : ''}
                         ${visibleColumns.game !== false ? renderStreamerCategoryCell(s) : ''}
-                        ${visibleColumns.streamsLast30Days !== false ? `<td>${getStreamerStreamCount(s)}</td>` : ''}
+                        ${visibleColumns.streamsLast30Days !== false ? renderStreamerStreamsCell(s) : ''}
+                        ${visibleColumns.viewersCount !== false ? `<td>${formatViewerCount(s.viewersCount)}</td>` : ''}
                         ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeWithColors(s.lastStreamStart, '#00d166') : '-'}</td>` : ''}
                         ${visibleColumns.lastStreamEnd !== false ? (() => {
                             const endTime = s.lastStreamEnd;
@@ -4070,10 +4231,20 @@ window.addEventListener('load', () => {
         ) {
             hideCategoryStreamStatsMenu();
         }
+
+        const streamSessionsMenu = document.getElementById('streamSessionsMenu');
+        if (
+            streamSessionsMenu &&
+            !streamSessionsMenu.contains(e.target) &&
+            !e.target.closest('.stream-sessions-button')
+        ) {
+            hideStreamSessionsMenu();
+        }
     });
 
     initStreamsCountWindowMenu();
     initCategoryStreamStatsMenu();
+    initStreamSessionsMenu();
     
     // Инициализируем чекбоксы для колонок
     const columnCheckboxes = document.querySelectorAll('#columnSettingsDropdown input[type="checkbox"]');
