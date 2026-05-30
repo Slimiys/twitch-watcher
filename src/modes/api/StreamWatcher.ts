@@ -734,8 +734,29 @@ export class StreamWatcher {
           return;
         }
 
-        logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
         const onlineAt = Date.now();
+        const resumedSameStreamAfterRestart =
+          streamerInfo.startTime > 0 && streamerInfo.startTime < onlineAt - 30_000;
+
+        if (resumedSameStreamAfterRestart) {
+          logger.info(
+            `🥳  [${streamerInfo.username}] Stream still ONLINE after restart (same session)`
+          );
+          streamerInfo.webSocketOnlineAt = onlineAt;
+          this.restoreStreamSessionCategoryTracking(streamerInfo);
+          try {
+            await this.twitchAPI.updateStreamerInfo(streamerInfo, {
+              allowOfflineDemotion: false,
+            });
+          } catch (error: any) {
+            logger.verbose(
+              `⚠️  [${streamerInfo.username}] Failed to update streamer info on stream-up resume: ${error.message || error}`
+            );
+          }
+          return;
+        }
+
+        logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
         this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
         this.resetStreamSessionPoints(streamerInfo);
         streamerInfo.startTime = onlineAt;
@@ -1869,11 +1890,13 @@ export class StreamWatcher {
     this.activeStreamSessionKeys.set(streamerInfo.username, sessionKey);
 
     if (this.databaseStorage?.isReady()) {
-      this.databaseStorage.recordStreamSession(
-        streamerInfo.username,
-        startedAt,
-        streamerInfo.broadcastId
-      );
+      if (!this.databaseStorage.hasStreamSession(streamerInfo.username, sessionKey)) {
+        this.databaseStorage.recordStreamSession(
+          streamerInfo.username,
+          startedAt,
+          streamerInfo.broadcastId
+        );
+      }
       this.trackStreamCategoryForSession(streamerInfo);
     }
   }
@@ -1909,6 +1932,7 @@ export class StreamWatcher {
 
     for (let attempt = 0; attempt < 100; attempt++) {
       if (this.databaseStorage.isReady()) {
+        this.databaseStorage.dedupeStreamSessionTimestampAliases();
         const counts = this.databaseStorage.getStreamCountsLast30DaysByUsername();
         const categoryCounts = this.databaseStorage.getCategoryStreamCountsByUsername();
         const sessionStarts = this.databaseStorage.getStreamSessionStartsByUsernameByWindows();

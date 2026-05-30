@@ -437,6 +437,81 @@ export class DatabaseStorage {
   }
 
   /**
+   * Проверяет, есть ли уже сессия с таким ключом
+   */
+  hasStreamSession(username: string, sessionKey: string): boolean {
+    if (!isDatabaseAvailable || !this.db || !sessionKey.trim()) {
+      return false;
+    }
+
+    try {
+      const streamerId = this.getOrCreateStreamer(username);
+      const stmt = this.db.prepare(`
+        SELECT 1 FROM stream_sessions
+        WHERE streamer_id = ? AND session_key = ?
+        LIMIT 1
+      `);
+      stmt.bind([streamerId, sessionKey]);
+      const exists = stmt.step();
+      stmt.free();
+      return exists;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Удаляет дубликаты с ключом ts: при появлении записи с broadcast id (та же трансляция)
+   */
+  private removeStreamSessionTimestampAlias(
+    streamerId: number,
+    startedAt: number,
+    sessionKey: string
+  ): void {
+    if (!this.db || !sessionKey || sessionKey.startsWith('ts:')) {
+      return;
+    }
+
+    const tsKey = `ts:${startedAt}`;
+    const del = this.db.prepare(`
+      DELETE FROM stream_sessions
+      WHERE streamer_id = ? AND session_key = ? AND started_at = ?
+    `);
+    del.bind([streamerId, tsKey, startedAt]);
+    del.step();
+    del.free();
+  }
+
+  /**
+   * Удаляет устаревшие ts:-записи, если для того же started_at уже есть ключ с broadcast id
+   */
+  dedupeStreamSessionTimestampAliases(): void {
+    if (!isDatabaseAvailable || !this.db) {
+      return;
+    }
+
+    try {
+      const del = this.db.prepare(`
+        DELETE FROM stream_sessions
+        WHERE session_key LIKE 'ts:%'
+          AND EXISTS (
+            SELECT 1 FROM stream_sessions AS dup
+            WHERE dup.streamer_id = stream_sessions.streamer_id
+              AND dup.started_at = stream_sessions.started_at
+              AND dup.session_key NOT LIKE 'ts:%'
+          )
+      `);
+      del.step();
+      del.free();
+      if (this.config.autoSave) {
+        this.saveDatabase();
+      }
+    } catch (error: any) {
+      logger.error(`❌  Failed to dedupe stream sessions: ${error.message || error}`);
+    }
+  }
+
+  /**
    * Регистрирует начало стрима (одна запись на сессию; повторы с тем же ключом игнорируются)
    * @param username Имя стримера
    * @param startedAt Время начала стрима (timestamp)
@@ -455,6 +530,28 @@ export class DatabaseStorage {
     try {
       const streamerId = this.getOrCreateStreamer(username);
       const sessionKey = this.buildStreamSessionKey(startedAt, broadcastId);
+
+      if (this.hasStreamSession(username, sessionKey)) {
+        return false;
+      }
+
+      // Не создаём ts:-запись, если уже есть сессия с broadcast id на то же время
+      if (sessionKey.startsWith('ts:')) {
+        const dup = this.db.prepare(`
+          SELECT 1 FROM stream_sessions
+          WHERE streamer_id = ? AND started_at = ? AND session_key NOT LIKE 'ts:%'
+          LIMIT 1
+        `);
+        dup.bind([streamerId, startedAt]);
+        const hasBroadcastAlias = dup.step();
+        dup.free();
+        if (hasBroadcastAlias) {
+          return false;
+        }
+      } else {
+        this.removeStreamSessionTimestampAlias(streamerId, startedAt, sessionKey);
+      }
+
       const now = Date.now();
 
       const stmt = this.db.prepare(`
@@ -610,6 +707,8 @@ export class DatabaseStorage {
       `);
       stmt.bind([since60]);
 
+      const seenByUser = new Map<string, Set<number>>();
+
       while (stmt.step()) {
         const row = stmt.getAsObject() as { username: string; started_at: number };
         if (!row.username || !row.started_at) {
@@ -620,6 +719,16 @@ export class DatabaseStorage {
         if (!Number.isFinite(startedAt) || startedAt <= 0) {
           continue;
         }
+
+        let seen = seenByUser.get(key);
+        if (!seen) {
+          seen = new Set<number>();
+          seenByUser.set(key, seen);
+        }
+        if (seen.has(startedAt)) {
+          continue;
+        }
+        seen.add(startedAt);
 
         let windows = result.get(key);
         if (!windows) {
@@ -699,10 +808,10 @@ export class DatabaseStorage {
     try {
       const stmt = this.db.prepare(`
         SELECT s.username,
-          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c7,
-          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c14,
-          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c30,
-          SUM(CASE WHEN ss.started_at >= ? THEN 1 ELSE 0 END) AS c60
+          COUNT(DISTINCT CASE WHEN ss.started_at >= ? THEN ss.started_at END) AS c7,
+          COUNT(DISTINCT CASE WHEN ss.started_at >= ? THEN ss.started_at END) AS c14,
+          COUNT(DISTINCT CASE WHEN ss.started_at >= ? THEN ss.started_at END) AS c30,
+          COUNT(DISTINCT CASE WHEN ss.started_at >= ? THEN ss.started_at END) AS c60
         FROM stream_sessions ss
         INNER JOIN streamers s ON s.id = ss.streamer_id
         WHERE ss.started_at >= ?

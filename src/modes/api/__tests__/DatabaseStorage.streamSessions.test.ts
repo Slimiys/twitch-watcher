@@ -36,6 +36,21 @@ describe('DatabaseStorage stream sessions', () => {
     }
   });
 
+  it('объединяет ts: и broadcast id для одного времени старта', async () => {
+    await waitForDatabase(storage);
+
+    const startedAt = Date.now();
+    expect(storage.recordStreamSession('alias_user', startedAt, null)).toBe(true);
+    expect(storage.recordStreamSession('alias_user', startedAt, 'broadcast-merge')).toBe(
+      true
+    );
+    expect(storage.getStreamCountLast30Days('alias_user')).toBe(1);
+
+    const starts =
+      storage.getStreamSessionStartsByUsernameByWindows().get('alias_user')?.d30 ?? [];
+    expect(starts.filter((t) => t === startedAt)).toHaveLength(1);
+  });
+
   it('дедуплицирует сессию по broadcast id', async () => {
     await waitForDatabase(storage);
 
@@ -157,5 +172,19 @@ describe('DatabaseStorage stream sessions', () => {
     expect(windows?.d14).toEqual([d5, d10]);
     expect(windows?.d30).toEqual([d5, d10]);
     expect(windows?.d60).toEqual([d5, d10, d45]);
+  });
+
+  it('очищает ts:-дубликаты при dedupeStreamSessionTimestampAliases', async () => {
+    await waitForDatabase(storage);
+
+    const startedAt = Date.now();
+    storage.recordStreamSession('dedupe_user', startedAt, null);
+    storage.recordStreamSession('dedupe_user', startedAt, 'bc-dedupe');
+
+    expect(storage.getStreamCountLast30Days('dedupe_user')).toBe(1);
+
+    storage.recordStreamSession('dedupe_user2', startedAt + 1000, null);
+    storage.dedupeStreamSessionTimestampAliases();
+    expect(storage.getStreamCountLast30Days('dedupe_user2')).toBe(1);
   });
 });
