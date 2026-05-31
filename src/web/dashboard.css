@@ -1380,6 +1380,11 @@ td.invalid-time span {
     white-space: nowrap;
 }
 
+.category-stream-stats-name.current {
+    color: #00d166;
+    font-weight: 600;
+}
+
 .category-stream-stats-count {
     flex-shrink: 0;
     color: #00d166;
@@ -1393,7 +1398,13 @@ td.invalid-time span {
 }
 
 .streamer-category-cell {
-    max-width: 220px;
+    max-width: 120px;
+    width: 120px;
+}
+
+th.category-column-header {
+    max-width: 120px;
+    width: 120px;
 }
 
 .streamer-category-button {

@@ -129,6 +129,36 @@ function formatViewerCount(count) {
 }
 
 /**
+ * Форматирует число зрителей с разницей к прошлому обновлению
+ * @param {number|null|undefined} count
+ * @param {number|null|undefined} previousCount
+ * @returns {string}
+ */
+function formatViewerCountWithDiff(count, previousCount) {
+    if (count == null || Number.isNaN(Number(count))) {
+        return '-';
+    }
+
+    const current = Number(count);
+    const formatted = current.toLocaleString('ru-RU');
+
+    if (previousCount == null || Number.isNaN(Number(previousCount))) {
+        return formatted;
+    }
+
+    const previous = Number(previousCount);
+    if (previous === current) {
+        return formatted;
+    }
+
+    const diff = current - previous;
+    const diffFormatted =
+        diff > 0 ? `+${diff.toLocaleString('ru-RU')}` : diff.toLocaleString('ru-RU');
+    const diffClass = diff > 0 ? 'diff-positive' : 'diff-negative';
+    return `${formatted} <span class="points-diff ${diffClass}">(${diffFormatted})</span>`;
+}
+
+/**
  * Закрывает меню выбора периода для колонки Streams
  */
 function hideStreamsCountWindowMenu() {
@@ -304,18 +334,38 @@ function renderStreamerStreamsCell(stat) {
 /**
  * Строит HTML пунктов меню категорий
  * @param {Array<{category:string, streamCount:number}>} categoryStreamCounts
+ * @param {string|null|undefined} currentCategory Текущая категория стримера
+ * @param {boolean} highlightCurrent Подсветить текущую категорию (только для ONLINE)
  * @returns {string}
  */
-function buildCategoryStreamStatsMenuItems(categoryStreamCounts) {
+function buildCategoryStreamStatsMenuItems(
+    categoryStreamCounts,
+    currentCategory,
+    highlightCurrent
+) {
     if (!Array.isArray(categoryStreamCounts) || categoryStreamCounts.length === 0) {
         return '<div class="category-stream-stats-empty">Пока нет данных по категориям</div>';
     }
 
-    return categoryStreamCounts.map((entry) => {
-        const category = escapeHtml(entry.category || '—');
-        const count = Number(entry.streamCount) || 0;
-        return `<div class="category-stream-stats-item"><span class="category-stream-stats-name">${category}</span><span class="category-stream-stats-count">${count}</span></div>`;
-    }).join('');
+    const normalizedCurrent =
+        highlightCurrent && currentCategory?.trim()
+            ? currentCategory.trim().toLowerCase()
+            : null;
+
+    return categoryStreamCounts
+        .map((entry) => {
+            const category = entry.category || '—';
+            const categoryEscaped = escapeHtml(category);
+            const count = Number(entry.streamCount) || 0;
+            const isCurrent =
+                normalizedCurrent != null &&
+                category.trim().toLowerCase() === normalizedCurrent;
+            const nameClass = isCurrent
+                ? 'category-stream-stats-name current'
+                : 'category-stream-stats-name';
+            return `<div class="category-stream-stats-item"><span class="${nameClass}">${categoryEscaped}</span><span class="category-stream-stats-count">${count}</span></div>`;
+        })
+        .join('');
 }
 
 /**
@@ -334,7 +384,11 @@ function toggleCategoryStreamStatsMenu(streamerName, anchorEl) {
     hideStreamSessionsMenu();
 
     const stat = (cachedStatisticsRows || []).find((row) => row.streamerName === streamerName);
-    const itemsHtml = buildCategoryStreamStatsMenuItems(stat?.categoryStreamCounts);
+    const itemsHtml = buildCategoryStreamStatsMenuItems(
+        stat?.categoryStreamCounts,
+        stat?.game,
+        stat?.status === 'ONLINE'
+    );
 
     const menu = document.createElement('div');
     menu.id = 'categoryStreamStatsMenu';
@@ -584,19 +638,21 @@ function getPointsCategory(points) {
 /**
  * Генерирует цвет на основе строки (детерминированно)
  * @param {string} str Строка для генерации цвета
- * @returns {string} HEX цвет
+ * @returns {string} HSL-цвет
  */
 function generateColorFromString(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
-    
-    // Генерируем яркие, насыщенные цвета
-    const hue = Math.abs(hash) % 360;
-    const saturation = 60 + (Math.abs(hash) % 20); // 60-80%
-    const lightness = 50 + (Math.abs(hash) % 15); // 50-65%
-    
+    hash = Math.abs(hash);
+
+    // Золотое сечение — равномернее по всей палитре, чем hash % 360
+    const goldenRatioConjugate = 0.618033988749895;
+    const hue = Math.round(((hash * goldenRatioConjugate) % 1) * 360);
+    const saturation = 52 + (hash % 28); // 52–79%
+    const lightness = 56 + ((hash >> 6) % 14); // 56–69%
+
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
@@ -2981,6 +3037,10 @@ async function updateStatistics(options = {}) {
         }
         const currentPointsEarned = s.pointsEarned || 0;
         const currentCurrentPoints = s.currentPoints || 0;
+        const currentViewersCount =
+            s.viewersCount != null && !Number.isNaN(Number(s.viewersCount))
+                ? Number(s.viewersCount)
+                : null;
         const entry = {};
         if (snap.pointsEarned !== currentPointsEarned) {
             entry.pointsEarned = snap.pointsEarned;
@@ -2988,7 +3048,14 @@ async function updateStatistics(options = {}) {
         if (snap.currentPoints !== currentCurrentPoints) {
             entry.currentPoints = snap.currentPoints;
         }
-        if (entry.pointsEarned !== undefined || entry.currentPoints !== undefined) {
+        if (snap.viewersCount !== currentViewersCount) {
+            entry.viewersCount = snap.viewersCount;
+        }
+        if (
+            entry.pointsEarned !== undefined ||
+            entry.currentPoints !== undefined ||
+            entry.viewersCount !== undefined
+        ) {
             currentPreviousStats[s.streamerName] = entry;
         }
     });
@@ -3074,8 +3141,9 @@ async function updateStatistics(options = {}) {
                             col.key === 'streamsLast30Days'
                                 ? ' title="Правый клик — выбрать период (7d / 14d / 30d / 60d)"'
                                 : '';
+                        const categoryHeaderClass = col.key === 'game' ? ' category-column-header' : '';
                         
-                        return `<th class="table-header${notifyClass}${streamsHeaderClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${notifyTitle}${streamsHeaderTitle}>${col.label}${sortIcon}</th>`;
+                        return `<th class="table-header${notifyClass}${streamsHeaderClass}${categoryHeaderClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${notifyTitle}${streamsHeaderTitle}>${col.label}${sortIcon}</th>`;
                     }).join('')}
                 </tr>
             </thead>
@@ -3122,7 +3190,10 @@ async function updateStatistics(options = {}) {
                         })() : ''}
                         ${visibleColumns.game !== false ? renderStreamerCategoryCell(s) : ''}
                         ${visibleColumns.streamsLast30Days !== false ? renderStreamerStreamsCell(s) : ''}
-                        ${visibleColumns.viewersCount !== false ? `<td>${formatViewerCount(s.viewersCount)}</td>` : ''}
+                        ${visibleColumns.viewersCount !== false ? (() => {
+                            const prevViewersCount = currentPreviousStats[s.streamerName]?.viewersCount;
+                            return `<td>${formatViewerCountWithDiff(s.viewersCount, prevViewersCount)}</td>`;
+                        })() : ''}
                         ${visibleColumns.lastStreamStart !== false ? `<td>${s.lastStreamStart ? formatTimeWithColors(s.lastStreamStart, '#00d166') : '-'}</td>` : ''}
                         ${visibleColumns.lastStreamEnd !== false ? (() => {
                             const endTime = s.lastStreamEnd;
@@ -3194,6 +3265,10 @@ async function updateStatistics(options = {}) {
             nextSnapshot[s.streamerName] = {
                 pointsEarned: s.pointsEarned || 0,
                 currentPoints: s.currentPoints || 0,
+                viewersCount:
+                    s.viewersCount != null && !Number.isNaN(Number(s.viewersCount))
+                        ? Number(s.viewersCount)
+                        : null,
             };
         }
     });
