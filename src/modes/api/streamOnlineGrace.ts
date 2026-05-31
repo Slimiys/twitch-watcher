@@ -87,6 +87,7 @@ export function finalizeOfflineState(info: StreamerInfo): void {
   info.webSocketOnlineAt = undefined;
   info.offlineAt = undefined;
   info.offlineWatchSnapshot = undefined;
+  info.broadcastId = null;
 }
 
 /**

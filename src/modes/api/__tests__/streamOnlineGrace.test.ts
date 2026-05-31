@@ -116,9 +116,11 @@ describe('streamOnlineGrace', () => {
     const info = baseInfo();
     info.offlineAt = Date.now();
     info.offlineWatchSnapshot = { startTime: 1000 };
+    info.broadcastId = 'old-broadcast';
     finalizeOfflineState(info);
     expect(info.offlineAt).toBeUndefined();
     expect(info.offlineWatchSnapshot).toBeUndefined();
     expect(info.startTime).toBe(0);
+    expect(info.broadcastId).toBeNull();
   });
 });

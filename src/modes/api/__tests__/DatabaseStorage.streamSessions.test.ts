@@ -36,6 +36,20 @@ describe('DatabaseStorage stream sessions', () => {
     }
   });
 
+  it('создаёт новую сессию при том же broadcast id, но другом started_at', async () => {
+    await waitForDatabase(storage);
+
+    const firstStart = Date.now() - 24 * 60 * 60 * 1000;
+    const secondStart = Date.now();
+    expect(storage.recordStreamSession('stale_bc_user', firstStart, 'same-broadcast')).toBe(
+      true
+    );
+    expect(
+      storage.recordStreamSession('stale_bc_user', secondStart, 'same-broadcast')
+    ).toBe(true);
+    expect(storage.getStreamCountLast30Days('stale_bc_user')).toBe(2);
+  });
+
   it('объединяет ts: и broadcast id для одного времени старта', async () => {
     await waitForDatabase(storage);
 

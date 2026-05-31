@@ -138,6 +138,9 @@ export function buildStreamSessionKey(
   return `ts:${startedAt}`;
 }
 
+/** Порог (мс): один broadcast id с близким started_at — повтор записи, иначе устаревший id */
+const STREAM_SESSION_SAME_START_TOLERANCE_MS = 60_000;
+
 /**
  * Статистика стримера из базы данных
  */
@@ -461,6 +464,31 @@ export class DatabaseStorage {
   }
 
   /**
+   * Возвращает started_at существующей сессии по ключу (null, если записи нет)
+   */
+  getStreamSessionStartedAt(username: string, sessionKey: string): number | null {
+    if (!isDatabaseAvailable || !this.db || !sessionKey.trim()) {
+      return null;
+    }
+
+    try {
+      const streamerId = this.getOrCreateStreamer(username);
+      const stmt = this.db.prepare(`
+        SELECT started_at FROM stream_sessions
+        WHERE streamer_id = ? AND session_key = ?
+        LIMIT 1
+      `);
+      stmt.bind([streamerId, sessionKey]);
+      const row = stmt.step() ? (stmt.getAsObject() as { started_at: number }) : null;
+      stmt.free();
+      const startedAt = Number(row?.started_at);
+      return Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Удаляет дубликаты с ключом ts: при появлении записи с broadcast id (та же трансляция)
    */
   private removeStreamSessionTimestampAlias(
@@ -529,7 +557,21 @@ export class DatabaseStorage {
 
     try {
       const streamerId = this.getOrCreateStreamer(username);
-      const sessionKey = this.buildStreamSessionKey(startedAt, broadcastId);
+      let sessionKey = this.buildStreamSessionKey(startedAt, broadcastId);
+
+      if (!sessionKey.startsWith('ts:') && this.hasStreamSession(username, sessionKey)) {
+        const existingStartedAt = this.getStreamSessionStartedAt(username, sessionKey);
+        if (
+          existingStartedAt != null &&
+          existingStartedAt !== startedAt &&
+          Math.abs(existingStartedAt - startedAt) > STREAM_SESSION_SAME_START_TOLERANCE_MS
+        ) {
+          // Устаревший broadcastId прошлого стрима — новая трансляция, пишем по ts:
+          sessionKey = `ts:${startedAt}`;
+        } else {
+          return false;
+        }
+      }
 
       if (this.hasStreamSession(username, sessionKey)) {
         return false;
