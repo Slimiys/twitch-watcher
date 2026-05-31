@@ -548,6 +548,7 @@ export class StreamWatcher {
       for (const [streamerName, sessionId] of this.activeSessions.entries()) {
         const streamerInfo = this.streamers.get(streamerName);
         if (streamerInfo) {
+          this.flushStreamPointsEarnedToDatabase(streamerInfo);
           const finalPoints = streamerInfo.lastChannelPoints ?? streamerInfo.channelPoints;
           this.statisticsStorage.endSession(sessionId, finalPoints, 'interrupted');
           
@@ -744,6 +745,7 @@ export class StreamWatcher {
           );
           streamerInfo.webSocketOnlineAt = onlineAt;
           this.restoreStreamSessionCategoryTracking(streamerInfo);
+          this.applyPersistedPoints(streamerInfo);
           try {
             await this.twitchAPI.updateStreamerInfo(streamerInfo, {
               allowOfflineDemotion: false,
@@ -758,6 +760,7 @@ export class StreamWatcher {
 
         logger.info(`🥳  [${streamerInfo.username}] Stream went ONLINE`);
         this.recordLastOnlineTransition(streamerInfo.username, onlineAt);
+        this.flushStreamPointsEarnedToDatabase(streamerInfo);
         this.resetStreamSessionPoints(streamerInfo);
         streamerInfo.startTime = onlineAt;
         streamerInfo.webSocketOnlineAt = onlineAt;
@@ -862,6 +865,7 @@ export class StreamWatcher {
         `⏱️  [${streamerInfo.username}] Просмотр возобновлён (тот же стрим): ${formatElapsedTime(now - streamerInfo.startTime)}`
       );
       this.restoreStreamSessionCategoryTracking(streamerInfo);
+      this.applyPersistedPoints(streamerInfo);
       return;
     }
 
@@ -878,6 +882,7 @@ export class StreamWatcher {
         `⏱️  [${streamerInfo.username}] Просмотр возобновлён (сохранённое состояние): ${formatElapsedTime(now - streamerInfo.startTime)}`
       );
       this.restoreStreamSessionCategoryTracking(streamerInfo);
+      this.applyPersistedPoints(streamerInfo);
       return;
     }
 
@@ -893,6 +898,7 @@ export class StreamWatcher {
           `⏱️  [${streamerInfo.username}] Просмотр возобновлён (из БД): ${formatElapsedTime(now - streamerInfo.startTime)}`
         );
         this.restoreStreamSessionCategoryTracking(streamerInfo);
+        this.applyPersistedPoints(streamerInfo);
         return;
       }
     }
@@ -901,6 +907,7 @@ export class StreamWatcher {
       streamerInfo.startTime = now;
       logger.verbose(`⏱️  [${streamerInfo.username}] Новая сессия просмотра`);
     }
+    this.applyPersistedPoints(streamerInfo);
   }
 
   /**
@@ -944,7 +951,7 @@ export class StreamWatcher {
     }
 
     logger.info(`😴  [${streamerInfo.username}] Stream OFFLINE confirmed (${source})`);
-    this.syncStreamPointsEarned(streamerInfo);
+    this.flushStreamPointsEarnedToDatabase(streamerInfo);
     const streamEndTime = Date.now();
     this.persistLastStreamEnd(streamerInfo.username, streamEndTime);
 
@@ -1067,7 +1074,27 @@ export class StreamWatcher {
       initialChannelPoints: null,
       lastChannelPoints: null,
       streamPointsEarned: 0,
+      pointsEarnedBaseline: 0,
     };
+  }
+
+  /**
+   * Есть ли сохранённая сессия баллов (для восстановления после перезапуска)
+   */
+  private hasPersistedPointsSession(username: string): boolean {
+    const saved = this.pointsState[username];
+    if (!saved) {
+      return false;
+    }
+    if (Number.isFinite(saved.streamPointsEarned) && saved.streamPointsEarned > 0) {
+      return true;
+    }
+    return (
+      !!saved.isOnline &&
+      saved.startTime > 0 &&
+      saved.initialChannelPoints != null &&
+      Number.isFinite(saved.initialChannelPoints)
+    );
   }
 
   /**
@@ -1076,6 +1103,39 @@ export class StreamWatcher {
   private resetStreamSessionPoints(streamerInfo: StreamerInfo): void {
     streamerInfo.streamPointsEarned = 0;
     streamerInfo.initialChannelPoints = null;
+  }
+
+  /**
+   * Сохраняет баллы текущей сессии в БД (как watch time при завершении просмотра)
+   */
+  private flushStreamPointsEarnedToDatabase(streamerInfo: StreamerInfo): void {
+    this.syncStreamPointsEarned(streamerInfo);
+    const earned = Math.max(0, streamerInfo.streamPointsEarned ?? 0);
+    if (earned <= 0) {
+      return;
+    }
+
+    if (this.databaseStorage?.isReady()) {
+      this.databaseStorage.addTotalPoints(streamerInfo.username, earned);
+      this.databaseStorage.addDailyPoints(streamerInfo.username, earned);
+    }
+
+    streamerInfo.pointsEarnedBaseline =
+      (streamerInfo.pointsEarnedBaseline ?? 0) + earned;
+    streamerInfo.streamPointsEarned = 0;
+    logger.verbose(
+      `📊  [${streamerInfo.username}] Session points saved to DB: +${earned} (total ${streamerInfo.pointsEarnedBaseline})`
+    );
+  }
+
+  /**
+   * Итого заработанных баллов для dashboard (БД + текущая сессия)
+   */
+  private getPointsEarnedForDisplay(streamerInfo: StreamerInfo): number {
+    this.syncStreamPointsEarned(streamerInfo);
+    const baseline = streamerInfo.pointsEarnedBaseline ?? 0;
+    const sessionEarned = streamerInfo.streamPointsEarned ?? 0;
+    return baseline + sessionEarned;
   }
 
   /**
@@ -1735,8 +1795,7 @@ export class StreamWatcher {
         }
       }
 
-      this.syncStreamPointsEarned(streamerInfo);
-      const pointsEarned = streamerInfo.streamPointsEarned ?? 0;
+      const pointsEarned = this.getPointsEarnedForDisplay(streamerInfo);
 
       const status = getDisplayStreamStatus(streamerInfo);
       
@@ -1989,6 +2048,7 @@ export class StreamWatcher {
           logger.info(`🥳  [${streamerInfo.username}] is now ONLINE - starting watch`);
           const streamStartTime = Date.now();
           this.recordLastOnlineTransition(streamerInfo.username, streamStartTime);
+          this.flushStreamPointsEarnedToDatabase(streamerInfo);
           this.resetStreamSessionPoints(streamerInfo);
           streamerInfo.startTime = streamStartTime;
           streamerInfo.webSocketOnlineAt = streamStartTime;
@@ -2646,8 +2706,7 @@ export class StreamWatcher {
     for (const info of this.streamers.values()) {
       if (isEffectivelyOnline(info)) {
         this.ensureWatchSessionStarted(info);
-        this.syncStreamPointsEarned(info);
-        totalPointsEarned += Math.max(0, info.streamPointsEarned ?? 0);
+        totalPointsEarned += this.getPointsEarnedForDisplay(info);
       }
     }
 
@@ -3144,6 +3203,7 @@ export class StreamWatcher {
       const dbStats = this.databaseStorage.getStreamerStats(streamerInfo.username);
       
       if (dbStats) {
+        streamerInfo.pointsEarnedBaseline = dbStats.totalPoints ?? 0;
         // Логируем информацию из БД
         logger.verbose(`📊  [${streamerInfo.username}] Loaded from DB: total_points=${dbStats.totalPoints}, watch_time=${dbStats.totalWatchTimeMs}ms`);
         
@@ -3177,16 +3237,17 @@ export class StreamWatcher {
           }
         }
         
-        // Если текущие баллы установлены через API, но начальные баллы еще не установлены,
-        // используем текущие баллы как начальные (это нормальная ситуация при первом запуске)
-        // Данные из БД используются как справочная информация для понимания истории стримера
-        if (streamerInfo.channelPoints > 0 && streamerInfo.initialChannelPoints === null) {
-          // Устанавливаем начальные баллы равными текущим, если они еще не установлены
-          // Это позволит корректно отслеживать заработанные баллы с момента запуска
+        // Начальные баллы = текущий баланс только для новой сессии (не при восстановлении из current-points.json)
+        if (
+          streamerInfo.channelPoints > 0 &&
+          streamerInfo.initialChannelPoints === null &&
+          !this.hasPersistedPointsSession(streamerInfo.username)
+        ) {
           streamerInfo.initialChannelPoints = streamerInfo.channelPoints;
           logger.verbose(`📊  [${streamerInfo.username}] Set initial points from current balance: ${streamerInfo.channelPoints}`);
         }
       } else {
+        streamerInfo.pointsEarnedBaseline = streamerInfo.pointsEarnedBaseline ?? 0;
         logger.verbose(`📊  [${streamerInfo.username}] No database record found (will be created on first points earned)`);
       }
     } catch (error: any) {

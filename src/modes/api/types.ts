@@ -27,7 +27,9 @@ export interface StreamerInfo {
   startTime: number; // Время начала просмотра (переход из офлайн в онлайн)
   initialChannelPoints: number | null; // Начальные баллы при старте просмотра
   lastChannelPoints: number | null; // Последние известные баллы
-  streamPointsEarned: number; // Баллы, заработанные за текущий стрим (сбрасываются при stream-up)
+  streamPointsEarned: number; // Баллы за текущую сессию просмотра (ещё не сброшены в БД)
+  /** Баллы, уже сохранённые в БД (завершённые сессии), см. streamers.total_points */
+  pointsEarnedBaseline?: number;
   lastWatchPrepAt?: number; // Время последней подготовки перед minute-watched
   /** Последний stream-up по WebSocket (для grace и dashboard) */
   webSocketOnlineAt?: number;
@@ -150,7 +152,7 @@ export interface GraphQLResponse {
 export interface WatchStatistics {
   streamerName: string;
   elapsedTime: number; // В миллисекундах
-  pointsEarned: number; // Количество заработанных баллов за текущий стрим
+  pointsEarned: number; // Заработанные баллы (БД + текущая сессия)
   currentPoints: number;
   status: 'ONLINE' | 'OFFLINE';
   game: string | null; // Категория/игра, которую стримит стример
