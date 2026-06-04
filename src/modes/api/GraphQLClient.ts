@@ -13,6 +13,11 @@ import { shouldRetry, isNetworkError } from './errorUtils';
 import { TwitchIntegrityProvider } from './TwitchIntegrity';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
 import { canRefreshIntegrityViaApi } from './integrityConfig';
+import {
+  isIntegrityBridgeEnabled,
+  waitForIntegrityCaptureAfterRequest,
+} from './integrityBrowserCapture';
+import { requestIntegrityCaptureFromBridge } from '../../web/integrityCaptureRequest';
 
 /** Коды ClaimCommunityPoints, при которых повтор бесполезен */
 const PERMANENT_CLAIM_ERROR_CODES = new Set([
@@ -910,25 +915,54 @@ export class GraphQLClient {
     let response = await this.postRequest(operation, { requireIntegrity: true });
 
     if (GraphQLClient.hasIntegrityError(response)) {
-      if (!canRefreshIntegrityViaApi()) {
-        logger.warn(
-          '🔐  Claim: failed integrity check — обновите Client-Integrity в «Конфиг бота» или включите TWITCH_INTEGRITY_AUTO_REFRESH'
-        );
-      } else {
-        logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, повтор с обновлением токена...');
-        this.integrityProvider.invalidate();
-        try {
-          await this.integrityProvider.refreshApiTokenAndPersist();
-        } catch (refreshError: unknown) {
-          const message =
-            refreshError instanceof Error ? refreshError.message : String(refreshError);
-          logger.warn(`🔐  Не удалось обновить integrity автоматически: ${message}`);
-        }
-        response = await this.postRequest(operation, { requireIntegrity: true });
+      const retried = await this.retryClaimAfterIntegrityFailure(operation);
+      if (retried != null) {
+        response = retried;
       }
     }
 
     return GraphQLClient.parseClaimBonusResult(response);
+  }
+
+  /**
+   * Повтор claim после ошибки integrity: bridge или POST /integrity
+   */
+  private async retryClaimAfterIntegrityFailure(
+    operation: GraphQLOperation
+  ): Promise<GraphQLResponse | null> {
+    if (isIntegrityBridgeEnabled()) {
+      logger.verbose(
+        '🔐  ClaimCommunityPoints: integrity rejected — запрос токена от edge-extension...'
+      );
+      const { requestedAt } = requestIntegrityCaptureFromBridge();
+      const captured = await waitForIntegrityCaptureAfterRequest(requestedAt);
+      if (captured) {
+        this.integrityProvider.invalidate();
+        return this.postRequest(operation, { requireIntegrity: true });
+      }
+      logger.warn(
+        '🔐  Claim: расширение не передало Client-Integrity — откройте twitch.tv в Edge с Integrity Bridge'
+      );
+      return null;
+    }
+
+    if (!canRefreshIntegrityViaApi()) {
+      logger.warn(
+        '🔐  Claim: failed integrity check — обновите Client-Integrity в «Конфиг бота» или включите TWITCH_INTEGRITY_AUTO_REFRESH'
+      );
+      return null;
+    }
+
+    logger.verbose('🔐  ClaimCommunityPoints: integrity rejected, повтор с обновлением токена...');
+    this.integrityProvider.invalidate();
+    try {
+      await this.integrityProvider.refreshApiTokenAndPersist();
+    } catch (refreshError: unknown) {
+      const message =
+        refreshError instanceof Error ? refreshError.message : String(refreshError);
+      logger.warn(`🔐  Не удалось обновить integrity автоматически: ${message}`);
+    }
+    return this.postRequest(operation, { requireIntegrity: true });
   }
 
   /**

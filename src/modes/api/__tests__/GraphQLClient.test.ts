@@ -371,6 +371,10 @@ describe('GraphQLClient', () => {
   });
 
   describe('claimBonus', () => {
+    beforeEach(() => {
+      process.env.INTEGRITY_BRIDGE_ENABLED = 'false';
+    });
+
     const mockIntegrityResponse = {
       ok: true,
       status: 200,

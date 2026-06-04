@@ -16,7 +16,9 @@ import {
   ResolvedIntegritySource,
 } from './integrityConfig';
 import { resolveStableDeviceId } from './integrityDeviceId';
-import { persistIntegrityToAppConfig } from './integrityPersistence';
+import { isIntegrityBridgeEnabled } from './integrityBrowserCapture';
+import { persistApiIntegrityToken } from './integrityApiPersist';
+import { requestIntegrityCaptureFromBridge } from '../../web/integrityCaptureRequest';
 import { IntegrityHealthSnapshot } from './botHealthTypes';
 import { buildTwitchGqlHeaders } from './twitchGqlContext';
 
@@ -214,6 +216,19 @@ export class TwitchIntegrityProvider {
       );
     }
 
+    if (isIntegrityBridgeEnabled()) {
+      const now = Date.now();
+      if (this.apiToken && now < this.apiExpiresAtMs - 60_000) {
+        return Promise.resolve(this.apiToken);
+      }
+      if (manual) {
+        return Promise.resolve(manual.token);
+      }
+      throw new Error(
+        'Нет Client-Integrity. Откройте twitch.tv в Edge с расширением Integrity Bridge'
+      );
+    }
+
     return this.refreshApiTokenAndPersist();
   }
 
@@ -237,7 +252,7 @@ export class TwitchIntegrityProvider {
    */
   async refreshApiTokenAndPersist(): Promise<string> {
     const token = await this.fetchApiToken();
-    persistIntegrityToAppConfig(token, this.apiExpiresAtMs, this.getDeviceId());
+    persistApiIntegrityToken(token, this.apiExpiresAtMs, this.getDeviceId());
     return token;
   }
 
@@ -312,6 +327,14 @@ export class TwitchIntegrityProvider {
     }
 
     if (!shouldRefresh) {
+      return;
+    }
+
+    if (isIntegrityBridgeEnabled() && manual) {
+      requestIntegrityCaptureFromBridge();
+      logger.info(
+        '🔐  Client-Integrity скоро истечёт — запрошено обновление через edge-extension (twitch.tv в Edge)'
+      );
       return;
     }
 

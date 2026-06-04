@@ -4,6 +4,7 @@ import {
   isIntegrityBridgeEnabled,
   normalizeClientIntegrityToken,
   resetIntegrityCaptureThrottleForTests,
+  waitForIntegrityCaptureAfterRequest,
 } from '../integrityBrowserCapture';
 import { resetIntegrityTokenDisplayForTests } from '../integrityTokenDisplay';
 
@@ -70,5 +71,14 @@ describe('integrityBrowserCapture', () => {
   it('isIntegrityBridgeEnabled false при INTEGRITY_BRIDGE_ENABLED=false', () => {
     process.env.INTEGRITY_BRIDGE_ENABLED = 'false';
     expect(isIntegrityBridgeEnabled()).toBe(false);
+  });
+
+  it('waitForIntegrityCaptureAfterRequest завершается при новом capture', async () => {
+    const requestedAt = Date.now() - 10;
+    const token = 'w'.repeat(40);
+    applyBrowserIntegrityCapture({ clientIntegrity: token });
+
+    const ok = await waitForIntegrityCaptureAfterRequest(requestedAt, 2000, 50);
+    expect(ok).toBe(true);
   });
 });

@@ -143,6 +143,7 @@ export function applyBrowserIntegrityCapture(
       : now + DEFAULT_BROWSER_INTEGRITY_TTL_MS;
 
   process.env.TWITCH_INTEGRITY_SOURCE = 'manual';
+  process.env.TWITCH_INTEGRITY_FROM_BRIDGE = 'true';
   persistIntegrityToAppConfig(token, expiresAtMs);
   recordIntegrityTokenForDisplay(token);
 
@@ -180,6 +181,24 @@ export function applyBrowserIntegrityCapture(
  */
 export function getLastIntegrityCaptureAt(): number {
   return lastCaptureAt;
+}
+
+/**
+ * Ожидает новый токен от расширения после requestIntegrityCaptureFromBridge
+ */
+export async function waitForIntegrityCaptureAfterRequest(
+  requestedAt: number,
+  timeoutMs = 8000,
+  pollMs = 300
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (getLastIntegrityCaptureAt() > requestedAt) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return false;
 }
 
 /**
