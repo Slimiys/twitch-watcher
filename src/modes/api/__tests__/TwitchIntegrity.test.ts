@@ -80,6 +80,33 @@ describe('TwitchIntegrityProvider', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('POST /integrity использует TWITCH_DEVICE_ID из env, а не только id конструктора', async () => {
+    process.env.TWITCH_INTEGRITY_SOURCE = 'api';
+    const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-from-constructor');
+
+    process.env.TWITCH_DEVICE_ID = 'device-from-browser-extension';
+
+    (global.fetch as any) = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token: 'token-with-browser-device',
+        expiration: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    });
+
+    await provider.getToken();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://gql.twitch.tv/integrity',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Device-Id': 'device-from-browser-extension',
+        }),
+      })
+    );
+  });
+
   it('invalidate сбрасывает кэш API и запрашивает новый token', async () => {
     process.env.TWITCH_INTEGRITY_SOURCE = 'api';
     const provider = new TwitchIntegrityProvider('oauth-token', 'test-agent', 'device-123');

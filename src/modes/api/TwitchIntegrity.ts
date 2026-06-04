@@ -130,7 +130,7 @@ export class TwitchIntegrityProvider {
       expiresAtMs,
       expiresInMs,
       fallbackApiEnabled,
-      deviceIdPrefix: this.deviceId.slice(0, 8),
+      deviceIdPrefix: this.getDeviceId().slice(0, 8),
     };
   }
 
@@ -237,7 +237,7 @@ export class TwitchIntegrityProvider {
    */
   async refreshApiTokenAndPersist(): Promise<string> {
     const token = await this.fetchApiToken();
-    persistIntegrityToAppConfig(token, this.apiExpiresAtMs, this.deviceId);
+    persistIntegrityToAppConfig(token, this.apiExpiresAtMs, this.getDeviceId());
     return token;
   }
 
@@ -247,7 +247,7 @@ export class TwitchIntegrityProvider {
       authToken: this.authToken,
       userAgent: this.userAgent,
       clientId: CLIENT_ID,
-      deviceId: this.deviceId,
+      deviceId: this.getDeviceId(),
     });
     delete headers['Content-Type'];
 
@@ -271,7 +271,7 @@ export class TwitchIntegrityProvider {
     this.apiExpiresAtMs = integrityExpirationToMs(data.expiration, now);
 
     logger.verbose(
-      `🔐  Client-Integrity refreshed via API (device ${this.deviceId.slice(0, 8)}…, TTL ~${Math.round(
+      `🔐  Client-Integrity refreshed via API (device ${this.getDeviceId().slice(0, 8)}…, TTL ~${Math.round(
         (this.apiExpiresAtMs - now) / 60_000
       )} мин)`
     );
