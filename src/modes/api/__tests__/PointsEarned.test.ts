@@ -242,8 +242,67 @@ describe('Points Earned', () => {
       const stats = streamWatcher.getStatistics(true); // Включаем офлайн
 
       expect(stats.length).toBe(1);
-      expect(stats[0].pointsEarned).toBe(500);
+      expect(stats[0].pointsEarned).toBe(0);
       expect(stats[0].currentPoints).toBe(1500);
+    });
+
+    it('сохраняет Points Earned при кратком OFFLINE в пределах grace (5 мин)', () => {
+      const offlineAt = Date.now() - 60_000;
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 1500,
+        isOnline: false,
+        broadcastId: '456',
+        game: null,
+        title: null,
+        tags: [],
+        spadeUrl: null,
+        startTime: 0,
+        initialChannelPoints: 1000,
+        lastChannelPoints: 1500,
+        streamPointsEarned: 500,
+        offlineAt,
+        offlineWatchSnapshot: {
+          startTime: Date.now() - 3_600_000,
+          webSocketOnlineAt: Date.now() - 3_600_000,
+        },
+      };
+
+      (streamWatcher as any).streamers.set('testuser', streamerInfo);
+
+      const stats = streamWatcher.getStatistics(true);
+      expect(stats[0].pointsEarned).toBe(500);
+      expect(stats[0].status).toBe('OFFLINE');
+    });
+
+    it('сбрасывает Points Earned после истечения grace офлайна', () => {
+      const graceMs = 300_000;
+      const streamerInfo: StreamerInfo = {
+        username: 'testuser',
+        channelId: '123',
+        channelPoints: 1500,
+        isOnline: false,
+        broadcastId: null,
+        game: null,
+        title: null,
+        tags: [],
+        spadeUrl: null,
+        startTime: 0,
+        initialChannelPoints: 1000,
+        lastChannelPoints: 1500,
+        streamPointsEarned: 500,
+        offlineAt: Date.now() - graceMs - 1000,
+        offlineWatchSnapshot: {
+          startTime: Date.now() - 3_600_000,
+          webSocketOnlineAt: Date.now() - 3_600_000,
+        },
+      };
+
+      (streamWatcher as any).streamers.set('testuser', streamerInfo);
+
+      const stats = streamWatcher.getStatistics(true);
+      expect(stats[0].pointsEarned).toBe(0);
     });
   });
 
