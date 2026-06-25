@@ -33,8 +33,16 @@ function safeSetLocalStorage(key, value) {
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
 let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
-let eventSource = null; // Для Server-Sent Events
+let eventSource = null; // Server-Sent Events — push с сервера
 let lastEventCheckTimestamp = 0; // Timestamp последнего проверенного события
+/** Таймер отложенного refresh по SSE */
+let dashboardRefreshDebounceTimer = null;
+/** Fallback-опрос, когда вкладка в фоне и setInterval троттлится */
+let hiddenTabFallbackTimer = null;
+const DASHBOARD_SSE_DEBOUNCE_MS = 400;
+const HIDDEN_TAB_FALLBACK_POLL_MS = 15_000;
+const EVENT_MODE_POLL_VISIBLE_MS = 2000;
+const EVENT_MODE_POLL_HIDDEN_MS = 15_000;
 /** Полное обновление UI после инициализации уже выполнено */
 let applicationDataRefreshStarted = false;
 let colorizeStreamerNames = safeGetLocalStorage('colorizeStreamerNames') === 'true'; // Цветовая кодировка имен стримеров
@@ -1828,6 +1836,118 @@ async function startDashboardReconnectWatch(successMessage, mode = 'restart') {
 function onDashboardVisibilityForLifecycle() {
     if (document.visibilityState === 'visible' && lifecycleWaitMode) {
         runReconnectLifecycleTick();
+    }
+}
+
+/**
+ * Планирует полное обновление дашборда (дебаунс при пачке SSE-событий)
+ */
+function scheduleDashboardRefresh() {
+    if (dashboardRefreshDebounceTimer != null) {
+        clearTimeout(dashboardRefreshDebounceTimer);
+    }
+    dashboardRefreshDebounceTimer = setTimeout(() => {
+        dashboardRefreshDebounceTimer = null;
+        void updateAll();
+    }, DASHBOARD_SSE_DEBOUNCE_MS);
+}
+
+/**
+ * Мгновенные уведомления по stream-up/down из SSE (не ждём опроса API)
+ * @param {{ type?: string, streamer?: string }} data
+ */
+function handleDashboardStreamEvent(data) {
+    if (!data || !data.type) {
+        return;
+    }
+    if (data.type === 'stream-up' || data.type === 'stream-down') {
+        const streamer = data.streamer;
+        if (streamer) {
+            streamStatusTrackingReady = true;
+            previousStreamerStatus[streamer] =
+                data.type === 'stream-up' ? 'ONLINE' : 'OFFLINE';
+            processStreamStatusNotifications([{ streamer, type: data.type }]);
+        }
+    }
+    scheduleDashboardRefresh();
+}
+
+/**
+ * Подключает SSE-поток событий бота (push, не зависит от троттлинга setInterval)
+ */
+function startDashboardEventStream() {
+    if (typeof EventSource === 'undefined') {
+        return;
+    }
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    try {
+        eventSource = new EventSource(`${API_BASE}/events/stream`);
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleDashboardStreamEvent(data);
+            } catch (e) {
+                console.warn('Dashboard SSE parse error:', e);
+            }
+        };
+        eventSource.onerror = () => {
+            // EventSource переподключается сам; при ошибке — fallback-опрос в фоне
+            ensureHiddenTabFallbackPoll();
+        };
+    } catch (e) {
+        console.warn('Dashboard SSE connect failed:', e);
+    }
+}
+
+function stopDashboardEventStream() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+}
+
+function stopHiddenTabFallbackPoll() {
+    if (hiddenTabFallbackTimer != null) {
+        clearInterval(hiddenTabFallbackTimer);
+        hiddenTabFallbackTimer = null;
+    }
+}
+
+/**
+ * Дополнительный опрос в фоновой вкладке (setInterval там сильно троттлится)
+ */
+function ensureHiddenTabFallbackPoll() {
+    if (document.visibilityState !== 'hidden' || hiddenTabFallbackTimer != null) {
+        return;
+    }
+    hiddenTabFallbackTimer = setInterval(() => {
+        if (document.visibilityState === 'hidden') {
+            void updateAll();
+            if (updateMode === 'event') {
+                void checkForNewEvents();
+            }
+        } else {
+            stopHiddenTabFallbackPoll();
+        }
+    }, HIDDEN_TAB_FALLBACK_POLL_MS);
+}
+
+/**
+ * При возврате на вкладку — догоняем данные; в фоне — включаем fallback
+ */
+function onDashboardVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+        stopHiddenTabFallbackPoll();
+        void updateAll();
+        if (updateMode === 'event') {
+            void checkForNewEvents();
+        }
+        onDashboardVisibilityForLifecycle();
+    } else {
+        ensureHiddenTabFallbackPoll();
     }
 }
 
@@ -3922,14 +4042,10 @@ async function dismissNotification(id) {
 }
 
 function setUpdateInterval(seconds) {
-    // Останавливаем текущее обновление
+    // Останавливаем текущее интервальное обновление (SSE остаётся активным)
     if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
-    }
-    if (eventSource) {
-        eventSource.close();
-        eventSource = null;
     }
     
     if (seconds === 'event') {
@@ -3993,9 +4109,13 @@ async function checkForNewEvents() {
         // Игнорируем ошибки, продолжаем проверку
     }
     
-    // Проверяем снова через небольшую задержку (polling)
+    // Проверяем снова (в фоне реже — setTimeout тоже троттлится, есть SSE + fallback)
     if (updateMode === 'event') {
-        setTimeout(checkForNewEvents, 2000); // Проверяем каждые 2 секунды
+        const delayMs =
+            document.visibilityState === 'hidden'
+                ? EVENT_MODE_POLL_HIDDEN_MS
+                : EVENT_MODE_POLL_VISIBLE_MS;
+        setTimeout(checkForNewEvents, delayMs);
     }
 }
 
@@ -4124,9 +4244,13 @@ function startDashboardCore() {
     startBotUptimeClock();
     startVersionUpdatePolling();
     startAutoUpdate();
-    if (!document.documentElement.dataset.lifecycleVisibilityBound) {
-        document.documentElement.dataset.lifecycleVisibilityBound = '1';
-        document.addEventListener('visibilitychange', onDashboardVisibilityForLifecycle);
+    startDashboardEventStream();
+    if (!document.documentElement.dataset.dashboardVisibilityBound) {
+        document.documentElement.dataset.dashboardVisibilityBound = '1';
+        document.addEventListener('visibilitychange', onDashboardVisibilityChange);
+    }
+    if (document.visibilityState === 'hidden') {
+        ensureHiddenTabFallbackPoll();
     }
 }
 

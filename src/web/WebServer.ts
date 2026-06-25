@@ -21,6 +21,7 @@ import {
   postIntegrityCaptureRequest,
 } from './integrityCaptureApi';
 import { BotHealthSnapshot } from '../modes/api/botHealthTypes';
+import { subscribeDashboardHubEvents } from '../modes/api/dashboardEventHub';
 import { getAppVersionParts } from '../appVersion';
 import {
   isDashboardUpdateEnabled,
@@ -565,6 +566,35 @@ export class WebServer {
         logger.error('Error getting events:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
+    });
+
+    /** SSE: push событий бота в dashboard (работает при неактивной вкладке) */
+    this.app.get('/api/events/stream', (req: Request, res: Response) => {
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const sendEvent = (event: {
+        timestamp: number;
+        type: string;
+        streamer: string;
+        message: string;
+      }) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      const unsubscribe = subscribeDashboardHubEvents(sendEvent);
+      const heartbeatMs = 25_000;
+      const heartbeat = setInterval(() => {
+        res.write(': heartbeat\n\n');
+      }, heartbeatMs);
+
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      });
     });
 
     this.app.get('/api/points-history', (req: Request, res: Response) => {

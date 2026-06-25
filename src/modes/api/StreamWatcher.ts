@@ -37,6 +37,7 @@ import {
   isWithinOfflineResumeGrace,
   shouldFinalizeOffline,
 } from './streamOnlineGrace';
+import { publishDashboardHubEvent } from './dashboardEventHub';
 import { loadStatisticsConfig } from './configLoader';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -2515,17 +2516,20 @@ export class StreamWatcher {
    * @param message Сообщение
    */
   private addEvent(type: string, streamer: string, message: string): void {
-    this.eventsHistory.push({
+    const entry = {
       timestamp: Date.now(),
       type,
       streamer,
-      message
-    });
+      message,
+    };
+    this.eventsHistory.push(entry);
 
     // Ограничиваем размер истории
     if (this.eventsHistory.length > this.maxEventsHistory) {
       this.eventsHistory.shift();
     }
+
+    publishDashboardHubEvent(entry);
   }
 
   /**
