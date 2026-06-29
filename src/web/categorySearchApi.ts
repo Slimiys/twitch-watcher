@@ -8,6 +8,7 @@ import {
   isCategoryFuzzyMatch,
 } from '../modes/api/categoryFuzzyMatch';
 import { getAppConfigPath, getAppSetting } from '../modes/api/appSettings';
+import { logger } from '../modes/api/logger';
 import { TwitchAPI, TwitchCategorySummary } from '../modes/api/TwitchAPI';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
 
@@ -77,10 +78,17 @@ export async function fetchCategorySearchCandidates(
   const merged: TwitchCategorySummary[] = [];
   for (const searchQuery of queries) {
     const batch = await twitchApi.searchCategories(searchQuery);
+    logger.info(
+      `[category-search] GraphQL sub-query "${searchQuery}": ${batch.length} шт. [${formatCategoryNamesForLog(batch)}]`
+    );
     merged.push(...batch);
   }
 
-  return dedupeCategories(merged);
+  const deduped = dedupeCategories(merged);
+  logger.info(
+    `[category-search] кандидаты после merge (${queries.size} подзапросов): ${deduped.length} шт. [${formatCategoryNamesForLog(deduped)}]`
+  );
+  return deduped;
 }
 
 function resolveAuthToken(): string | null {
@@ -119,6 +127,18 @@ function resolveUserAgent(): string {
 }
 
 /**
+ * Краткий список названий категорий для логов
+ */
+function formatCategoryNamesForLog(categories: TwitchCategorySummary[], limit = 8): string {
+  if (!categories.length) {
+    return '—';
+  }
+  const names = categories.slice(0, limit).map((item) => item.name);
+  const suffix = categories.length > limit ? `, +${categories.length - limit}` : '';
+  return `${names.join(', ')}${suffix}`;
+}
+
+/**
  * Ищет категории Twitch с нечётким сопоставлением названия
  */
 export async function searchCategoriesForApi(
@@ -135,9 +155,23 @@ export async function searchCategoriesForApi(
 
   const twitchApi = resolveTwitchApi(provider);
   if (!twitchApi) {
+    logger.warn(`[category-search] q="${trimmed}": токен Twitch не настроен`);
     return { categories: [], error: 'Twitch token is not configured' };
   }
 
   const candidates = await fetchCategorySearchCandidates(twitchApi, trimmed);
-  return { categories: filterCategoriesByFuzzyMatch(candidates, trimmed).slice(0, 20) };
+  const filtered = filterCategoriesByFuzzyMatch(candidates, trimmed).slice(0, 20);
+  logger.info(
+    `[category-search] q="${trimmed}": кандидатов=${candidates.length}, после fuzzy=${filtered.length} [${formatCategoryNamesForLog(filtered)}]`
+  );
+  if (!filtered.length && candidates.length) {
+    logger.warn(
+      `[category-search] q="${trimmed}": fuzzy-фильтр отбросил все ${candidates.length} кандидатов [${formatCategoryNamesForLog(candidates, 12)}]`
+    );
+  }
+  if (!filtered.length && !candidates.length) {
+    logger.warn(`[category-search] q="${trimmed}": Twitch/GraphQL вернул 0 категорий`);
+  }
+
+  return { categories: filtered };
 }

@@ -5909,7 +5909,9 @@ async function searchCategoriesForAutocomplete(query) {
         return;
     }
 
-    const data = await fetchData(`/categories/search?q=${encodeURIComponent(trimmed)}`);
+    const endpoint = `/categories/search?q=${encodeURIComponent(trimmed)}`;
+    const data = await fetchData(endpoint);
+    console.log('[category-search] ответ API', { query: trimmed, endpoint, data });
     if (!data) {
         categorySearchResults = [];
         hideCategoryAutocomplete();
@@ -5917,6 +5919,7 @@ async function searchCategoriesForAutocomplete(query) {
         return;
     }
     if (data.error) {
+        console.warn('[category-search] ошибка API', { query: trimmed, error: data.error, data });
         categorySearchResults = [];
         hideCategoryAutocomplete();
         const message = data.error === 'Twitch token is not configured'
@@ -5927,6 +5930,12 @@ async function searchCategoriesForAutocomplete(query) {
     }
 
     const categories = Array.isArray(data.categories) ? data.categories : [];
+    console.log('[category-search] подсказки', {
+        query: trimmed,
+        count: categories.length,
+        names: categories.map((item) => item.name),
+        categories,
+    });
     renderCategoryAutocomplete(categories);
 }
 
