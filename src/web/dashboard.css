@@ -1422,8 +1422,17 @@ th.category-column-header {
     white-space: nowrap;
 }
 
-.streamer-category-button:hover {
+.streamer-category-button:not(.favorite-category-match):hover {
     color: #00d166;
+    text-decoration: underline;
+}
+
+.streamer-category-button.favorite-category-match {
+    font-weight: 600;
+}
+
+.streamer-category-button.favorite-category-match:hover {
+    filter: brightness(1.15);
     text-decoration: underline;
 }
 
@@ -3220,21 +3229,12 @@ th.notify-header-clickable:active {
     outline: none;
 }
 
-.category-suggestion-art,
-.favorite-category-art {
+.category-suggestion-art {
     width: 36px;
     height: 50px;
     object-fit: cover;
     border-radius: 4px;
     flex-shrink: 0;
-}
-
-.favorite-category-art-placeholder {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #26262c;
-    font-size: 18px;
 }
 
 .favorite-categories-empty {
@@ -3243,51 +3243,47 @@ th.notify-header-clickable:active {
     padding: 8px 0;
 }
 
-.favorite-categories-table {
-    width: 100%;
-    border-collapse: collapse;
+.favorite-categories-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
 }
 
-.favorite-categories-table th,
-.favorite-categories-table td {
-    padding: 10px 12px;
-    border-bottom: 1px solid #26262c;
-    text-align: left;
+.favorite-category-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 6px 8px 6px 12px;
+    background: #1f1f23;
+    border: 1px solid #26262c;
+    border-radius: 999px;
 }
 
-.favorite-categories-table th {
-    color: #adadb8;
+.favorite-category-chip-name {
+    font-size: 14px;
     font-weight: 600;
-    font-size: 13px;
+    line-height: 1.2;
+    word-break: break-word;
 }
 
-.favorite-category-name {
-    color: #efeff1;
+.favorite-category-chip-remove {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: #adadb8;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    line-height: 1;
     font-size: 14px;
 }
 
-.favorite-category-art-cell {
-    width: 52px;
-}
-
-.favorite-category-actions {
-    width: 48px;
-    text-align: right;
-}
-
-.remove-category-btn {
-    background: transparent;
-    border: 1px solid #3a3a3d;
-    color: #adadb8;
-    border-radius: 4px;
-    width: 28px;
-    height: 28px;
-    cursor: pointer;
-    line-height: 1;
-}
-
-.remove-category-btn:hover {
+.favorite-category-chip-remove:hover {
     color: #efeff1;
-    border-color: #9147ff;
+    background: rgba(255, 255, 255, 0.08);
 }
 

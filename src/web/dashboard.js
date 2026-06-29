@@ -429,6 +429,25 @@ function toggleCategoryStreamStatsMenu(streamerName, anchorEl) {
 }
 
 /**
+ * Нормализует название категории для сравнения
+ * @param {string} name
+ * @returns {string}
+ */
+function normalizeCategoryNameForMatch(name) {
+    return String(name || '').trim().toLowerCase();
+}
+
+/**
+ * Проверяет, совпадает ли категория стримера с одной из избранных
+ * @param {string} gameName
+ * @returns {boolean}
+ */
+function isFavoriteStreamerCategory(gameName) {
+    const normalized = normalizeCategoryNameForMatch(gameName);
+    return normalized.length > 0 && favoriteCategoryNames.has(normalized);
+}
+
+/**
  * Рендерит ячейку текущей категории стримера
  * @param {object} stat
  * @returns {string}
@@ -447,8 +466,12 @@ function renderStreamerCategoryCell(stat) {
         ? 'Показать статистику по категориям'
         : 'Статистика появится после смены категорий в стримах';
 
+    const isFavorite = isFavoriteStreamerCategory(game);
+    const favoriteClass = isFavorite ? ' favorite-category-match' : '';
+    const favoriteStyle = isFavorite ? ` style="color: ${generateColorFromString(game)};"` : '';
+
     return `<td class="streamer-category-cell">
-        <button type="button" class="streamer-category-button" data-streamer="${safeAttr}" title="${title}">${escapeHtml(game)}</button>
+        <button type="button" class="streamer-category-button${favoriteClass}" data-streamer="${safeAttr}" title="${title}"${favoriteStyle}>${escapeHtml(game)}</button>
     </td>`;
 }
 
@@ -5611,6 +5634,8 @@ window.toggleCard = toggleCard;
 
 /** Избранные категории Twitch */
 let favoriteCategories = [];
+/** Нормализованные названия избранных категорий для быстрого сравнения */
+let favoriteCategoryNames = new Set();
 let categorySearchResults = [];
 let categorySearchTimer = null;
 let selectedCategorySuggestion = null;
@@ -5716,16 +5741,31 @@ function findBestCategoryFuzzyMatch(name, categories) {
 }
 
 /**
+ * Обновляет кэш избранных категорий и перерисовывает связанный UI
+ */
+function applyFavoriteCategoriesState() {
+    favoriteCategoryNames = new Set(
+        favoriteCategories
+            .map((cat) => normalizeCategoryNameForMatch(cat?.name))
+            .filter(Boolean)
+    );
+    renderFavoriteCategoriesTable();
+    if (cachedStatisticsRows) {
+        updateStatistics({ skipFetch: true });
+    }
+}
+
+/**
  * Загружает избранные категории с сервера
  */
 async function loadFavoriteCategories() {
     const data = await fetchData('/favorite-categories');
     favoriteCategories = Array.isArray(data?.categories) ? data.categories : [];
-    renderFavoriteCategoriesTable();
+    applyFavoriteCategoriesState();
 }
 
 /**
- * Рендерит таблицу избранных категорий
+ * Рендерит список избранных категорий (flex wrap)
  */
 function renderFavoriteCategoriesTable() {
     const wrap = document.getElementById('favoriteCategoriesTableWrap');
@@ -5738,35 +5778,19 @@ function renderFavoriteCategoriesTable() {
         return;
     }
 
-    const rows = favoriteCategories.map((cat) => {
-        const art = cat.boxArtUrl
-            ? `<img src="${escapeHtml(cat.boxArtUrl)}" alt="" class="favorite-category-art" loading="lazy">`
-            : '<span class="favorite-category-art favorite-category-art-placeholder">🎮</span>';
+    const chips = favoriteCategories.map((cat) => {
+        const color = generateColorFromString(cat.name);
         return `
-            <tr data-category-id="${escapeHtml(cat.id)}">
-                <td class="favorite-category-art-cell">${art}</td>
-                <td class="favorite-category-name">${escapeHtml(cat.name)}</td>
-                <td class="favorite-category-actions">
-                    <button type="button" class="remove-category-btn" data-category-id="${escapeHtml(cat.id)}" title="Удалить">✕</button>
-                </td>
-            </tr>
+            <span class="favorite-category-chip" data-category-id="${escapeHtml(cat.id)}">
+                <span class="favorite-category-chip-name" style="color: ${color};">${escapeHtml(cat.name)}</span>
+                <button type="button" class="favorite-category-chip-remove" data-category-id="${escapeHtml(cat.id)}" title="Удалить" aria-label="Удалить категорию">✕</button>
+            </span>
         `;
     }).join('');
 
-    wrap.innerHTML = `
-        <table class="favorite-categories-table">
-            <thead>
-                <tr>
-                    <th></th>
-                    <th>Категория</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-        </table>
-    `;
+    wrap.innerHTML = `<div class="favorite-categories-wrap">${chips}</div>`;
 
-    wrap.querySelectorAll('.remove-category-btn').forEach((btn) => {
+    wrap.querySelectorAll('.favorite-category-chip-remove').forEach((btn) => {
         btn.addEventListener('click', () => {
             removeFavoriteCategory(btn.dataset.categoryId);
         });
@@ -5994,7 +6018,7 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
     }
 
     favoriteCategories = Array.isArray(result.data?.categories) ? result.data.categories : favoriteCategories;
-    renderFavoriteCategoriesTable();
+    applyFavoriteCategoriesState();
     if (input) {
         input.value = '';
     }
@@ -6026,7 +6050,7 @@ async function removeFavoriteCategory(id) {
         }
 
         favoriteCategories = Array.isArray(result.categories) ? result.categories : favoriteCategories;
-        renderFavoriteCategoriesTable();
+        applyFavoriteCategoriesState();
         showNotification('success', 'Категория удалена');
     } catch (error) {
         console.error('Error removing favorite category:', error);
