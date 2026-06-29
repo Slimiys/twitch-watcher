@@ -111,6 +111,32 @@ export const GQL_OPERATIONS = {
       },
     },
   },
+
+  /**
+   * Поиск категорий (игр) на странице результатов
+   */
+  SearchResultsPage_SearchResults: {
+    operationName: 'SearchResultsPage_SearchResults',
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: 'f6c2575aee4418e8a616e03364d8bcdbf0b10a5c87b59f523569dacc963e8da5',
+      },
+    },
+  },
+
+  /**
+   * Подсказки поиска (tray) — категории и каналы
+   */
+  SearchTray_SearchSuggestions: {
+    operationName: 'SearchTray_SearchSuggestions',
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: '2749d8bc89a2ddd37518e23742a4287becd3064c40465d8b57317cabd0efe096',
+      },
+    },
+  },
 } as const;
 
 /**

@@ -821,6 +821,156 @@ export class GraphQLClient {
   }
 
   /**
+   * Ищет категории Twitch через GraphQL (Helix search/categories недоступен с auth-token)
+   * @param query Строка поиска
+   */
+  async searchCategories(query: string): Promise<
+    Array<{ id: string; name: string; boxArtUrl: string | null }>
+  > {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const fromSearchFor = await this.searchCategoriesViaSearchFor(trimmed);
+    const fromTray = await this.searchCategoriesViaSearchTray(trimmed);
+    return this.dedupeCategorySummaries([...fromSearchFor, ...fromTray]);
+  }
+
+  private dedupeCategorySummaries(
+    categories: Array<{ id: string; name: string; boxArtUrl: string | null }>
+  ): Array<{ id: string; name: string; boxArtUrl: string | null }> {
+    const byId = new Map<string, { id: string; name: string; boxArtUrl: string | null }>();
+    for (const item of categories) {
+      if (!item.id || !item.name) {
+        continue;
+      }
+      byId.set(item.id, item);
+    }
+    return [...byId.values()];
+  }
+
+  private async searchCategoriesViaSearchFor(
+    query: string
+  ): Promise<Array<{ id: string; name: string; boxArtUrl: string | null }>> {
+    try {
+      const operation: GraphQLOperation = {
+        ...GQL_OPERATIONS.SearchResultsPage_SearchResults,
+        variables: {
+          platform: 'web',
+          query,
+          options: {
+            targets: [{ index: 'GAME' }],
+            shouldSkipDiscoveryControl: false,
+          },
+          includeIsDJ: false,
+        },
+      };
+
+      const response = await this.postRequest(operation);
+      const edges = (response as any)?.data?.searchFor?.games?.edges;
+      if (!Array.isArray(edges)) {
+        if (GraphQLClient.hasPersistedQueryNotFound(response)) {
+          logger.warn(`⚠️  [GraphQL] SearchResultsPage_SearchResults: PersistedQueryNotFound (q="${query}")`);
+        } else {
+          const errors = Array.isArray(response.errors)
+            ? response.errors.map((item: { message?: string }) => item.message).filter(Boolean)
+            : [];
+          logger.warn(
+            `⚠️  [GraphQL] SearchResultsPage_SearchResults: нет games.edges для q="${query}"` +
+              (errors.length ? ` errors=[${errors.join('; ')}]` : '')
+          );
+        }
+        return [];
+      }
+
+      const categories = edges
+        .map((edge: any) => {
+          const item = edge?.item;
+          if (!item?.id) {
+            return null;
+          }
+          const name = item.displayName || item.name;
+          if (!name) {
+            return null;
+          }
+          return {
+            id: String(item.id),
+            name: String(name),
+            boxArtUrl: item.boxArtURL ? String(item.boxArtURL) : null,
+          };
+        })
+        .filter(Boolean) as Array<{ id: string; name: string; boxArtUrl: string | null }>;
+
+      logger.verbose(`🔎  [GraphQL] SearchResultsPage: ${categories.length} категорий для "${query}"`);
+      return categories;
+    } catch (error: any) {
+      logger.warn(`⚠️  [GraphQL] searchCategories SearchResultsPage failed: ${error.message || error}`);
+      return [];
+    }
+  }
+
+  private async searchCategoriesViaSearchTray(
+    queryFragment: string
+  ): Promise<Array<{ id: string; name: string; boxArtUrl: string | null }>> {
+    try {
+      const operation: GraphQLOperation = {
+        ...GQL_OPERATIONS.SearchTray_SearchSuggestions,
+        variables: {
+          queryFragment,
+          withOfflineChannelContent: false,
+          includeIsDJ: false,
+        },
+      };
+
+      const response = await this.postRequest(operation);
+      const edges = (response as any)?.data?.searchSuggestions?.edges;
+      if (!Array.isArray(edges)) {
+        if (GraphQLClient.hasPersistedQueryNotFound(response)) {
+          logger.warn(
+            `⚠️  [GraphQL] SearchTray_SearchSuggestions: PersistedQueryNotFound (q="${queryFragment}")`
+          );
+        } else {
+          const errors = Array.isArray(response.errors)
+            ? response.errors.map((item: { message?: string }) => item.message).filter(Boolean)
+            : [];
+          logger.warn(
+            `⚠️  [GraphQL] SearchTray_SearchSuggestions: нет searchSuggestions.edges для q="${queryFragment}"` +
+              (errors.length ? ` errors=[${errors.join('; ')}]` : '')
+          );
+        }
+        return [];
+      }
+
+      const categories: Array<{ id: string; name: string; boxArtUrl: string | null }> = [];
+      for (const edge of edges) {
+        const node = edge?.node;
+        const content = node?.content;
+        if (!node?.text || content?.__typename !== 'SearchSuggestionCategory') {
+          continue;
+        }
+
+        const id = content.game?.id || content.id;
+        if (!id) {
+          continue;
+        }
+
+        categories.push({
+          id: String(id),
+          name: String(node.text),
+          boxArtUrl: content.boxArtURL ? String(content.boxArtURL) : null,
+        });
+      }
+
+      logger.verbose(`🔎  [GraphQL] SearchTray: ${categories.length} категорий для "${queryFragment}"`);
+      return categories;
+    } catch (error: any) {
+      logger.warn(`⚠️  [GraphQL] searchCategories SearchTray failed: ${error.message || error}`);
+      return [];
+    }
+  }
+
+  /**
    * Получает информацию о баллах канала
    * @param username Имя пользователя (channelLogin)
    * @returns Информация о баллах или null

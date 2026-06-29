@@ -211,47 +211,11 @@ export class TwitchAPI {
   }
 
   /**
-   * Ищет категории Twitch через Helix API
+   * Ищет категории Twitch через GraphQL (auth-token cookie)
    * @param query Строка поиска
    */
   async searchCategories(query: string): Promise<TwitchCategorySummary[]> {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      return [];
-    }
-
-    const url = `https://api.twitch.tv/helix/search/categories?query=${encodeURIComponent(trimmed)}&first=100`;
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${this.authToken}`,
-          'Client-Id': CLIENT_ID,
-        },
-      });
-
-      if (response.status !== 200) {
-        logger.warn(`⚠️  [Helix API] search/categories status ${response.status} for query "${trimmed}"`);
-        return [];
-      }
-
-      const data = await response.json();
-      if (!Array.isArray(data.data)) {
-        return [];
-      }
-
-      return data.data.map((item: { id: string; name: string; box_art_url?: string }) => ({
-        id: item.id,
-        name: item.name,
-        boxArtUrl: item.box_art_url
-          ? item.box_art_url.replace('{width}', '52').replace('{height}', '72')
-          : null,
-      }));
-    } catch (error: any) {
-      logger.error(`❌  [Helix API] search/categories error: ${error.message || error}`);
-      return [];
-    }
+    return this.graphqlClient.searchCategories(query);
   }
 
   /**
