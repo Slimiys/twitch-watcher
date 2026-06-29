@@ -3154,6 +3154,11 @@ th.notify-header-clickable:active {
     gap: 16px;
     margin-bottom: 20px;
     flex-wrap: wrap;
+    overflow: visible;
+}
+
+#favoriteCategoriesSection {
+    overflow: visible;
 }
 
 .favorite-category-add-wrap {
@@ -3175,7 +3180,7 @@ th.notify-header-clickable:active {
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    z-index: 50;
+    z-index: 10000;
     background: #18181b;
     border: 1px solid #26262c;
     border-radius: 6px;

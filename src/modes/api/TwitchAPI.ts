@@ -220,7 +220,7 @@ export class TwitchAPI {
       return [];
     }
 
-    const url = `https://api.twitch.tv/helix/search/categories?query=${encodeURIComponent(trimmed)}`;
+    const url = `https://api.twitch.tv/helix/search/categories?query=${encodeURIComponent(trimmed)}&first=100`;
 
     try {
       const response = await fetch(url, {

@@ -741,9 +741,12 @@ export class WebServer {
     this.app.get('/api/categories/search', async (req: Request, res: Response) => {
       try {
         const query = typeof req.query.q === 'string' ? req.query.q : '';
-        const result = await searchCategoriesForApi(query);
+        const result = await searchCategoriesForApi(
+          query,
+          this.statisticsProvider as StreamWatcher | null
+        );
         if (result.error) {
-          res.status(503).json({ categories: [], error: result.error });
+          res.status(200).json({ categories: [], error: result.error });
           return;
         }
         res.json({ categories: result.categories });

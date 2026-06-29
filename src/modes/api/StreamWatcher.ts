@@ -1339,6 +1339,13 @@ export class StreamWatcher {
   }
 
   /**
+   * Возвращает Twitch API клиент для dashboard (поиск категорий)
+   */
+  getTwitchApiForDashboard(): TwitchAPI {
+    return this.twitchAPI;
+  }
+
+  /**
    * Онлайн-стримеры в порядке priorityChannels, затем остальные по имени
    */
   private getOrderedOnlineStreamers(): StreamerInfo[] {

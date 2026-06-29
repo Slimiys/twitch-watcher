@@ -5616,6 +5616,103 @@ let categorySearchTimer = null;
 let selectedCategorySuggestion = null;
 
 const CATEGORY_SEARCH_DEBOUNCE_MS = 300;
+const CATEGORY_FUZZY_MAX_ERROR_RATIO = 0.5;
+
+/**
+ * Расстояние Левенштейна (для нечёткого сопоставления категорий)
+ */
+function levenshteinDistance(left, right) {
+    if (left === right) {
+        return 0;
+    }
+    if (!left.length) {
+        return right.length;
+    }
+    if (!right.length) {
+        return left.length;
+    }
+
+    const rows = left.length + 1;
+    const cols = right.length + 1;
+    const matrix = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+    for (let row = 0; row < rows; row += 1) {
+        matrix[row][0] = row;
+    }
+    for (let col = 0; col < cols; col += 1) {
+        matrix[0][col] = col;
+    }
+
+    for (let row = 1; row < rows; row += 1) {
+        for (let col = 1; col < cols; col += 1) {
+            const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+            matrix[row][col] = Math.min(
+                matrix[row - 1][col] + 1,
+                matrix[row][col - 1] + 1,
+                matrix[row - 1][col - 1] + cost
+            );
+        }
+    }
+
+    return matrix[rows - 1][cols - 1];
+}
+
+/**
+ * Доля ошибок при сопоставлении запроса с названием категории
+ */
+function getCategoryMatchErrorRatio(query, categoryName) {
+    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedCategory = categoryName.trim().toLowerCase();
+
+    if (!normalizedQuery || !normalizedCategory) {
+        return 1;
+    }
+
+    if (normalizedCategory.startsWith(normalizedQuery)) {
+        return 0;
+    }
+
+    const fullDistance = levenshteinDistance(normalizedQuery, normalizedCategory);
+    let bestRatio = fullDistance / Math.max(normalizedQuery.length, normalizedCategory.length);
+
+    const minWindow = Math.max(1, normalizedQuery.length - 2);
+    const maxWindow = normalizedQuery.length + 2;
+
+    for (let windowLength = minWindow; windowLength <= maxWindow; windowLength += 1) {
+        if (windowLength > normalizedCategory.length) {
+            continue;
+        }
+
+        for (let start = 0; start <= normalizedCategory.length - windowLength; start += 1) {
+            const slice = normalizedCategory.slice(start, start + windowLength);
+            const distance = levenshteinDistance(normalizedQuery, slice);
+            const ratio = distance / Math.max(normalizedQuery.length, slice.length);
+            if (ratio < bestRatio) {
+                bestRatio = ratio;
+            }
+        }
+    }
+
+    return bestRatio;
+}
+
+/**
+ * Находит лучшее совпадение категории с допустимой долей ошибок
+ */
+function findBestCategoryFuzzyMatch(name, categories) {
+    let bestMatch = null;
+    let bestRatio = CATEGORY_FUZZY_MAX_ERROR_RATIO;
+
+    for (const item of categories) {
+        const ratio = getCategoryMatchErrorRatio(name, item.name);
+        if (ratio < bestRatio) {
+            bestRatio = ratio;
+            bestMatch = item;
+        }
+    }
+
+    return bestMatch;
+}
 
 /**
  * Загружает избранные категории с сервера
@@ -5753,6 +5850,12 @@ async function searchCategoriesForAutocomplete(query) {
     }
 
     const data = await fetchData(`/categories/search?q=${encodeURIComponent(trimmed)}`);
+    if (data?.error) {
+        hideCategoryAutocomplete();
+        showNotification('error', data.error);
+        return;
+    }
+
     const categories = Array.isArray(data?.categories) ? data.categories : [];
     renderCategoryAutocomplete(categories);
 }
@@ -5779,9 +5882,12 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
 
     if (!category && input?.value.trim()) {
         const name = input.value.trim();
-        const match = categorySearchResults.find(
+        let match = categorySearchResults.find(
             (item) => item.name.toLowerCase() === name.toLowerCase()
         );
+        if (!match) {
+            match = findBestCategoryFuzzyMatch(name, categorySearchResults);
+        }
         if (match) {
             category = match;
         }
