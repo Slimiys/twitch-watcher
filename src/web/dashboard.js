@@ -5614,6 +5614,7 @@ let favoriteCategories = [];
 let categorySearchResults = [];
 let categorySearchTimer = null;
 let selectedCategorySuggestion = null;
+let categoryAutocompletePositionListenersAttached = false;
 
 const CATEGORY_SEARCH_DEBOUNCE_MS = 300;
 const CATEGORY_FUZZY_MAX_ERROR_RATIO = 0.5;
@@ -5773,6 +5774,58 @@ function renderFavoriteCategoriesTable() {
 }
 
 /**
+ * Позиционирует выпадающий список поверх остальных секций дашборда
+ */
+function positionCategoryAutocompleteDropdown() {
+    const dropdown = document.getElementById('categoryAutocompleteDropdown');
+    const input = document.getElementById('favoriteCategoryInput');
+    if (!dropdown || !input || dropdown.hidden) {
+        return;
+    }
+
+    const rect = input.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${Math.round(rect.bottom + 4)}px`;
+    dropdown.style.left = `${Math.round(rect.left)}px`;
+    dropdown.style.width = `${Math.round(rect.width)}px`;
+    dropdown.style.right = 'auto';
+    dropdown.style.zIndex = '20001';
+}
+
+/**
+ * Следит за прокруткой и ресайзом, пока открыт список подсказок
+ */
+function attachCategoryAutocompletePositionListeners() {
+    if (categoryAutocompletePositionListenersAttached) {
+        return;
+    }
+    categoryAutocompletePositionListenersAttached = true;
+    window.addEventListener('resize', positionCategoryAutocompleteDropdown);
+    window.addEventListener('scroll', positionCategoryAutocompleteDropdown, true);
+}
+
+function detachCategoryAutocompletePositionListeners() {
+    if (!categoryAutocompletePositionListenersAttached) {
+        return;
+    }
+    categoryAutocompletePositionListenersAttached = false;
+    window.removeEventListener('resize', positionCategoryAutocompleteDropdown);
+    window.removeEventListener('scroll', positionCategoryAutocompleteDropdown, true);
+}
+
+/**
+ * Сбрасывает inline-стили позиционирования выпадающего списка
+ */
+function resetCategoryAutocompleteDropdownStyles(dropdown) {
+    dropdown.style.position = '';
+    dropdown.style.top = '';
+    dropdown.style.left = '';
+    dropdown.style.width = '';
+    dropdown.style.right = '';
+    dropdown.style.zIndex = '';
+}
+
+/**
  * Скрывает выпадающий список подсказок категорий
  */
 function hideCategoryAutocomplete() {
@@ -5780,9 +5833,9 @@ function hideCategoryAutocomplete() {
     if (dropdown) {
         dropdown.hidden = true;
         dropdown.innerHTML = '';
+        resetCategoryAutocompleteDropdownStyles(dropdown);
     }
-    categorySearchResults = [];
-    selectedCategorySuggestion = null;
+    detachCategoryAutocompletePositionListeners();
 }
 
 /**
@@ -5794,12 +5847,16 @@ function renderCategoryAutocomplete(categories) {
         return;
     }
 
+    categorySearchResults = categories;
+
     if (!categories.length) {
-        hideCategoryAutocomplete();
+        dropdown.innerHTML = '<div class="category-suggestion-empty">Ничего не найдено</div>';
+        dropdown.hidden = false;
+        positionCategoryAutocompleteDropdown();
+        attachCategoryAutocompletePositionListeners();
         return;
     }
 
-    categorySearchResults = categories;
     dropdown.innerHTML = categories.map((cat, index) => {
         const art = cat.boxArtUrl
             ? `<img src="${escapeHtml(cat.boxArtUrl)}" alt="" class="category-suggestion-art" loading="lazy">`
@@ -5812,6 +5869,8 @@ function renderCategoryAutocomplete(categories) {
         `;
     }).join('');
     dropdown.hidden = false;
+    positionCategoryAutocompleteDropdown();
+    attachCategoryAutocompletePositionListeners();
 
     dropdown.querySelectorAll('.category-suggestion-item').forEach((btn) => {
         btn.addEventListener('mousedown', (e) => {
@@ -5845,18 +5904,29 @@ function selectCategorySuggestion(category) {
 async function searchCategoriesForAutocomplete(query) {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
+        categorySearchResults = [];
         hideCategoryAutocomplete();
         return;
     }
 
     const data = await fetchData(`/categories/search?q=${encodeURIComponent(trimmed)}`);
-    if (data?.error) {
+    if (!data) {
+        categorySearchResults = [];
         hideCategoryAutocomplete();
-        showNotification('error', data.error);
+        showNotification('error', 'Не удалось загрузить подсказки категорий');
+        return;
+    }
+    if (data.error) {
+        categorySearchResults = [];
+        hideCategoryAutocomplete();
+        const message = data.error === 'Twitch token is not configured'
+            ? 'Токен Twitch не настроен — поиск категорий недоступен'
+            : data.error;
+        showNotification('error', message);
         return;
     }
 
-    const categories = Array.isArray(data?.categories) ? data.categories : [];
+    const categories = Array.isArray(data.categories) ? data.categories : [];
     renderCategoryAutocomplete(categories);
 }
 
@@ -5868,6 +5938,11 @@ function scheduleCategorySearch(query) {
         clearTimeout(categorySearchTimer);
     }
     selectedCategorySuggestion = null;
+    if (query.trim().length < 2) {
+        categorySearchResults = [];
+        hideCategoryAutocomplete();
+        return;
+    }
     categorySearchTimer = setTimeout(() => {
         searchCategoriesForAutocomplete(query);
     }, CATEGORY_SEARCH_DEBOUNCE_MS);
@@ -5915,6 +5990,7 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
         input.value = '';
     }
     selectedCategorySuggestion = null;
+    categorySearchResults = [];
     hideCategoryAutocomplete();
     showNotification('success', `Категория «${category.name}» добавлена`);
 }
@@ -5976,6 +6052,10 @@ function initFavoriteCategoriesSection() {
     }
 
     if (addBtn) {
+        // Не снимаем фокус с поля — иначе blur скрывает подсказки до клика
+        addBtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+        });
         addBtn.addEventListener('click', () => addFavoriteCategoryFromUi());
     }
 }

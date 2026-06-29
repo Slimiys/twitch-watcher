@@ -3159,6 +3159,11 @@ th.notify-header-clickable:active {
 
 #favoriteCategoriesSection {
     overflow: visible;
+    position: relative;
+}
+
+#favoriteCategoriesSection:has(#categoryAutocompleteDropdown:not([hidden])) {
+    z-index: 200;
 }
 
 .favorite-category-add-wrap {
@@ -3187,6 +3192,12 @@ th.notify-header-clickable:active {
     max-height: 280px;
     overflow-y: auto;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.category-suggestion-empty {
+    padding: 10px 12px;
+    color: #adadb8;
+    font-size: 13px;
 }
 
 .category-suggestion-item {
