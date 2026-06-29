@@ -37,6 +37,12 @@ import {
   readWatchSettingsForApi,
 } from './watchSettingsApi';
 import { applyAppSettingsApi, readAppSettingsApi } from './appSettingsApi';
+import { searchCategoriesForApi } from './categorySearchApi';
+import {
+  addFavoriteCategoryFromApi,
+  readFavoriteCategoriesForApi,
+  removeFavoriteCategoryFromApi,
+} from './favoriteCategoriesApi';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
 
 /**
@@ -728,6 +734,55 @@ export class WebServer {
         res.json(result);
       } catch (error: any) {
         logger.error('Error applying app settings:', error);
+        res.status(400).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/categories/search', async (req: Request, res: Response) => {
+      try {
+        const query = typeof req.query.q === 'string' ? req.query.q : '';
+        const result = await searchCategoriesForApi(query);
+        if (result.error) {
+          res.status(503).json({ categories: [], error: result.error });
+          return;
+        }
+        res.json({ categories: result.categories });
+      } catch (error: any) {
+        logger.error('Error searching categories:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/favorite-categories', (_req: Request, res: Response) => {
+      try {
+        res.json(readFavoriteCategoriesForApi());
+      } catch (error: any) {
+        logger.error('Error getting favorite categories:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/favorite-categories', (req: Request, res: Response) => {
+      try {
+        const body = req.body ?? {};
+        const result = addFavoriteCategoryFromApi({
+          id: body.id,
+          name: body.name,
+          boxArtUrl: body.boxArtUrl,
+        });
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error adding favorite category:', error);
+        res.status(400).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.delete('/api/favorite-categories/:id', (req: Request, res: Response) => {
+      try {
+        const result = removeFavoriteCategoryFromApi(req.params.id);
+        res.json(result);
+      } catch (error: any) {
+        logger.error('Error removing favorite category:', error);
         res.status(400).json({ error: error.message || 'Unknown error' });
       }
     });

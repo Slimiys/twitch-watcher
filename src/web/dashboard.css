@@ -3147,3 +3147,131 @@ th.notify-header-clickable:active {
     }
 }
 
+.favorite-categories-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.favorite-category-add-wrap {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.favorite-category-input {
+    width: 260px;
+}
+
+.category-autocomplete {
+    position: relative;
+}
+
+.category-autocomplete-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: #18181b;
+    border: 1px solid #26262c;
+    border-radius: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.category-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: #efeff1;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.category-suggestion-item:hover,
+.category-suggestion-item:focus {
+    background: #26262c;
+    outline: none;
+}
+
+.category-suggestion-art,
+.favorite-category-art {
+    width: 36px;
+    height: 50px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.favorite-category-art-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #26262c;
+    font-size: 18px;
+}
+
+.favorite-categories-empty {
+    color: #adadb8;
+    margin: 0;
+    padding: 8px 0;
+}
+
+.favorite-categories-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.favorite-categories-table th,
+.favorite-categories-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #26262c;
+    text-align: left;
+}
+
+.favorite-categories-table th {
+    color: #adadb8;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.favorite-category-name {
+    color: #efeff1;
+    font-size: 14px;
+}
+
+.favorite-category-art-cell {
+    width: 52px;
+}
+
+.favorite-category-actions {
+    width: 48px;
+    text-align: right;
+}
+
+.remove-category-btn {
+    background: transparent;
+    border: 1px solid #3a3a3d;
+    color: #adadb8;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.remove-category-btn:hover {
+    color: #efeff1;
+    border-color: #9147ff;
+}
+

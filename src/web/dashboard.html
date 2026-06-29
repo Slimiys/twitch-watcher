@@ -250,6 +250,29 @@
                     </div>
                 </div>
 
+            <!-- Избранные категории -->
+            <div class="section collapsible-section grid-item-favorite-categories" id="favoriteCategoriesSection">
+                <div class="favorite-categories-header">
+                    <h2 class="section-header-clickable" data-section="favoriteCategoriesContent" style="margin: 0; cursor: pointer;">
+                        Избранные категории
+                    </h2>
+                    <div class="favorite-category-add-wrap">
+                        <div class="category-autocomplete">
+                            <input type="text" id="favoriteCategoryInput"
+                                   class="add-streamer-input favorite-category-input"
+                                   placeholder="Название категории…" autocomplete="off">
+                            <div id="categoryAutocompleteDropdown" class="category-autocomplete-dropdown" hidden></div>
+                        </div>
+                        <button type="button" id="addFavoriteCategoryBtn" class="add-btn">Добавить</button>
+                    </div>
+                </div>
+                <div id="favoriteCategoriesContent">
+                    <div id="favoriteCategoriesTableWrap">
+                        <p class="favorite-categories-empty">Нет избранных категорий</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Статус бота -->
             <div class="section bot-health-section collapsible-section" id="botHealthSection">
                 <h2 class="section-header-clickable" data-section="botHealthContent">Статус бота</h2>

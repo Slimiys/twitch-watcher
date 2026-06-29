@@ -4404,6 +4404,8 @@ window.addEventListener('load', () => {
             }
         });
     }
+
+    initFavoriteCategoriesSection();
     
     // Закрываем меню при клике вне его
     document.addEventListener('click', (e) => {
@@ -5606,6 +5608,271 @@ function toggleCard(headerElement) {
 // Делаем функции доступными глобально для вызова из HTML
 window.toggleSection = toggleSection;
 window.toggleCard = toggleCard;
+
+/** Избранные категории Twitch */
+let favoriteCategories = [];
+let categorySearchResults = [];
+let categorySearchTimer = null;
+let selectedCategorySuggestion = null;
+
+const CATEGORY_SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * Загружает избранные категории с сервера
+ */
+async function loadFavoriteCategories() {
+    const data = await fetchData('/favorite-categories');
+    favoriteCategories = Array.isArray(data?.categories) ? data.categories : [];
+    renderFavoriteCategoriesTable();
+}
+
+/**
+ * Рендерит таблицу избранных категорий
+ */
+function renderFavoriteCategoriesTable() {
+    const wrap = document.getElementById('favoriteCategoriesTableWrap');
+    if (!wrap) {
+        return;
+    }
+
+    if (!favoriteCategories.length) {
+        wrap.innerHTML = '<p class="favorite-categories-empty">Нет избранных категорий</p>';
+        return;
+    }
+
+    const rows = favoriteCategories.map((cat) => {
+        const art = cat.boxArtUrl
+            ? `<img src="${escapeHtml(cat.boxArtUrl)}" alt="" class="favorite-category-art" loading="lazy">`
+            : '<span class="favorite-category-art favorite-category-art-placeholder">🎮</span>';
+        return `
+            <tr data-category-id="${escapeHtml(cat.id)}">
+                <td class="favorite-category-art-cell">${art}</td>
+                <td class="favorite-category-name">${escapeHtml(cat.name)}</td>
+                <td class="favorite-category-actions">
+                    <button type="button" class="remove-category-btn" data-category-id="${escapeHtml(cat.id)}" title="Удалить">✕</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    wrap.innerHTML = `
+        <table class="favorite-categories-table">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Категория</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+
+    wrap.querySelectorAll('.remove-category-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            removeFavoriteCategory(btn.dataset.categoryId);
+        });
+    });
+}
+
+/**
+ * Скрывает выпадающий список подсказок категорий
+ */
+function hideCategoryAutocomplete() {
+    const dropdown = document.getElementById('categoryAutocompleteDropdown');
+    if (dropdown) {
+        dropdown.hidden = true;
+        dropdown.innerHTML = '';
+    }
+    categorySearchResults = [];
+    selectedCategorySuggestion = null;
+}
+
+/**
+ * Показывает подсказки категорий
+ */
+function renderCategoryAutocomplete(categories) {
+    const dropdown = document.getElementById('categoryAutocompleteDropdown');
+    if (!dropdown) {
+        return;
+    }
+
+    if (!categories.length) {
+        hideCategoryAutocomplete();
+        return;
+    }
+
+    categorySearchResults = categories;
+    dropdown.innerHTML = categories.map((cat, index) => {
+        const art = cat.boxArtUrl
+            ? `<img src="${escapeHtml(cat.boxArtUrl)}" alt="" class="category-suggestion-art" loading="lazy">`
+            : '';
+        return `
+            <button type="button" class="category-suggestion-item" data-index="${index}">
+                ${art}
+                <span class="category-suggestion-name">${escapeHtml(cat.name)}</span>
+            </button>
+        `;
+    }).join('');
+    dropdown.hidden = false;
+
+    dropdown.querySelectorAll('.category-suggestion-item').forEach((btn) => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const index = Number(btn.dataset.index);
+            const category = categorySearchResults[index];
+            if (!category) {
+                return;
+            }
+            selectCategorySuggestion(category);
+            addFavoriteCategoryFromUi(category);
+        });
+    });
+}
+
+/**
+ * Выбирает категорию из подсказок
+ */
+function selectCategorySuggestion(category) {
+    selectedCategorySuggestion = category;
+    const input = document.getElementById('favoriteCategoryInput');
+    if (input) {
+        input.value = category.name;
+    }
+    hideCategoryAutocomplete();
+}
+
+/**
+ * Ищет категории Twitch для автодополнения
+ */
+async function searchCategoriesForAutocomplete(query) {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+        hideCategoryAutocomplete();
+        return;
+    }
+
+    const data = await fetchData(`/categories/search?q=${encodeURIComponent(trimmed)}`);
+    const categories = Array.isArray(data?.categories) ? data.categories : [];
+    renderCategoryAutocomplete(categories);
+}
+
+/**
+ * Планирует отложенный поиск категорий
+ */
+function scheduleCategorySearch(query) {
+    if (categorySearchTimer) {
+        clearTimeout(categorySearchTimer);
+    }
+    selectedCategorySuggestion = null;
+    categorySearchTimer = setTimeout(() => {
+        searchCategoriesForAutocomplete(query);
+    }, CATEGORY_SEARCH_DEBOUNCE_MS);
+}
+
+/**
+ * Добавляет категорию в избранное из UI
+ */
+async function addFavoriteCategoryFromUi(categoryOverride) {
+    const input = document.getElementById('favoriteCategoryInput');
+    let category = categoryOverride || selectedCategorySuggestion;
+
+    if (!category && input?.value.trim()) {
+        const name = input.value.trim();
+        const match = categorySearchResults.find(
+            (item) => item.name.toLowerCase() === name.toLowerCase()
+        );
+        if (match) {
+            category = match;
+        }
+    }
+
+    if (!category?.id || !category?.name) {
+        showNotification('error', 'Выберите категорию из списка подсказок');
+        return;
+    }
+
+    const result = await postApi('/favorite-categories', {
+        id: category.id,
+        name: category.name,
+        boxArtUrl: category.boxArtUrl ?? null,
+    });
+
+    if (!result.ok) {
+        showNotification('error', result.message || 'Не удалось добавить категорию');
+        return;
+    }
+
+    favoriteCategories = Array.isArray(result.data?.categories) ? result.data.categories : favoriteCategories;
+    renderFavoriteCategoriesTable();
+    if (input) {
+        input.value = '';
+    }
+    selectedCategorySuggestion = null;
+    hideCategoryAutocomplete();
+    showNotification('success', `Категория «${category.name}» добавлена`);
+}
+
+/**
+ * Удаляет категорию из избранного
+ */
+async function removeFavoriteCategory(id) {
+    try {
+        const headers = {};
+        const apiKey = getDashboardApiKey();
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey;
+        }
+
+        const response = await fetch(`${API_BASE}/favorite-categories/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+            headers,
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            showNotification('error', result.error || result.message || 'Не удалось удалить категорию');
+            return;
+        }
+
+        favoriteCategories = Array.isArray(result.categories) ? result.categories : favoriteCategories;
+        renderFavoriteCategoriesTable();
+        showNotification('success', 'Категория удалена');
+    } catch (error) {
+        console.error('Error removing favorite category:', error);
+        showNotification('error', 'Не удалось удалить категорию');
+    }
+}
+
+/**
+ * Инициализирует секцию избранных категорий
+ */
+function initFavoriteCategoriesSection() {
+    const input = document.getElementById('favoriteCategoryInput');
+    const addBtn = document.getElementById('addFavoriteCategoryBtn');
+
+    loadFavoriteCategories();
+
+    if (input) {
+        input.addEventListener('input', (e) => {
+            scheduleCategorySearch(e.target.value);
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addFavoriteCategoryFromUi();
+            } else if (e.key === 'Escape') {
+                hideCategoryAutocomplete();
+            }
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => hideCategoryAutocomplete(), 150);
+        });
+    }
+
+    if (addBtn) {
+        addBtn.addEventListener('click', () => addFavoriteCategoryFromUi());
+    }
+}
 
 window.addEventListener('beforeunload', () => {
     if (updateInterval) {

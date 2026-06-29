@@ -40,5 +40,12 @@
   },
   "watch": {
     "cycleIntervalMs": 60000
-  }
+  },
+  "favoriteCategories": [
+    {
+      "id": "509658",
+      "name": "Just Chatting",
+      "boxArtUrl": "https://static-cdn.jtvnw.net/ttv-boxart/52x72/509658.jpg"
+    }
+  ]
 }

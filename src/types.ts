@@ -13,6 +13,17 @@ export interface AppConfig {
   };
   /** Параметры, ранее задаваемые через .env (редактируются в dashboard → «Конфиг бота») */
   app?: Record<string, string>;
+  /** Избранные категории Twitch для dashboard */
+  favoriteCategories?: FavoriteCategory[];
+}
+
+/**
+ * Краткая информация о категории Twitch
+ */
+export interface FavoriteCategory {
+  id: string;
+  name: string;
+  boxArtUrl?: string | null;
 }
 
 /**
