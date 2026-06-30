@@ -201,4 +201,21 @@ describe('DatabaseStorage stream sessions', () => {
     storage.dedupeStreamSessionTimestampAliases();
     expect(storage.getStreamCountLast30Days('dedupe_user2')).toBe(1);
   });
+
+  it('суммирует длительность стримов по категориям', () => {
+    expect(storage.addCategoryStreamDuration('Path of Exile', 6 * 60 * 60_000 + 53 * 60_000)).toBe(
+      true
+    );
+    expect(storage.addCategoryStreamDuration('Path of Exile 2', 4 * 60 * 60_000 + 34 * 60_000)).toBe(
+      true
+    );
+    expect(storage.addCategoryStreamDuration('Path of Exile', 60_000)).toBe(true);
+
+    const totals = storage.getCategoryStreamDurationTotals();
+    expect(totals).toHaveLength(2);
+    expect(totals[0].category).toBe('Path of Exile');
+    expect(totals[0].durationMs).toBe(6 * 60 * 60_000 + 54 * 60_000);
+    expect(totals[1].category).toBe('Path of Exile 2');
+    expect(totals[1].durationMs).toBe(4 * 60 * 60_000 + 34 * 60_000);
+  });
 });

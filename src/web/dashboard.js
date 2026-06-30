@@ -489,21 +489,13 @@ function getSelectedFavoriteCategoryNames() {
 }
 
 /**
- * Проверяет, стримил ли стример категорию ранее (история / последняя игра)
+ * Проверяет, совпадает ли текущая/последняя категория стримера с выбранной
  * @param {object} stat
  * @param {string} categoryNormalized
  * @returns {boolean}
  */
-function streamerHasCategoryInHistory(stat, categoryNormalized) {
-    if (normalizeCategoryNameForMatch(stat?.game) === categoryNormalized) {
-        return true;
-    }
-    if (!Array.isArray(stat?.categoryStreamCounts)) {
-        return false;
-    }
-    return stat.categoryStreamCounts.some(
-        (entry) => normalizeCategoryNameForMatch(entry?.category) === categoryNormalized
-    );
+function streamerMatchesCategoryAsCurrentOrLast(stat, categoryNormalized) {
+    return normalizeCategoryNameForMatch(stat?.game) === categoryNormalized;
 }
 
 /**
@@ -518,13 +510,7 @@ function streamerMatchesFavoriteCategoryFilters(stat) {
     }
 
     for (const categoryName of selectedNames) {
-        if (stat?.status === 'ONLINE') {
-            if (normalizeCategoryNameForMatch(stat?.game) === categoryName) {
-                return true;
-            }
-            continue;
-        }
-        if (streamerHasCategoryInHistory(stat, categoryName)) {
+        if (streamerMatchesCategoryAsCurrentOrLast(stat, categoryName)) {
             return true;
         }
     }
@@ -3266,11 +3252,12 @@ async function updateStatistics(options = {}) {
         }
     }
 
-    // Фильтруем стримеров по выбранным избранным категориям или по статусу online/offline
+    // Фильтр по избранным категориям, затем по видимости offline (кнопка Show/Hide Offline)
     let filteredStats = stats;
     if (selectedFavoriteCategoryFilterIds.size > 0) {
         filteredStats = filteredStats.filter((s) => streamerMatchesFavoriteCategoryFilters(s));
-    } else if (!showOffline) {
+    }
+    if (!showOffline) {
         filteredStats = filteredStats.filter((s) => s.status === 'ONLINE');
     }
 
@@ -4126,6 +4113,7 @@ async function updateAll() {
         await Promise.all([
             updateOverallStats(),
             updateStatistics(),
+            updateCategoryStreamStats(),
             updateBotHealth(),
             updateCriticalNotifications(),
             updateTokenInfo(),
@@ -4545,6 +4533,7 @@ window.addEventListener('load', () => {
     }
 
     initFavoriteCategoriesSection();
+    initCategoryStreamStatsSection();
     
     // Закрываем меню при клике вне его
     document.addEventListener('click', (e) => {
@@ -5867,6 +5856,109 @@ function findBestCategoryFuzzyMatch(name, categories) {
 }
 
 /**
+ * Склонение русских слов по числу
+ * @param {number} value
+ * @param {string} one
+ * @param {string} few
+ * @param {string} many
+ * @returns {string}
+ */
+function pluralizeRu(value, one, few, many) {
+    const mod10 = Math.abs(value) % 10;
+    const mod100 = Math.abs(value) % 100;
+    if (mod10 === 1 && mod100 !== 11) {
+        return one;
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+        return few;
+    }
+    return many;
+}
+
+/**
+ * Форматирует длительность стримов категории по-русски
+ * @param {number} durationMs
+ * @returns {string}
+ */
+function formatCategoryStreamDuration(durationMs) {
+    const totalMinutes = Math.max(0, Math.floor(Number(durationMs) / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const parts = [];
+
+    if (hours > 0) {
+        parts.push(`${hours} ${pluralizeRu(hours, 'час', 'часа', 'часов')}`);
+    }
+    if (minutes > 0 || hours === 0) {
+        parts.push(`${minutes} ${pluralizeRu(minutes, 'минута', 'минуты', 'минут')}`);
+    }
+
+    return parts.join(' ');
+}
+
+/** Статистика времени стримов по категориям */
+let categoryStreamDurationStats = [];
+
+/**
+ * Загружает статистику стримов по категориям
+ */
+async function loadCategoryStreamStats() {
+    const data = await fetchData('/category-stream-stats');
+    if (!data) {
+        categoryStreamDurationStats = [];
+        renderCategoryStreamStats();
+        return;
+    }
+    categoryStreamDurationStats = Array.isArray(data.categories) ? data.categories : [];
+    renderCategoryStreamStats();
+}
+
+/**
+ * Обновляет секцию статистики по категориям
+ */
+async function updateCategoryStreamStats() {
+    await loadCategoryStreamStats();
+}
+
+/**
+ * Рендерит список статистики по категориям
+ */
+function renderCategoryStreamStats() {
+    const wrap = document.getElementById('categoryStreamStatsWrap');
+    if (!wrap) {
+        return;
+    }
+
+    if (!categoryStreamDurationStats.length) {
+        wrap.innerHTML = '<p class="category-stream-duration-empty">Пока нет зафиксированных категорий</p>';
+        return;
+    }
+
+    const rows = categoryStreamDurationStats.map((entry) => {
+        const name = entry?.category || '—';
+        const color = generateColorFromString(name);
+        const favoriteClass = isFavoriteStreamerCategory(name) ? ' is-favorite-category' : '';
+        const durationLabel = formatCategoryStreamDuration(entry?.durationMs ?? 0);
+        return `
+            <li class="category-stream-duration-item${favoriteClass}">
+                <span class="category-stream-duration-name" style="color: ${color};">${escapeHtml(name)}</span>
+                <span class="category-stream-duration-separator">|</span>
+                <span class="category-stream-duration-time">${escapeHtml(durationLabel)}</span>
+            </li>
+        `;
+    }).join('');
+
+    wrap.innerHTML = `<ul class="category-stream-duration-list">${rows}</ul>`;
+}
+
+/**
+ * Инициализирует секцию статистики по категориям
+ */
+function initCategoryStreamStatsSection() {
+    loadCategoryStreamStats();
+}
+
+/**
  * Обновляет кэш избранных категорий и перерисовывает связанный UI
  */
 function applyFavoriteCategoriesState() {
@@ -5877,6 +5969,7 @@ function applyFavoriteCategoriesState() {
     );
     pruneFavoriteCategoryFilters();
     renderFavoriteCategoriesTable();
+    renderCategoryStreamStats();
     if (cachedStatisticsRows) {
         updateStatistics({ skipFetch: true });
     }
@@ -5955,7 +6048,7 @@ function renderFavoriteCategoriesTable() {
     }).join('');
 
     const filterHint = selectedFavoriteCategoryFilterIds.size > 0
-        ? '<p class="favorite-categories-filter-hint">Фильтр: онлайн с выбранной категорией или офлайн, которые её стримили. Повторный клик снимает фильтр.</p>'
+        ? '<p class="favorite-categories-filter-hint">Фильтр по текущей (онлайн) или последней (офлайн) категории. Офлайн-стримеры скрываются кнопкой Hide Offline.</p>'
         : '';
 
     wrap.innerHTML = `<div class="favorite-categories-wrap">${chips}</div>${filterHint}`;

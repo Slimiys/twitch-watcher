@@ -43,6 +43,7 @@ import {
   readFavoriteCategoriesForApi,
   removeFavoriteCategoryFromApi,
 } from './favoriteCategoriesApi';
+import { readCategoryStreamStatsForApi } from './categoryStreamStatsApi';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
 
 /**
@@ -787,6 +788,22 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error removing favorite category:', error);
         res.status(400).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.get('/api/category-stream-stats', (_req: Request, res: Response) => {
+      try {
+        const streamWatcher = this.statisticsProvider as StreamWatcher | null;
+        const databaseStorage = streamWatcher?.getDatabaseStorage?.() ?? null;
+        const result = readCategoryStreamStatsForApi(databaseStorage);
+        if (result.error) {
+          res.status(200).json({ categories: [], error: result.error });
+          return;
+        }
+        res.json({ categories: result.categories });
+      } catch (error: any) {
+        logger.error('Error getting category stream stats:', error);
+        res.status(500).json({ error: error.message || 'Unknown error' });
       }
     });
 

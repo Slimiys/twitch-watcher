@@ -109,6 +109,12 @@ export interface StreamerCategoryStreamCount {
   streamCount: number;
 }
 
+/** Суммарное время стримов по категории (все стримеры) */
+export interface CategoryStreamDurationTotal {
+  category: string;
+  durationMs: number;
+}
+
 /** Даты начала стримов по периодам для дашборда */
 export interface StreamSessionStartsByWindow {
   d7: number[];
@@ -392,6 +398,15 @@ export class DatabaseStorage {
         first_seen_at INTEGER NOT NULL,
         FOREIGN KEY (stream_session_id) REFERENCES stream_sessions(id) ON DELETE CASCADE,
         UNIQUE(stream_session_id, category)
+      )
+    `);
+
+    // Суммарное время стримов по категориям (все отслеживаемые стримеры)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS category_stream_duration_totals (
+        category TEXT NOT NULL PRIMARY KEY,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
       )
     `);
 
@@ -719,6 +734,74 @@ export class DatabaseStorage {
       stmt.free();
     } catch (error: any) {
       logger.error(`❌  Failed to get category stream counts: ${error.message || error}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Добавляет время стрима к суммарной статистике категории
+   */
+  addCategoryStreamDuration(category: string, durationMs: number): boolean {
+    const normalizedCategory = category?.trim();
+    const delta = Math.floor(durationMs);
+    if (!isDatabaseAvailable || !this.db || !normalizedCategory || delta <= 0) {
+      return false;
+    }
+
+    try {
+      const now = Date.now();
+      const stmt = this.db.prepare(`
+        INSERT INTO category_stream_duration_totals (category, duration_ms, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(category) DO UPDATE SET
+          duration_ms = duration_ms + excluded.duration_ms,
+          updated_at = excluded.updated_at
+      `);
+      stmt.bind([normalizedCategory, delta, now]);
+      stmt.step();
+      stmt.free();
+
+      if (this.config.autoSave) {
+        this.saveDatabase();
+      }
+      return true;
+    } catch (error: any) {
+      logger.error(`❌  Failed to add category stream duration: ${error.message || error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Возвращает суммарное время стримов по всем зафиксированным категориям
+   */
+  getCategoryStreamDurationTotals(): CategoryStreamDurationTotal[] {
+    const result: CategoryStreamDurationTotal[] = [];
+    if (!isDatabaseAvailable || !this.db) {
+      return result;
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT category, duration_ms
+        FROM category_stream_duration_totals
+        WHERE duration_ms > 0
+        ORDER BY duration_ms DESC, category ASC
+      `);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as { category: string; duration_ms: number };
+        if (!row.category) {
+          continue;
+        }
+        result.push({
+          category: String(row.category),
+          durationMs: Number(row.duration_ms) || 0,
+        });
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(`❌  Failed to get category stream duration totals: ${error.message || error}`);
     }
 
     return result;

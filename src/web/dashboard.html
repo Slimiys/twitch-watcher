@@ -9,8 +9,8 @@
     <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=14">
-    <script src="dashboard.js?v=46" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=15">
+    <script src="dashboard.js?v=48" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -269,6 +269,16 @@
                 <div id="favoriteCategoriesContent">
                     <div id="favoriteCategoriesTableWrap">
                         <p class="favorite-categories-empty">Нет избранных категорий</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Статистика по категориям -->
+            <div class="section collapsible-section" id="categoryStreamStatsSection">
+                <h2 class="section-header-clickable" data-section="categoryStreamStatsContent">Статистика</h2>
+                <div id="categoryStreamStatsContent">
+                    <div id="categoryStreamStatsWrap">
+                        <p class="category-stream-duration-empty">Загрузка…</p>
                     </div>
                 </div>
             </div>
