@@ -1,75 +1,119 @@
-# Переменные окружения Twitch Watcher
+# Параметры конфигурации
 
-## Используемые переменные (оставить в .env)
+Настройки бота хранятся в **`config.json`** (секция `app` и корневой `token`) и редактируются в dashboard → **«Конфиг бота»**. При старте значения загружаются в `process.env`.
 
-### Обязательные:
-- `token` - Токен авторизации Twitch (обязательно)
+Файл **`.env` не используется** основным приложением. Исключение: скрипт `npm run certs:generate` может читать `.env` для удобства локальной генерации сертификатов.
 
-**Примечание:** Список стримеров теперь хранится в `config.json` и может управляться через веб-интерфейс. Переменная окружения `channelsWithPriority` больше не используется.
+Шаблон: `config.json.example`.
 
-### Параметры прокси (опционально):
-- `proxy` - Прокси сервер (формат: ip:port)
-- `proxyAuth` - Авторизация прокси (формат: username:password)
+## Обязательные
 
-### Параметры логирования (опционально):
-- `LOG_LEVEL` - Уровень детализации логов (по умолчанию `verbose`)
-  - `verbose` - Все логи (детальные сообщения, подписки WebSocket, инициализация)
-  - `normal` - Только важные сообщения (события, ошибки, статистика)
-  - `minimal` - Только критичные сообщения (ошибки, статистика)
-- `LOG_TO_FILE` - Запись в файлы (`false` / `0` — отключить; по умолчанию включено)
-- `LOG_DIR` - Каталог логов (по умолчанию `./logs`)
-- `LOG_FILE_MAX_MB` - Лимит одного файла в МБ (по умолчанию `100`)
-- `LOG_FILE_BASENAME` - Имя файлов: `{basename}.1.log` и `{basename}.2.log` (по умолчанию `twitch-watcher`)
-- `LOG_CLEAR_ON_START` - При старте удалить **все файлы** в `LOG_DIR` (`dashboard-update.log`, `crash.log`, старые `.1/.2.log` и т.д.). По умолчанию включено; `false` / `0` — не очищать
+| Ключ | Где | Описание |
+|------|-----|----------|
+| `token` | корень `config.json` | Cookie `auth-token` с twitch.tv |
 
-  Ротация: при заполнении первого файла пишется во второй; когда второй заполнен — первый очищается и цикл повторяется.
+Список стримеров — в `config.json` → `streamers` или через dashboard (не через переменные окружения).
 
-### Параметры API-режима (опционально):
-- `MAX_SIMULTANEOUS_CHANNELS` - Максимальное количество одновременно просматриваемых каналов (по умолчанию `2`)
-  - Минимум: `1`
-  - Максимум: `10` (разумное ограничение)
-  - Если онлайн каналов больше этого значения, используется ротация каналов
-  - **Примечание**: Это эмпирическое ограничение из Channel Points Miner. Twitch может начислять баллы для большего количества каналов, но это не гарантировано
-- `userAgent` - User-Agent для HTTP запросов (опционально, есть значение по умолчанию)
+## Авторизация и Twitch
 
-### Client-Integrity и расширение Edge (опционально):
-- `INTEGRITY_BRIDGE_ENABLED` - Приём `Client-Integrity` от расширения `extensions/edge-integrity-bridge` (по умолчанию включено; `false` / `0` — отключить)
-- `WEB_DASHBOARD_API_KEY` - Если задан, тот же ключ укажите в popup расширения (заголовок `X-API-Key`)
+| Ключ | Описание |
+|------|----------|
+| `TWITCH_USER_ID` | User ID из `id.twitch.tv` / validate |
+| `TWITCH_INTEGRITY_SOURCE` | `auto` / `manual` / `api` |
+| `TWITCH_CLIENT_INTEGRITY` | Заголовок Client-Integrity |
+| `TWITCH_CLIENT_INTEGRITY_EXPIRES` | Unix timestamp истечения integrity |
+| `TWITCH_INTEGRITY_AUTO_REFRESH` | Автообновление integrity (по умолчанию вкл.) |
+| `TWITCH_INTEGRITY_AUTO_PERSIST` | Записывать обновлённый integrity в config.json |
+| `TWITCH_INTEGRITY_FALLBACK_API` | Устаревший fallback POST /integrity |
+| `TWITCH_DEVICE_ID` | Заголовок X-Device-Id (часто = cookie unique_id) |
+| `TWITCH_COOKIES` | Доп. cookies: `unique_id=…; api_token=…` |
+| `TWITCH_CLIENT_VERSION` | Client-Version из gql |
+| `TWITCH_CLIENT_SESSION_ID` | Client-Session-Id из gql |
+| `INTEGRITY_BRIDGE_ENABLED` | Приём integrity от расширения Edge (по умолчанию вкл.; `false` — выкл.) |
 
-Расширение отправляет в `POST /api/integrity/capture`: `Client-Integrity`, `Client-Version`, `Client-Session-Id`, `X-Device-Id` (из заголовков gql.twitch.tv). Значения попадают в `TWITCH_CLIENT_*` / `TWITCH_DEVICE_ID`. Перезапуск бота не нужен. Подробнее: `extensions/edge-integrity-bridge/README.md`.
+Расширение: `extensions/edge-integrity-bridge`. Endpoint: `POST /api/integrity/capture`.
 
-## Неиспользуемые переменные (можно удалить из .env)
+## Логирование
 
-Эти переменные больше не используются в текущей версии приложения:
+| Ключ | По умолчанию | Описание |
+|------|--------------|----------|
+| `LOG_LEVEL` | `normal` | `verbose` / `normal` / `minimal` |
+| `LOG_TO_FILE` | вкл. | Писать в `./logs` |
+| `LOG_DIR` | `./logs` | Каталог логов |
+| `LOG_FILE_MAX_MB` | `100` | Лимит одного файла |
+| `LOG_FILE_BASENAME` | `twitch-watcher` | Имя файлов `*.1.log` / `*.2.log` |
+| `LOG_CLEAR_ON_START` | вкл. | Очистить каталог логов при старте |
 
-- `streamersUrl` - URL страницы со стримерами (не используется, так как проверяются только приоритетные стримеры)
-- `scrollDelay` - Задержка между прокрутками (не используется, так как не просматривается категория)
-- `scrollTimes` - Количество прокруток (не используется, так как не просматривается категория)
-- `watchAlwaysTopStreamer` - Всегда смотреть топ-стримера (не используется, так как всегда выбирается первый онлайн приоритетный стример)
-- `streamerListRefresh` - Интервал обновления списка стримеров (не используется)
-- `streamerListRefreshUnit` - Единица измерения для обновления списка (не используется)
+## Просмотр и claim
 
-## Пример минимального .env файла
+| Ключ | Описание |
+|------|----------|
+| `MAX_SIMULTANEOUS_CHANNELS` | Макс. одновременных каналов (1–10, по умолчанию 2) |
+| `WATCH_PREP_INTERVAL_MS` | Обновление стримера перед watch |
+| `WATCH_OPERATION_TIMEOUT_MS` | Таймаут watch/spade |
+| `CLAIM_CHECK_INTERVAL_MS` | Интервал опроса claim |
+| `CLAIM_FAILED_BLOCK_MS` | Blocklist при FORBIDDEN |
+| `WATCH_RESUME_MAX_AGE_MS` | Макс. возраст resume-состояния |
 
-### Базовый пример:
-```env
-# Обязательные параметры
-token=your_auth_token_here
+Интервал ротации minute-watched — в `config.json` → `watch.cycleIntervalMs` (не в `app`).
 
-# Параметры логирования (опционально)
-LOG_LEVEL=normal
+## Сеть
 
-# Параметры API-режима (опционально)
-# Максимальное количество одновременно просматриваемых каналов
-# По умолчанию: 2 (эмпирическое ограничение из Channel Points Miner)
-# Можно попробовать увеличить до 3-4, если Twitch начисляет баллы для большего количества каналов
-MAX_SIMULTANEOUS_CHANNELS=2
-```
+| Ключ | Описание |
+|------|----------|
+| `FETCH_TIMEOUT_MS` | Таймаут HTTP (перезапуск при смене) |
+| `proxy` | Прокси host:port или URL |
+| `proxyAuth` | `login:password` |
+| `userAgent` | User-Agent для HTTP |
 
-**Примечание:** Список стримеров настраивается через веб-интерфейс (http://localhost:3001) или вручную в файле `config.json`:
+## Сервер и dashboard
+
+| Ключ | По умолчанию | Описание |
+|------|--------------|----------|
+| `HEALTH_CHECK_PORT` | `3000` | HTTP health-check |
+| `WEB_SERVER_PORT` | `3001` | Порт dashboard |
+| `WEB_SERVER_HTTPS` | выкл. | HTTPS для dashboard |
+| `WEB_DASHBOARD_API_KEY` | — | Защита API (`X-API-Key`) |
+| `SSL_DIR` | `./certs` | Каталог сертификатов |
+| `SSL_CERT_PATH` / `SSL_KEY_PATH` | — | Пути к crt/key |
+| `SSL_EXTRA_SANS` | — | Доп. SAN (IP через запятую) |
+| `SSL_CERT_CN` | `twitch-watcher` | Common Name |
+| `DASHBOARD_UPDATE_ENABLED` | выкл. | Обновление из Git с dashboard (Termux) |
+| `DASHBOARD_UPDATE_GIT_BRANCH` | `dev` | Ветка для update |
+| `DASHBOARD_UPDATE_GIT_REMOTE` | `origin` | Git remote |
+
+Подробнее про HTTPS: [HTTPS.md](HTTPS.md).
+
+## WebSocket и поведение
+
+| Ключ | Описание |
+|------|----------|
+| `WS_HEALTH_CHECK_INTERVAL_MS` | Проверка WebSocket |
+| `WS_CONNECT_TIMEOUT_MS` | Таймаут подключения WS |
+| `AUTO_EXIT_ON_UNHEALTHY` | Выход при unhealthy (`true` / `false` / пусто) |
+| `AUTO_EXIT_ON_INVALID_TOKEN` | Выход при невалидном токене |
+| `TWITCH_TERMUX_WAKE_LOCK` | Wake-lock в скриптах Termux (`false` — отключить) |
+
+## Устаревшие параметры
+
+Эти ключи **больше не используются** (browser-режим удалён в 0.6+):
+
+- `streamersUrl`, `scrollDelay`, `scrollTimes`
+- `watchAlwaysTopStreamer`, `streamerListRefresh`, `streamerListRefreshUnit`
+- `channelsWithPriority` (заменён на `config.json` → `streamers`)
+- `showBrowser`, `MODE` (только API-режим)
+
+## Пример минимального config.json
+
 ```json
 {
+  "token": "your_auth_token_here",
+  "app": {
+    "LOG_LEVEL": "normal",
+    "MAX_SIMULTANEOUS_CHANNELS": "2"
+  },
   "streamers": ["alkaizerx", "mathil1"]
 }
 ```
 
+Перезапуск бота нужен для части полей (порты, прокси, токен, integrity при ручной смене). UI «Конфиг бота» подскажет, если требуется перезапуск.

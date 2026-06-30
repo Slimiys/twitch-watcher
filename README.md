@@ -6,85 +6,79 @@
 
 ## Особенности
 
-- **API-режим**: Работает без браузера, полностью headless
-- Просмотр только приоритетных стримеров из списка
-- Автоматический сбор бонусных сундуков канальных баллов
-- Статистика просмотра и заработанных баллов
-- Авторизация через токен (auth-token)
-- Поддержка прокси
-- Полностью типизированный код на TypeScript
-- Низкое потребление ресурсов
-- Мгновенная реакция на события через WebSocket
-- Высокая надежность
+- **API-режим**: работает без браузера, полностью headless
+- **Веб-dashboard** с управлением стримерами, настройками и статистикой
+- Локализация дашборда **RU/EN**
+- Автоматический сбор бонусных сундуков (Client-Integrity, расширение Edge)
+- Статистика баллов, стримов, категорий; избранные категории Twitch
+- **Bot Health**, SSE-обновления, уведомления (toast / ОС / звук)
+- Обновление и перезапуск бота с dashboard (Termux)
+- Авторизация через auth-token; настройки в `config.json`
+- WebSocket для событий Twitch; низкое потребление ресурсов
 
 ## Требования
 
 - **Windows или Linux** (основная поддержка)
-- **Android** (через Termux, см. [ANDROID_SETUP.md](docs/ANDROID_SETUP.md))
-- Node.js 18+ и NPM
+- **Android** через Termux — [ANDROID_SETUP.md](docs/ANDROID_SETUP.md)
+- Node.js 18+ и npm
 
 ## Установка
 
-1. Клонируйте репозиторий:
-   ```bash
-   git clone https://github.com/Slimiys/twitch-watcher.git
-   cd twitch-watcher
-   ```
-2. Установите зависимости: `npm install`
-3. Скомпилируйте проект: `npm run build`
-4. Запустите: `npm start`
+```bash
+git clone https://github.com/Slimiys/twitch-watcher.git
+cd twitch-watcher
+npm install
+npm run build
+npm start
+```
 
 ## Настройка
 
-### Первый запуск
+1. Откройте dashboard: http://localhost:3001
+2. **«Конфиг бота»** → укажите **auth-token** (cookie на twitch.tv)
+3. Добавьте стримеров в таблице или в `config.json`
 
-1. Запустите бот (`npm start` или `npm run dev`).
-2. Откройте dashboard (по умолчанию http://localhost:3001).
-3. Нажмите **«Конфиг бота»** и укажите **auth-token** (из cookies браузера на twitch.tv).
+Шаблон конфигурации: `config.json.example`. Секреты хранятся в `config.json` (в `.gitignore`), не в `.env`.
 
-Данные сохраняются в `config.json` (шаблон: `config.json.example`). После сохранения токена бот запустится автоматически.
-
-### Настройки
-
-Параметры бота (токен, integrity, порты, логи и т.д.) задаются в **dashboard → «Конфиг бота»** и сохраняются в `config.json` (`token` и секция `app`). Файл `.env` не используется.
-
-**Примечание:** Список стримеров настраивается через веб-интерфейс (http://localhost:3001) или вручную в файле `config.json`:
 ```json
 {
   "streamers": ["alkaizerx", "mathil1"]
 }
 ```
 
-Подробнее о настройке см. [CONFIGURATION.md](docs/CONFIGURATION.md)
+Подробнее: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+
+### Integrity Bridge (опционально)
+
+Расширение Microsoft Edge передаёт `Client-Integrity` с twitch.tv в бот: `extensions/edge-integrity-bridge/`.
 
 ## Использование
 
-### Разработка
-
 ```bash
-npm run dev
+npm run dev      # разработка (ts-node)
+npm run build    # сборка
+npm start        # запуск
 ```
 
-### Сборка и запуск
-
-```bash
-npm run build
-npm start
-```
-
-**Важно:** `config.json` содержит секретные данные и не должен попадать в репозиторий (уже в `.gitignore`).
+Health-check: http://localhost:3000 (порт `HEALTH_CHECK_PORT`).
 
 ## Решение проблем
 
-Подробнее см. [CONFIGURATION.md](CONFIGURATION.md)
+См. [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — токен, integrity, сеть, dashboard.
 
-## План развития
+## Документация
 
-Планы по улучшению и развитию проекта доступны в [ROADMAP.md](docs/ROADMAP.md)
-
-## Git Workflow
-
-Проект использует Git Flow workflow с conventional commits. Подробная документация доступна в [GITFLOW.md](docs/GITFLOW.md)
+| Документ | Описание |
+|----------|----------|
+| [docs/README.md](docs/README.md) | Индекс документации |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Настройка и troubleshooting |
+| [docs/ENV_VARIABLES.md](docs/ENV_VARIABLES.md) | Поля `config.json` / «Конфиг бота» |
+| [docs/DATABASE.md](docs/DATABASE.md) | SQLite-статистика |
+| [docs/HTTPS.md](docs/HTTPS.md) | HTTPS для dashboard |
+| [docs/ANDROID_SETUP.md](docs/ANDROID_SETUP.md) | Termux |
+| [docs/WEB_UI_ROADMAP.md](docs/WEB_UI_ROADMAP.md) | План развития UI |
+| [docs/GITFLOW.md](docs/GITFLOW.md) | Git Flow и коммиты |
+| [CHANGELOG.md](CHANGELOG.md) | История версий |
 
 ## Лицензия
 
@@ -93,8 +87,4 @@ MIT
 ## Ссылки
 
 - [GitHub Repository](https://github.com/Slimiys/twitch-watcher)
-- [Документация по настройке](docs/CONFIGURATION.md)
-- [Переменные окружения](docs/ENV_VARIABLES.md)
-- [Android настройка](docs/ANDROID_SETUP.md)
-- [Git Flow Workflow](docs/GITFLOW.md)
-- [План развития](docs/ROADMAP.md)
+- [Релизы](https://github.com/Slimiys/twitch-watcher/releases)

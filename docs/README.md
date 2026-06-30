@@ -1,26 +1,30 @@
 # Документация Twitch Watcher
 
-Добро пожаловать в документацию проекта Twitch Watcher!
-
 ## Содержание
 
-### Основная документация
+### Настройка и эксплуатация
 
-- **[Настройка](CONFIGURATION.md)** - Подробная инструкция по настройке приложения
-- **[Переменные окружения](ENV_VARIABLES.md)** - Описание параметров в config.json / «Конфиг бота»
-- **[Android настройка](ANDROID_SETUP.md)** - Инструкция по установке и настройке на Android через Termux
+- **[CONFIGURATION.md](CONFIGURATION.md)** — первый запуск, `config.json`, integrity, решение проблем
+- **[ENV_VARIABLES.md](ENV_VARIABLES.md)** — поля секции `app` и корневого `token`
+- **[HTTPS.md](HTTPS.md)** — HTTPS для dashboard (уведомления ОС по LAN)
+- **[ANDROID_SETUP.md](ANDROID_SETUP.md)** — установка на Android через Termux
+- **[DATABASE.md](DATABASE.md)** — SQLite, таблицы, API статистики
 
 ### Разработка
 
-- **[Git Flow Workflow](GITFLOW.md)** - Правила работы с Git, ветками и коммитами
-- **[План развития](ROADMAP.md)** - Планы по улучшению и развитию проекта
+- **[GITFLOW.md](GITFLOW.md)** — ветки, conventional commits
+- **[WEB_UI_ROADMAP.md](WEB_UI_ROADMAP.md)** — план улучшений dashboard
+
+### Расширения
+
+- **[edge-integrity-bridge/README.md](../extensions/edge-integrity-bridge/README.md)** — передача Client-Integrity из Edge
 
 ## Быстрый старт
 
-1. Прочитайте [README.md](../README.md) в корне проекта
-2. Настройте параметры в dashboard → **«Конфиг бота»** или в `config.json`
-3. Для Android используйте [ANDROID_SETUP.md](ANDROID_SETUP.md)
+1. [README.md](../README.md) в корне — установка и запуск
+2. Dashboard → **«Конфиг бота»** или правка `config.json`
+3. Добавьте стримеров, при необходимости настройте integrity и HTTPS
 
-## Структура документации
+## Версия
 
-Все файлы документации находятся в этой папке для удобной организации. Основной README находится в корне проекта.
+Актуальные изменения — в [CHANGELOG.md](../CHANGELOG.md). Текущая версия указана в `package.json`.

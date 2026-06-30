@@ -27,13 +27,6 @@ export interface FavoriteCategory {
 }
 
 /**
- * Интерфейс для ответа интерактивного ввода
- */
-export interface LoginInput {
-  token: string;
-}
-
-/**
  * Тип для единиц времени dayjs
  */
 export type DayjsUnit = 'second' | 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';

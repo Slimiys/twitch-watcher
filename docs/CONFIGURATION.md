@@ -1,92 +1,98 @@
 # Настройка Twitch Watcher
 
-## Проблема: Стримеры не находятся
+Приложение работает в **API-режиме** (без браузера). Все параметры бота задаются через **dashboard → «Конфиг бота»** и сохраняются в `config.json` (шаблон: `config.json.example`). Файл `.env` **не используется** при обычном запуске.
 
-Если вы видите сообщение `No streamers found, waiting...`, попробуйте следующие решения:
+## Первый запуск
 
-### 1. Увеличьте параметры прокрутки
+1. `npm install && npm run build && npm start`
+2. Откройте dashboard: http://localhost:3001 (порт — `WEB_SERVER_PORT` в конфиге)
+3. **«Конфиг бота»** → укажите **auth-token** (cookie `auth-token` на twitch.tv)
+4. Добавьте стримеров в таблице или в `config.json` → `streamers`
 
-Создайте файл `.env` в корне проекта и добавьте:
+После сохранения токена бот запускает просмотр автоматически.
 
-```env
-scrollDelay=5000
-scrollTimes=15
+## Структура config.json
+
+```json
+{
+  "token": "…",
+  "app": {
+    "LOG_LEVEL": "normal",
+    "WEB_SERVER_PORT": "3001",
+    "MAX_SIMULTANEOUS_CHANNELS": "2"
+  },
+  "streamers": ["streamer1", "streamer2"],
+  "watch": { "cycleIntervalMs": 60000 },
+  "favoriteCategories": [
+    { "id": "509658", "name": "Just Chatting", "boxArtUrl": "…" }
+  ]
+}
 ```
 
-Где:
-- `scrollDelay` - задержка между прокрутками в миллисекундах (по умолчанию 2000)
-- `scrollTimes` - количество прокруток страницы (по умолчанию 5)
+- **`token`** — обязательный auth-token Twitch
+- **`app`** — настройки бота (логи, порты, integrity, прокси и т.д.). Полный список полей — в [ENV_VARIABLES.md](ENV_VARIABLES.md) и в UI «Конфиг бота»
+- **`streamers`** — список каналов для отслеживания (можно менять в dashboard)
+- **`watch.cycleIntervalMs`** — пауза ротации minute-watched между онлайн-каналами
+- **`favoriteCategories`** — избранные категории для фильтра таблицы и подсветки в статистике
 
-### 2. Измените URL страницы со стримерами
+`config.json` содержит секреты и в `.gitignore` — не коммитьте его.
 
-Если текущий URL не работает, попробуйте другой:
+## Client-Integrity и сбор бонусов
 
-```env
-# Для VALORANT
-streamersUrl=https://www.twitch.tv/directory/game/VALORANT?sort=VIEWER_COUNT&tl=c2542d6d-cd10-4532-919b-3d19f30a768b
+Для сбора канальных бонусов Twitch требует заголовок `Client-Integrity`.
 
-# Для другой игры (например, Rust)
-streamersUrl=https://www.twitch.tv/directory/game/Rust?sort=VIEWER_COUNT&tl=c2542d6d-cd10-4532-919b-3d19f30a768b
-```
+**Варианты:**
 
-### 3. Проверьте, что вы авторизованы
+1. **Расширение Edge** (`extensions/edge-integrity-bridge`) — автоматическая передача integrity с открытой вкладки twitch.tv. См. [README расширения](../extensions/edge-integrity-bridge/README.md).
+2. **Ручной ввод** — скопировать из DevTools → Network → запрос `gql` → Request Headers (`Client-Integrity`, `X-Device-Id`, cookies).
+3. **Автообновление** — `TWITCH_INTEGRITY_AUTO_REFRESH=true` (по умолчанию): бот запрашивает `POST /integrity` до источения срока.
 
-Убедитесь, что:
-- Токен авторизации (`auth-token`) действителен
-- Вы вошли в аккаунт Twitch в браузере
-- Токен не истек
+В dashboard: секция **Client-Integrity** и **Bot Health** показывают статус токена и сбор бонусов.
 
-### 4. Включите видимый режим браузера
+На Termux чаще всего нужен **manual** integrity или расширение на ПК с bridge к боту на телефоне.
 
-В файле `src/app.ts` измените:
+## Решение проблем
 
-```typescript
-const showBrowser = true; // Вместо false
-```
+### Бот не смотрит стримеров
 
-Это позволит увидеть, что происходит в браузере.
+1. Убедитесь, что стримеры добавлены в `config.json` или через dashboard
+2. Проверьте, что канал **онлайн** (в таблице статус Online)
+3. Проверьте токен: **«Конфиг бота»** → auth-token актуален
+4. Смотрите логи: `./logs/twitch-watcher.1.log`
 
-### 5. Используйте переменные окружения
+### «No streamers found» / пустая таблица
 
-Все настройки можно задать через переменные окружения:
+- Список стримеров пуст — добавьте каналы в dashboard
+- После обновления с Git иногда нужна перезагрузка страницы (F5) или дождитесь SSE-обновления
 
-```env
-# Основные настройки
-streamersUrl=https://www.twitch.tv/directory/game/VALORANT?tl=c2542d6d-cd10-4532-919b-3d19f30a768b
-scrollDelay=3000
-scrollTimes=10
-minWatching=15
-maxWatching=30
+### Ошибки токена / 401
 
-# Примечание: Список стримеров теперь настраивается через веб-интерфейс или в config.json
-# См. раздел "Управление стримерами" ниже
+- Обновите `auth-token` в браузере (выйдите и войдите на twitch.tv, скопируйте новый cookie)
+- Сохраните в «Конфиг бота» и перезапустите бот при запросе UI
 
-# Всегда смотреть топ-стримера
-watchAlwaysTopStreamer=false
+### `failed integrity check` / бонусы не собираются
 
-# Прокси (если нужно)
-proxy=ip:port
-proxyAuth=username:password
-```
+1. Обновите `Client-Integrity` (вручную или через расширение)
+2. Проверьте `TWITCH_DEVICE_ID` / cookie `unique_id`
+3. На Termux: `TWITCH_INTEGRITY_SOURCE=manual` и свежий токен с ПК
+4. В логе должно быть `Бонус успешно собран!` при успехе
 
-### 6. Проверьте логи
+### Сетевые ошибки (DNS, таймауты)
 
-После запуска проверьте логи:
-- `Opening streamers page:` - открывается ли страница
-- `Found X channel links on page` - сколько ссылок найдено
-- `Found X unique streamers` - сколько уникальных стримеров найдено
+- Проверьте интернет и DNS
+- При прокси: `proxy` и `proxyAuth` в «Конфиг бота»
+- Увеличьте `FETCH_TIMEOUT_MS` при медленной сети
 
-Если видите `Found 0 channel links`, значит селектор не находит элементы. Попробуйте увеличить `scrollTimes` и `scrollDelay`.
+### Dashboard недоступен с другого устройства
 
-## Пример полного .env файла
+- Откройте `http://<IP>:WEB_SERVER_PORT` в той же сети
+- Для уведомлений ОС по IP нужен HTTPS — см. [HTTPS.md](HTTPS.md)
+- На Android при блокировке экрана Termux может останавливаться — см. [ANDROID_SETUP.md](ANDROID_SETUP.md)
 
-```env
-streamersUrl=https://www.twitch.tv/directory/game/VALORANT?sort=VIEWER_COUNT&tl=c2542d6d-cd10-4532-919b-3d19f30a768b
-scrollDelay=5000
-scrollTimes=15
-minWatching=10
-maxWatching=20
-# Список стримеров настраивается в config.json или через веб-интерфейс
-watchAlwaysTopStreamer=false
-```
+## Полезные ссылки
 
+- [Переменные и поля config.json](ENV_VARIABLES.md)
+- [База данных и статистика](DATABASE.md)
+- [HTTPS для dashboard](HTTPS.md)
+- [Android / Termux](ANDROID_SETUP.md)
+- [План веб-интерфейса](WEB_UI_ROADMAP.md)

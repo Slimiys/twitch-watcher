@@ -57,45 +57,47 @@ npm install
 npm run build
 ```
 
-5. **Создаем файл конфигурации**:
+5. **Создайте конфигурацию**:
 
 ```bash
-# Создаем .env файл
-nano .env
+cp config.json.example config.json
+nano config.json
 ```
 
-Добавьте в файл:
-```env
-LOG_LEVEL=normal
-MAX_SIMULTANEOUS_CHANNELS=2
-token=your_auth_token_here
+Минимум: `token` и список `streamers`. Остальные параметры — в dashboard → **«Конфиг бота»** (http://localhost:3001 после запуска).
 
-# Сбор бонусов на Termux — manual integrity из браузера (POST /integrity с телефона обычно не проходит)
-TWITCH_INTEGRITY_SOURCE=manual
-TWITCH_CLIENT_INTEGRITY=вставьте_из_DevTools
-TWITCH_CLIENT_INTEGRITY_EXPIRES=1735689600
-TWITCH_DEVICE_ID=uuid-из-cookie-unique_id
-# TWITCH_COOKIES=unique_id=...; api_token=...
+Пример секции `app` в `config.json`:
 
-# Примечание: Список стримеров настраивается в config.json
-# или через веб-интерфейс после запуска приложения
+```json
+{
+  "token": "your_auth_token_here",
+  "app": {
+    "LOG_LEVEL": "normal",
+    "MAX_SIMULTANEOUS_CHANNELS": "2",
+    "TWITCH_INTEGRITY_SOURCE": "manual",
+    "TWITCH_CLIENT_INTEGRITY": "вставьте_из_DevTools",
+    "TWITCH_CLIENT_INTEGRITY_EXPIRES": "1735689600",
+    "TWITCH_DEVICE_ID": "uuid-из-cookie-unique_id"
+  },
+  "streamers": ["streamer1"]
+}
 ```
 
-**Как получить `TWITCH_CLIENT_INTEGRITY`:** на ПК откройте twitch.tv → F12 → Network → любой запрос `gql` → Request Headers → скопируйте `Client-Integrity` и (по возможности) `X-Device-Id` / cookie `unique_id`. Токен живёт несколько часов — при `failed integrity check` обновите и перезапустите бота.
+**Как получить `TWITCH_CLIENT_INTEGRITY`:** на ПК откройте twitch.tv → F12 → Network → запрос `gql` → Request Headers → `Client-Integrity` и `X-Device-Id` / cookie `unique_id`. Альтернатива — расширение [edge-integrity-bridge](../extensions/edge-integrity-bridge/README.md) с ПК, если бот на телефоне в той же сети.
 
-При старте в логе должно быть: `Integrity: manual`. Успешный сбор: `Бонус успешно собран!` и `Reason: CLAIM` в событиях баллов.
+При старте в логе: `Integrity: manual` (или `auto`). Успешный сбор: `Бонус успешно собран!`
 
-**Обновление с телефона (карточка «Версия» в «Статус бота»):** в `.env` добавьте:
+**Обновление с телефона (карточка «Версия»):** в «Конфиг бота» или `config.json`:
 
-```env
-DASHBOARD_UPDATE_ENABLED=true
+```json
+"DASHBOARD_UPDATE_ENABLED": "true"
 ```
 
 Раз в минуту дашборд сравнивает ваш коммит с `origin/dev` (нужен интернет и `git`). Если есть новая ревизия — на карточке **Версия** появится индикатор **NEW** и подпись «Доступно: …». **Нажмите на карточку** → подтвердите → выполнится `git fetch`, `reset` на `origin/dev`, сборка и перезапуск. Лог: `logs/dashboard-update.log`.
 
 В шапке дашборда (при `DASHBOARD_UPDATE_ENABLED=true`): **Остановить** — завершить процесс; **Перезапустить** — stop + `npm start` (лог `logs/update-restart.log`).
 
-Скрипты обновления/перезапуска (`scripts/termux-common.sh`) останавливают **все** экземпляры бота в каталоге проекта: PID из `.twitch-watcher.pid`, `pgrep` по `dist/app.js`, процесс на порту `WEB_SERVER_PORT` (из `.env`, по умолчанию 3001). Перед новым `npm start` проверяется, что порт свободен. Лог: `logs/dashboard-update.log` (строки `[kill]`).
+Скрипты обновления/перезапуска (`scripts/termux-common.sh`) останавливают **все** экземпляры бота в каталоге проекта: PID из `.twitch-watcher.pid`, `pgrep` по `dist/app.js`, процесс на порту `WEB_SERVER_PORT` (из `config.json` → `app`, по умолчанию 3001). Перед новым `npm start` проверяется, что порт свободен. Лог: `logs/dashboard-update.log` (строки `[kill]`).
 
 Опционально: `WEB_DASHBOARD_API_KEY` — защита REST API; `DASHBOARD_UPDATE_GIT_BRANCH=dev` (по умолчанию dev).
 
@@ -147,19 +149,16 @@ screen -r twitch
 npm start
 ```
 
-## Вариант 2: Удаленный сервер + Android клиент
+## Вариант 2: Удалённый сервер + мониторинг с телефона
 
-Если запуск на Android проблематичен, можно:
+1. Запустите бот на VPS или домашнем ПК
+2. С телефона откройте dashboard по `http(s)://<IP>:3001` или используйте SSH (JuiceSSH, Termius) для логов в Termux
 
-1. Запустить приложение на сервере/VPS
-2. Использовать Android как клиент для мониторинга через:
-   - SSH клиент (JuiceSSH, Termius)
-   - Веб-интерфейс (если добавить в приложение)
-   - Telegram бот для уведомлений
+Встроенный веб-dashboard уже включён — отдельный веб-сервер не нужен.
 
 ## Рекомендации:
 
-1. **Используйте API-режим** (`MODE=api`) - он не требует браузера и работает быстрее
+1. **API-режим** — единственный режим работы; браузер не требуется
 2. **Настройте автозапуск** через Termux:Boot, чтобы приложение работало постоянно
 3. **Используйте screen/tmux** для фонового запуска
 4. **Мониторьте батарею** - приложение будет работать постоянно, что может разряжать батарею
@@ -233,7 +232,7 @@ ps -p "$(cat ~/twitch_watcher/.twitch-watcher.pid)"
    # после остановки: termux-wake-unlock
    ```
 
-   Отключить wake-lock в скриптах: `TWITCH_TERMUX_WAKE_LOCK=false` в `.env`.
+   Отключить wake-lock в скриптах: `TWITCH_TERMUX_WAKE_LOCK=false` в «Конфиг бота» или `config.json` → `app`.
 
    Либо запуск в `tmux`/`screen` **после** `termux-wake-lock`:
 
@@ -295,23 +294,25 @@ export DNS_SERVER=8.8.8.8
 pkg install openssl   # если ещё нет
 ```
 
-В `.env`:
+В **«Конфиг бота»** или `config.json` → `app`:
 
-```env
-WEB_SERVER_HTTPS=true
-SSL_EXTRA_SANS=192.168.1.145
+```json
+{
+  "WEB_SERVER_HTTPS": "true",
+  "SSL_EXTRA_SANS": "192.168.1.145"
+}
 ```
 
 (подставьте IP телефона в LAN). Пересоберите и запустите. На ПК откройте `https://192.168.1.145:3001` и примите сертификат.
 
 Подробнее: [HTTPS.md](./HTTPS.md).
 
-## Альтернатива: Веб-интерфейс
+## Веб-dashboard
 
-Если добавить простой веб-сервер в приложение, можно будет:
-- Запускать на сервере/VPS
-- Управлять через браузер на Android
-- Видеть статистику и логи
+После `npm start` откройте на телефоне или ПК в той же сети:
 
-Это можно реализовать как дополнительную функцию.
+- HTTP: `http://<IP>:3001`
+- HTTPS (для уведомлений ОС): см. раздел выше
+
+Управление стримерами, настройки (`config.json`), статистика, Bot Health, обновление из Git — всё в dashboard. Язык интерфейса: RU/EN (переключатель в шапке).
 

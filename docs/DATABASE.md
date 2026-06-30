@@ -61,6 +61,29 @@
 
 **Уникальный индекс:** `(stream_session_id, category)` — каждая категория засчитывается один раз за стрим
 
+### Таблица `category_stream_duration_totals`
+
+Суммарное время трансляций по категориям (все отслеживаемые стримеры):
+
+- `category` - Название категории Twitch (TEXT PRIMARY KEY)
+- `duration_ms` - Суммарная длительность в миллисекундах (INTEGER)
+- `updated_at` - Время последнего обновления (INTEGER, timestamp)
+
+В dashboard отображаются только категории с длительностью **≥ 1 минуты** (нулевые и «шумовые» записи скрыты).
+
+### Таблица `streamer_category_stream_duration_totals`
+
+Суммарное время по категориям для каждого стримера (раскрытие списка в UI):
+
+- `streamer_id` - ID стримера (INTEGER, FOREIGN KEY)
+- `category` - Название категории (TEXT)
+- `duration_ms` - Длительность в миллисекундах (INTEGER)
+- `updated_at` - Время обновления (INTEGER)
+
+**Первичный ключ:** `(streamer_id, category)`
+
+Сброс статистики: `POST /api/category-stream-stats/reset` (кнопка в секции «Статистика» на dashboard).
+
 ## Автоматическое сохранение
 
 Данные автоматически сохраняются в базу данных при следующих событиях:
@@ -83,6 +106,9 @@
 5. **Смена категории во время стрима**:
    - Новая категория добавляется в `stream_session_categories` (без повторов в рамках одной сессии)
    - При brief offline resume категории продолжают учитываться в той же сессии
+
+6. **Накопление времени по категориям** (во время активного просмотра и при завершении сессии):
+   - Обновляются `category_stream_duration_totals` и `streamer_category_stream_duration_totals`
 
 Даты начала стримов (`started_at` в `stream_sessions`) отдаются в API как `streamSessionStarts` (окна 7/14/30/60 суток) для списка по клику на колонку Streams.
 
@@ -193,6 +219,33 @@ GET /api/database/total-daily-points?date=2024-01-15
   "date": "2024-01-15",
   "totalPoints": 2500
 }
+```
+
+### Статистика времени по категориям
+
+```http
+GET /api/category-stream-stats
+```
+
+**Ответ (фрагмент):**
+```json
+{
+  "categories": [
+    {
+      "name": "Path of Exile 2",
+      "durationMs": 3600000,
+      "streamers": [
+        { "username": "streamer1", "durationMs": 1800000 }
+      ]
+    }
+  ]
+}
+```
+
+Сброс накопленной статистики категорий:
+
+```http
+POST /api/category-stream-stats/reset
 ```
 
 ## Использование в коде
