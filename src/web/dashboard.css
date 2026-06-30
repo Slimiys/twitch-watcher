@@ -88,6 +88,42 @@ header,
     align-items: flex-start;
     flex-wrap: wrap;
     gap: 20px;
+    position: relative;
+    padding-top: 36px;
+}
+
+.dashboard-header-language {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+}
+
+.language-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: #1f1f23;
+    border: 1px solid #26262c;
+}
+
+.language-switch-label {
+    font-size: 12px;
+    color: #adadb8;
+    user-select: none;
+    min-width: 52px;
+    text-align: center;
+}
+
+.language-switch-label.is-active {
+    color: #efeff1;
+    font-weight: 600;
+}
+
+.language-toggle {
+    flex-shrink: 0;
 }
 
 .dashboard-header-brand {
@@ -3315,6 +3351,21 @@ th.notify-header-clickable:active {
 .favorite-category-chip-remove:hover {
     color: #efeff1;
     background: rgba(255, 255, 255, 0.08);
+}
+
+.category-stream-stats-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.category-stream-stats-reset-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .category-stream-duration-empty {

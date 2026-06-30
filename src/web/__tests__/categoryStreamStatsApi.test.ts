@@ -3,7 +3,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readCategoryStreamStatsForApi } from '../categoryStreamStatsApi';
+import { readCategoryStreamStatsForApi, resetCategoryStreamStatsForApi } from '../categoryStreamStatsApi';
 
 describe('categoryStreamStatsApi', () => {
   afterEach(() => {
@@ -51,5 +51,44 @@ describe('categoryStreamStatsApi', () => {
       },
     ]);
     expect(result.error).toBeUndefined();
+  });
+
+  it('readCategoryStreamStatsForApi фильтрует категории с нулевым временем', () => {
+    const provider = {
+      getCategoryStreamDurationTotalsForDashboard: () => [
+        { category: 'Skipped', durationMs: 0, streamers: [] },
+        { category: 'Short', durationMs: 30_000, streamers: [] },
+        { category: 'Kept', durationMs: 120_000, streamers: [] },
+      ],
+    };
+
+    const result = readCategoryStreamStatsForApi(null, provider);
+    expect(result.categories).toEqual([
+      { category: 'Kept', durationMs: 120_000, streamers: [] },
+    ]);
+  });
+
+  it('resetCategoryStreamStatsForApi вызывает сброс у провайдера', () => {
+    const reset = vi.fn();
+    const provider = {
+      getCategoryStreamDurationTotalsForDashboard: () => [],
+      resetCategoryStreamDurationStats: reset,
+    };
+
+    const result = resetCategoryStreamStatsForApi(null, provider);
+    expect(result.success).toBe(true);
+    expect(reset).toHaveBeenCalledTimes(1);
+  });
+
+  it('resetCategoryStreamStatsForApi очищает БД без провайдера', () => {
+    const clear = vi.fn(() => true);
+    const databaseStorage = {
+      isReady: () => true,
+      clearCategoryStreamDurationStats: clear,
+    };
+
+    const result = resetCategoryStreamStatsForApi(databaseStorage as any, null);
+    expect(result.success).toBe(true);
+    expect(clear).toHaveBeenCalledTimes(1);
   });
 });

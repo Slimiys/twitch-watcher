@@ -232,4 +232,13 @@ describe('DatabaseStorage stream sessions', () => {
       { streamerName: 'beta', durationMs: 60 * 60_000 },
     ]);
   });
+
+  it('очищает статистику времени стримов по категориям', () => {
+    storage.addCategoryStreamDuration('alpha', 'Torchlight', 2 * 60 * 60_000);
+    expect(storage.getCategoryStreamDurationTotals()).toHaveLength(1);
+
+    expect(storage.clearCategoryStreamDurationStats()).toBe(true);
+    expect(storage.getCategoryStreamDurationTotals()).toEqual([]);
+    expect(storage.getCategoryStreamDurationDetails()).toEqual([]);
+  });
 });

@@ -3062,7 +3062,7 @@ export class StreamWatcher {
         const streamerMap = streamersByCategory.get(category) ?? new Map<string, number>();
         const streamers = [...streamerMap.entries()]
           .map(([streamerName, durationMs]) => ({ streamerName, durationMs }))
-          .filter((entry) => entry.durationMs > 0)
+          .filter((entry) => entry.durationMs > 0 && Math.floor(entry.durationMs / 60_000) > 0)
           .sort(
             (a, b) =>
               b.durationMs - a.durationMs ||
@@ -3075,8 +3075,20 @@ export class StreamWatcher {
 
         return { category, durationMs, streamers };
       })
-      .filter((entry) => entry.durationMs > 0)
+      .filter((entry) => entry.durationMs > 0 && Math.floor(entry.durationMs / 60_000) > 0)
       .sort((a, b) => b.durationMs - a.durationMs || a.category.localeCompare(b.category, 'ru'));
+  }
+
+  /**
+   * Сбрасывает статистику времени стримов по категориям (БД и активные сегменты)
+   */
+  resetCategoryStreamDurationStats(): void {
+    this.databaseStorage?.clearCategoryStreamDurationStats();
+
+    const now = Date.now();
+    for (const active of this.activeCategoryWatch.values()) {
+      active.since = now;
+    }
   }
 
   /**

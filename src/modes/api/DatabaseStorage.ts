@@ -961,6 +961,31 @@ export class DatabaseStorage {
   }
 
   /**
+   * Удаляет всю накопленную статистику времени стримов по категориям
+   */
+  clearCategoryStreamDurationStats(): boolean {
+    if (!isDatabaseAvailable || !this.db) {
+      return false;
+    }
+
+    try {
+      this.db.exec(`
+        DELETE FROM streamer_category_stream_duration_totals;
+        DELETE FROM category_stream_duration_totals;
+      `);
+      if (this.config.autoSave) {
+        this.saveDatabase();
+      }
+      return true;
+    } catch (error: any) {
+      logger.error(
+        `❌  Failed to clear category stream duration stats: ${error.message || error}`
+      );
+      return false;
+    }
+  }
+
+  /**
    * Даты начала стримов по периодам для всех стримеров (ключ — username в нижнем регистре)
    */
   getStreamSessionStartsByUsernameByWindows(): Map<string, StreamSessionStartsByWindow> {

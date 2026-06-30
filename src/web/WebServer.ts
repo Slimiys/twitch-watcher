@@ -43,7 +43,7 @@ import {
   readFavoriteCategoriesForApi,
   removeFavoriteCategoryFromApi,
 } from './favoriteCategoriesApi';
-import { readCategoryStreamStatsForApi } from './categoryStreamStatsApi';
+import { readCategoryStreamStatsForApi, resetCategoryStreamStatsForApi } from './categoryStreamStatsApi';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
 
 /**
@@ -804,6 +804,22 @@ export class WebServer {
       } catch (error: any) {
         logger.error('Error getting category stream stats:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
+      }
+    });
+
+    this.app.post('/api/category-stream-stats/reset', (_req: Request, res: Response) => {
+      try {
+        const streamWatcher = this.statisticsProvider as StreamWatcher | null;
+        const databaseStorage = streamWatcher?.getDatabaseStorage?.() ?? null;
+        const result = resetCategoryStreamStatsForApi(databaseStorage, streamWatcher);
+        if (!result.success) {
+          res.status(400).json({ success: false, message: result.message || 'Failed to reset' });
+          return;
+        }
+        res.json({ success: true, message: 'Category stream stats reset' });
+      } catch (error: any) {
+        logger.error('Error resetting category stream stats:', error);
+        res.status(500).json({ success: false, error: error.message || 'Unknown error' });
       }
     });
 

@@ -29,6 +29,70 @@ function safeSetLocalStorage(key, value) {
     }
 }
 
+/** Последнее известное состояние подключения для перерисовки при смене языка */
+let lastConnectionConnected = null;
+
+function updateToggleOfflineText() {
+    const toggleText = document.getElementById('toggleOfflineText');
+    if (toggleText) {
+        toggleText.textContent = t(showOffline ? 'streamers.hideOffline' : 'streamers.showOffline');
+    }
+}
+
+function getTableColumnLabel(key) {
+    const map = {
+        streamer: 'col.streamer',
+        status: 'col.status',
+        watchTime: 'col.watchTime',
+        pointsEarned: 'col.pointsEarned',
+        currentPoints: 'col.currentPoints',
+        game: 'col.game',
+        streamsLast30Days: 'col.streams',
+        viewersCount: 'col.viewers',
+        lastStreamStart: 'col.lastStreamStart',
+        lastStreamEnd: 'col.lastStreamEnd',
+        lastStreamDuration: 'col.lastStreamDuration',
+        actions: 'col.actions',
+    };
+    return t(map[key] || key);
+}
+
+function translateStreamStatus(status) {
+    if (status === 'ONLINE') {
+        return t('status.online');
+    }
+    if (status === 'OFFLINE') {
+        return t('status.offline');
+    }
+    return status;
+}
+
+async function refreshDashboardLocale() {
+    applyI18nToDocument();
+    updateToggleOfflineText();
+    if (lastConnectionConnected !== null) {
+        updateConnectionStatus(lastConnectionConnected);
+    }
+    renderBotUptimeLabel();
+    syncAutoUpdateToggleUi();
+    if (cachedStatisticsRows) {
+        await updateStatistics({ skipFetch: true });
+    }
+    renderFavoriteCategoriesTable();
+    renderCategoryStreamStats();
+    if (lastOverallStatsCache) {
+        const lastActivityEl = document.getElementById('lastActivity');
+        if (lastActivityEl) {
+            lastActivityEl.textContent = formatOverallLastActivity(lastOverallStatsCache);
+        }
+    }
+    await updateBotHealth();
+}
+
+function getNumberLocale() {
+    return typeof getLocale === 'function' && getLocale() === 'ru' ? 'ru-RU' : 'en-US';
+}
+
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
@@ -121,7 +185,7 @@ function getStreamerStreamSessionStarts(stat) {
  * @returns {string}
  */
 function getStreamsCountColumnLabel() {
-    return `Streams (${streamsCountWindowDays}d)`;
+    return t('col.streamsWindow', { days: streamsCountWindowDays });
 }
 
 /**
@@ -133,7 +197,7 @@ function formatViewerCount(count) {
     if (count == null || Number.isNaN(Number(count))) {
         return '-';
     }
-    return Number(count).toLocaleString('ru-RU');
+    return Number(count).toLocaleString(getNumberLocale());
 }
 
 /**
@@ -261,7 +325,7 @@ function hideStreamSessionsMenu() {
  */
 function buildStreamSessionsMenuItems(startedAtList) {
     if (!Array.isArray(startedAtList) || startedAtList.length === 0) {
-        return '<div class="stream-sessions-empty">Нет стримов за выбранный период</div>';
+        return `<div class="stream-sessions-empty">${escapeHtml(t('streams.noStreams'))}</div>`;
     }
 
     return startedAtList.map((startedAt) => {
@@ -293,7 +357,7 @@ function toggleStreamSessionsMenu(streamerName, anchorEl) {
     menu.id = 'streamSessionsMenu';
     menu.className = 'stream-sessions-menu show';
     menu.innerHTML = `
-        <div class="stream-sessions-title">Стримы (${streamsCountWindowDays}d)</div>
+        <div class="stream-sessions-title">${escapeHtml(t('streams.menuTitle', { days: streamsCountWindowDays }))}</div>
         ${itemsHtml}
     `;
 
@@ -331,8 +395,8 @@ function renderStreamerStreamsCell(stat) {
         .replace(/"/g, '&quot;');
     const dates = getStreamerStreamSessionStarts(stat);
     const title = dates.length > 0
-        ? 'Показать даты начала стримов'
-        : 'Даты появятся после учёта стримов';
+        ? escapeHtml(t('table.streamDatesTitle'))
+        : escapeHtml(t('table.streamDatesEmpty'));
 
     return `<td class="stream-sessions-cell">
         <button type="button" class="stream-sessions-button" data-streamer="${safeAttr}" title="${title}">${count}</button>
@@ -352,7 +416,7 @@ function buildCategoryStreamStatsMenuItems(
     highlightCurrent
 ) {
     if (!Array.isArray(categoryStreamCounts) || categoryStreamCounts.length === 0) {
-        return '<div class="category-stream-stats-empty">Пока нет данных по категориям</div>';
+        return `<div class="category-stream-stats-empty">${escapeHtml(t('table.noCategoryData'))}</div>`;
     }
 
     const normalizedCurrent =
@@ -402,7 +466,7 @@ function toggleCategoryStreamStatsMenu(streamerName, anchorEl) {
     menu.id = 'categoryStreamStatsMenu';
     menu.className = 'category-stream-stats-menu show';
     menu.innerHTML = `
-        <div class="category-stream-stats-title">Стримы по категориям</div>
+        <div class="category-stream-stats-title">${escapeHtml(t('table.streamsByCategory'))}</div>
         ${itemsHtml}
     `;
 
@@ -553,8 +617,8 @@ function renderStreamerCategoryCell(stat) {
         .replace(/"/g, '&quot;');
     const hasStats = Array.isArray(stat.categoryStreamCounts) && stat.categoryStreamCounts.length > 0;
     const title = hasStats
-        ? 'Показать статистику по категориям'
-        : 'Статистика появится после смены категорий в стримах';
+        ? escapeHtml(t('table.categoryStatsTitle'))
+        : escapeHtml(t('table.categoryStatsEmpty'));
 
     const isFavorite = isFavoriteStreamerCategory(game);
     const favoriteClass = isFavorite ? ' favorite-category-match' : '';
@@ -670,6 +734,8 @@ try {
 let lastUpdatePointsSnapshot = {};
 /** Последний ответ /api/statistics для мгновенного переключения Show/Hide Offline */
 let cachedStatisticsRows = null;
+/** Кэш последней сводной статистики для перерисовки при смене языка */
+let lastOverallStatsCache = null;
 
 /**
  * Last Activity: последний стример, перешедший в онлайн, и сколько времени назад
@@ -681,7 +747,7 @@ function formatOverallLastActivity(stats) {
     if (!streamer || !Number.isFinite(ms) || ms <= 0) {
         return '—';
     }
-    return `${streamer} · ${formatTime(ms)} ago`;
+    return `${streamer} · ${t('health.ago', { duration: formatTime(ms) })}`;
 }
 
 function formatTime(ms) {
@@ -1122,7 +1188,7 @@ function renderBotUptimeLabel() {
         el.textContent = '';
         return;
     }
-    el.textContent = `Время после запуска: ${formatBotUptimeDuration(Date.now() - botUptimeStartedAt)}`;
+    el.textContent = t('header.uptime', { duration: formatBotUptimeDuration(Date.now() - botUptimeStartedAt) });
 }
 
 /**
@@ -1194,7 +1260,7 @@ async function initProcessControlButtons() {
     if (stopBtn) {
         stopBtn.style.display = enabled ? '' : 'none';
         stopBtn.disabled = inProgress;
-        stopBtn.title = blocked || 'Остановить бота (завершить процесс)';
+        stopBtn.title = blocked || t('header.stopTitle');
         if (!stopBtn.dataset.bound) {
             stopBtn.dataset.bound = '1';
             stopBtn.addEventListener('click', () => {
@@ -1202,8 +1268,8 @@ async function initProcessControlButtons() {
                     return;
                 }
                 showConfirmModal(
-                    'Остановить бота?',
-                    'Процесс twitch-watcher будет завершён. Дашборд отключится. Продолжить?',
+                    t('notify.stopTitle'),
+                    t('notify.stopBody'),
                     () => triggerDashboardStop()
                 );
             });
@@ -1213,7 +1279,7 @@ async function initProcessControlButtons() {
     if (restartBtn) {
         restartBtn.style.display = enabled ? '' : 'none';
         restartBtn.disabled = inProgress;
-        restartBtn.title = blocked || 'Перезапуск: stop + npm start (как после обновления)';
+        restartBtn.title = blocked || t('header.restartTitle');
         if (!restartBtn.dataset.bound) {
             restartBtn.dataset.bound = '1';
             restartBtn.addEventListener('click', () => {
@@ -1221,9 +1287,8 @@ async function initProcessControlButtons() {
                     return;
                 }
                 showConfirmModal(
-                    'Перезапустить бота?',
-                    'Будет выполнено: остановка процесса → npm start в фоне. ' +
-                        'Дашборд отключится на 1–2 минуты. Продолжить?',
+                    t('notify.restartTitle'),
+                    t('notify.restartBody'),
                     () => triggerDashboardRestart()
                 );
             });
@@ -1233,7 +1298,7 @@ async function initProcessControlButtons() {
 
 async function triggerDashboardStop() {
     if (typeof showNotification === 'function') {
-        showNotification('info', 'Остановка…');
+        showNotification('info', t('notify.stopping'));
     }
     const result = await postApi('/app-stop', {});
     if (result.ok) {
@@ -1243,10 +1308,10 @@ async function triggerDashboardStop() {
         updateConnectionStatus(false);
         const statusText = document.getElementById('statusText');
         if (statusText) {
-            statusText.textContent = 'Остановка…';
+            statusText.textContent = t('notify.stopping');
         }
     } else if (typeof showNotification === 'function') {
-        showNotification('error', result.message || 'Не удалось остановить');
+        showNotification('error', result.message || t('notify.stopFailed'));
     }
 }
 
@@ -1257,7 +1322,7 @@ async function captureLifecycleWaitPid() {
 
 async function triggerDashboardRestart() {
     if (typeof showNotification === 'function') {
-        showNotification('info', 'Перезапуск…');
+        showNotification('info', t('notify.restarting'));
     }
     await captureLifecycleWaitPid();
     const result = await postApi('/app-restart', {});
@@ -1266,11 +1331,11 @@ async function triggerDashboardRestart() {
             showNotification('success', result.message);
         }
         beginLifecycleWaitUi('restart');
-        startDashboardReconnectWatch('Перезапуск завершён. Перезагрузка страницы…', 'restart');
+        startDashboardReconnectWatch(t('notify.restartDone'), 'restart');
     } else {
-        resetDashboardLifecycleUi('Disconnected');
+        resetDashboardLifecycleUi(t('header.disconnected'));
         if (typeof showNotification === 'function') {
-            showNotification('error', result.message || 'Не удалось перезапустить');
+            showNotification('error', result.message || t('notify.restartFailed'));
         }
     }
 }
@@ -1301,11 +1366,11 @@ function recoverStaleLifecycleIfNeeded(data) {
     if (!shouldAbortStaleLifecycleWait(data)) {
         return false;
     }
-    resetDashboardLifecycleUi('Обновление прервано — обновите страницу (F5)');
+    resetDashboardLifecycleUi(t('notify.updateInterrupted'));
     if (typeof showNotification === 'function') {
         showNotification(
             'warn',
-            'Скрипт обновления завершился, но бот не перезапустился. См. logs/dashboard-update.log'
+            t('notify.updateScriptFailed')
         );
     }
     void pollVersionUpdateStatus(true);
@@ -1321,7 +1386,7 @@ function beginLifecycleWaitUi(mode) {
     botUptimeStartedAt = null;
     renderBotUptimeLabel();
     syncAutoUpdateToggleUi({ inProgress: true });
-    const label = mode === 'update' ? 'Обновление' : 'Перезапуск';
+    const label = mode === 'update' ? t('lifecycle.update') : t('lifecycle.restart');
     versionUpdateStatus = {
         ...(versionUpdateStatus || {}),
         uiState: 'updating',
@@ -1343,7 +1408,7 @@ async function pollVersionUpdateStatus(forceRefresh = false) {
         versionUpdateStatus = {
             ...(versionUpdateStatus || {}),
             uiState: 'checking',
-            indicatorLabel: 'Проверка…',
+            indicatorLabel: t('lifecycle.checking'),
         };
         if (lastBotHealthForVersion) {
             patchBotHealthVersionCard(lastBotHealthForVersion);
@@ -1397,8 +1462,8 @@ function syncAutoUpdateToggleUi(opts = {}) {
     if (wrap) {
         wrap.classList.toggle('auto-update-toggle--feature-off', !featureEnabled);
         wrap.title = !featureEnabled
-            ? 'Сохраняет выбор. Чтобы автообновление работало, включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»'
-            : 'При обнаружении обновления установка запустится без подтверждения';
+            ? t('version.autoUpdateHint')
+            : t('header.autoUpdateTitle');
     }
 }
 
@@ -1420,7 +1485,7 @@ function initAutoUpdateToggle() {
         } else if (!dashboardUpdateFeatureEnabled) {
             showNotification(
                 'info',
-                'Автообновление включено в интерфейсе. Для запуска установки включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»'
+                t('version.autoUpdateEnabled')
             );
         }
     });
@@ -1454,7 +1519,7 @@ function maybeTriggerAutoAppUpdate(st) {
 
     autoUpdateTriggeredForRevision = target;
     versionCardBusy = true;
-    setLifecycleHeaderText('Автообновление…');
+    setLifecycleHeaderText(t('lifecycle.autoUpdating'));
     void triggerDashboardAppUpdate({ silent: true });
 }
 
@@ -1512,17 +1577,17 @@ function renderVersionHealthCard(health) {
     const st = versionUpdateStatus;
     const uiState = st?.uiState || 'checking';
     const dotKind = versionCardDotKind(uiState);
-    const indicatorLabel = st?.indicatorLabel || 'Проверка…';
+    const indicatorLabel = st?.indicatorLabel || t('lifecycle.checking');
 
-    let title = 'Нажмите, чтобы проверить обновление';
+    let title = t('version.checkTitle');
     if (uiState === 'available') {
-        title = 'Доступно обновление с dev — нажмите для установки';
+        title = t('version.availableTitle');
     } else if (uiState === 'current') {
-        title = 'Версия совпадает с origin/dev';
+        title = t('version.okTitle');
     } else if (uiState === 'updating') {
-        title = 'Идёт обновление…';
+        title = t('version.updatingTitle');
     } else if (uiState === 'error') {
-        title = 'Ошибка проверки — нажмите повторить';
+        title = t('version.errorTitle');
     }
 
     let valueHtml = escapeHtml(health.appVersion || '—');
@@ -1533,7 +1598,7 @@ function renderVersionHealthCard(health) {
     const localRev = st?.localRevision || health.gitRevision || '—';
     const detailParts = [
         `<span class="version-status-pill version-status-pill--${uiState}">${escapeHtml(indicatorLabel)}</span>`,
-        `Локально: <strong>${escapeHtml(localRev)}</strong>` +
+        `${t('version.local')} <strong>${escapeHtml(localRev)}</strong>` +
             (st?.localRevisionCommittedAt
                 ? ` · ${escapeHtml(formatCommitDateTime(st.localRevisionCommittedAt))}`
                 : ''),
@@ -1555,7 +1620,7 @@ function renderVersionHealthCard(health) {
         detailParts.push(escapeHtml(st.checkSkippedReason));
     }
     if (st?.dashboardUpdateEnabled === false && uiState === 'available') {
-        detailParts.push('Для установки включите DASHBOARD_UPDATE_ENABLED в «Конфиг бота»');
+        detailParts.push(t('version.enableAutoUpdate'));
     }
 
     const dot = `<span class="bot-health-status-dot ${healthStatusDotClass(dotKind)}"></span>`;
@@ -1563,7 +1628,7 @@ function renderVersionHealthCard(health) {
 
     return `
         <div class="bot-health-card bot-health-card-version" id="botHealthVersionCard" data-state="${escapeHtml(uiState)}" role="button" tabindex="0" title="${escapeHtml(title)}"${busyAttr}>
-            <div class="bot-health-card-title">Версия</div>
+            <div class="bot-health-card-title">${escapeHtml(t('version.title'))}</div>
             <div class="bot-health-card-value">${dot}${valueHtml}</div>
             <div class="bot-health-card-detail">${detailParts.join('<br>')}</div>
         </div>
@@ -1614,7 +1679,7 @@ async function handleVersionCardClick() {
     const st = versionUpdateStatus;
     if (st?.uiState === 'updating' || st?.dashboardUpdateInProgress) {
         if (typeof showNotification === 'function') {
-            showNotification('info', 'Обновление уже выполняется. Лог: logs/dashboard-update.log');
+            showNotification('info', t('notify.updateRunning'));
         }
         return;
     }
@@ -1629,7 +1694,7 @@ async function handleVersionCardClick() {
         const fresh = await pollVersionUpdateStatus(true);
         if (!fresh) {
             if (typeof showNotification === 'function') {
-                showNotification('error', 'Не удалось проверить обновления');
+                showNotification('error', t('notify.checkFailed'));
             }
             return;
         }
@@ -1650,7 +1715,7 @@ async function handleVersionCardClick() {
             return;
         }
         if (typeof showNotification === 'function') {
-            showNotification('success', `Версия актуальна (${fresh.remote}/${fresh.branch})`);
+            showNotification('success', t('notify.versionOk', { remote: fresh.remote, branch: fresh.branch }));
         }
     } finally {
         versionCardBusy = false;
@@ -1669,7 +1734,7 @@ function promptInstallAppUpdate(st) {
         return;
     }
     if (!st.dashboardUpdateCanTrigger) {
-        const msg = st.dashboardUpdateBlockedReason || 'Обновление сейчас недоступно';
+        const msg = st.dashboardUpdateBlockedReason || t('notify.updateUnavailable');
         if (typeof showNotification === 'function') {
             showNotification('warn', msg);
         }
@@ -1793,8 +1858,8 @@ function tryFinishLifecycleIfReady(data) {
     }
     const msg =
         lifecycleWaitMode === 'update'
-            ? 'Обновление завершено. Перезагрузка страницы…'
-            : 'Перезапуск завершён. Перезагрузка страницы…';
+            ? t('notify.updateDone')
+            : t('notify.restartDone');
     finishLifecycleFromServer(data, msg);
     return true;
 }
@@ -1807,7 +1872,7 @@ function resetDashboardLifecycleUi(headerText) {
     lifecycleWaitStartedAt = 0;
     lifecycleServerWasDown = false;
     updateConnectionStatus(false);
-    setLifecycleHeaderText(headerText || 'Disconnected');
+    setLifecycleHeaderText(headerText || t('header.disconnected'));
     pollVersionUpdateStatus(true);
 }
 
@@ -1848,9 +1913,9 @@ function scheduleDashboardReload(successMessage) {
     lifecycleWaitStartedAt = 0;
     lifecycleServerWasDown = false;
     if (typeof showNotification === 'function') {
-        showNotification('success', successMessage || 'Бот снова online. Перезагрузка страницы…');
+        showNotification('success', successMessage || t('notify.botOnline'));
     }
-    setLifecycleHeaderText('Перезагрузка страницы…');
+    setLifecycleHeaderText(t('notify.reloadPage'));
 
     void (async () => {
         await waitForNewBotApiReady();
@@ -1908,7 +1973,7 @@ async function runReconnectLifecycleTick() {
 
     if (reconnectWatchAttempts >= RECONNECT_MAX_ATTEMPTS) {
         stopDashboardReconnectWatch();
-        resetDashboardLifecycleUi('Обновите страницу (F5)');
+        resetDashboardLifecycleUi(t('notify.refreshF5'));
         if (typeof showNotification === 'function') {
             showNotification(
                 'warn',
@@ -2078,7 +2143,7 @@ async function triggerDashboardAppUpdate(options = {}) {
     const silent = options.silent === true;
 
     if (!silent && typeof showNotification === 'function') {
-        showNotification('info', 'Запуск обновления…');
+        showNotification('info', t('notify.updateStarting'));
     }
 
     await captureLifecycleWaitPid();
@@ -2089,36 +2154,37 @@ async function triggerDashboardAppUpdate(options = {}) {
             showNotification('success', result.message);
         }
         beginLifecycleWaitUi('update');
-        startDashboardReconnectWatch('Обновление завершено. Перезагрузка страницы…', 'update');
+        startDashboardReconnectWatch(t('notify.updateDone'), 'update');
     } else {
         if (silent) {
             autoUpdateTriggeredForRevision = null;
             versionCardBusy = false;
         }
-        resetDashboardLifecycleUi('Disconnected');
+        resetDashboardLifecycleUi(t('header.disconnected'));
         syncAutoUpdateToggleUi();
         if (!silent) {
             if (typeof showNotification === 'function') {
-                showNotification('error', result.message || 'Не удалось запустить обновление');
+                showNotification('error', result.message || t('notify.updateFailed'));
             } else {
-                alert(result.message || 'Не удалось запустить обновление');
+                alert(result.message || t('notify.updateFailed'));
             }
         }
     }
 }
 
 function updateConnectionStatus(connected) {
+    lastConnectionConnected = connected;
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
     
     if (connected) {
         statusDot.classList.remove('offline');
         statusDot.classList.add('online');
-        statusText.textContent = 'Connected';
+        statusText.textContent = t('header.connected');
     } else {
         statusDot.classList.remove('online');
         statusDot.classList.add('offline');
-        statusText.textContent = 'Disconnected';
+        statusText.textContent = t('header.disconnected');
     }
 }
 
@@ -2130,22 +2196,22 @@ function formatHealthDuration(ms) {
         return '—';
     }
     if (ms <= 0) {
-        return 'истёк';
+        return t('time.expired');
     }
     const sec = Math.floor(ms / 1000);
     if (sec < 60) {
-        return `${sec} с`;
+        return t('health.durationSec', { n: sec });
     }
     const min = Math.floor(sec / 60);
     if (min < 60) {
-        return `${min} мин`;
+        return t('health.durationMin', { n: min });
     }
     const hours = Math.floor(min / 60);
     if (hours < 48) {
-        return `${hours} ч ${min % 60} мин`;
+        return t('health.durationHours', { hours, minutes: min % 60 });
     }
     const days = Math.floor(hours / 24);
-    return `${days} д ${hours % 24} ч`;
+    return t('health.durationDays', { days, hours: hours % 24 });
 }
 
 function formatHealthTimeAgo(timestamp) {
@@ -2153,11 +2219,10 @@ function formatHealthTimeAgo(timestamp) {
         return '—';
     }
     const elapsed = Date.now() - timestamp;
-    // «истёк» из formatHealthDuration — для сроков действия, не для «назад»
     if (elapsed < 5000) {
-        return 'только что';
+        return t('time.justNow');
     }
-    return formatHealthDuration(elapsed) + ' назад';
+    return t('health.ago', { duration: formatHealthDuration(elapsed) });
 }
 
 function healthStatusDotClass(kind) {
@@ -2183,19 +2248,19 @@ function describeWebSocketHealth(ws) {
         return { label: '—', kind: 'off', detail: '' };
     }
     const labels = {
-        connected: 'Подключён',
-        reconnecting: 'Переподключение',
-        disconnected: 'Отключён',
-        stopped: 'Остановлен',
+        connected: t('health.ws.connected'),
+        reconnecting: t('health.ws.reconnecting'),
+        disconnected: t('health.ws.disconnected'),
+        stopped: t('health.ws.stopped'),
     };
     let kind = 'off';
     if (ws.status === 'connected') kind = 'ok';
     else if (ws.status === 'reconnecting') kind = 'warn';
     else if (ws.status === 'disconnected') kind = 'err';
 
-    let detail = `Состояние: ${escapeHtml(ws.connectionState || '—')}`;
+    let detail = t('health.ws.state', { state: ws.connectionState || '—' });
     if (ws.status === 'reconnecting' && ws.maxReconnectAttempts > 0) {
-        detail += `<br>Попытка ${ws.reconnectAttempt}/${ws.maxReconnectAttempts}`;
+        detail += `<br>${t('health.ws.attempt', { current: ws.reconnectAttempt, max: ws.maxReconnectAttempts })}`;
     }
     if (ws.hasCriticalErrors && ws.lastCriticalError) {
         detail += `<br><span style="color:#ef4444">${escapeHtml(ws.lastCriticalError.error)}</span>`;
@@ -2206,13 +2271,17 @@ function describeWebSocketHealth(ws) {
 
 function describeCircuitBreaker(graphql) {
     const state = graphql?.circuitBreaker || 'CLOSED';
-    const labels = { CLOSED: 'Закрыт (OK)', OPEN: 'Открыт (блокировка)', HALF_OPEN: 'Полуоткрыт' };
+    const labels = {
+        CLOSED: t('health.cb.closed'),
+        OPEN: t('health.cb.open'),
+        HALF_OPEN: t('health.cb.halfOpen'),
+    };
     let kind = 'ok';
     if (state === 'OPEN') kind = 'err';
     else if (state === 'HALF_OPEN') kind = 'warn';
     let detail = '';
     if (graphql?.hadRecentNetworkFailure) {
-        detail = 'Недавние сетевые ошибки GraphQL';
+        detail = t('health.gql.networkErrors');
         if (kind === 'ok') kind = 'warn';
     }
     return { label: labels[state] || state, kind, detail };
@@ -2227,23 +2296,23 @@ function renderNetworkHealthCard(health) {
     const wsInfo = describeWebSocketHealth(ws);
     const gqlInfo = describeCircuitBreaker(graphql);
     const watcherKind = health?.watcherRunning ? 'ok' : 'err';
-    const watcherLabel = health?.watcherRunning ? 'Работает' : 'Остановлен';
+    const watcherLabel = health?.watcherRunning ? t('health.running') : t('health.stopped');
     const watcherDot = `<span class="bot-health-status-dot ${healthStatusDotClass(watcherKind)}"></span>`;
     const wsDot = `<span class="bot-health-status-dot ${healthStatusDotClass(wsInfo.kind)}"></span>`;
     const gqlDot = `<span class="bot-health-status-dot ${healthStatusDotClass(gqlInfo.kind)}"></span>`;
 
     return `
         <div class="bot-health-card bot-health-card-network">
-            <div class="bot-health-card-title">WebSocket / GraphQL</div>
+            <div class="bot-health-card-title">${escapeHtml(t('health.wsGraphql'))}</div>
             <div class="bot-health-network-block">
-                <div class="bot-health-card-value bot-health-network-value">${watcherDot}<span class="bot-health-network-name">Просмотр</span> ${escapeHtml(watcherLabel)}</div>
+                <div class="bot-health-card-value bot-health-network-value">${watcherDot}<span class="bot-health-network-name">${escapeHtml(t('health.watching'))}</span> ${escapeHtml(watcherLabel)}</div>
             </div>
             <div class="bot-health-network-block">
-                <div class="bot-health-card-value bot-health-network-value">${wsDot}<span class="bot-health-network-name">WebSocket</span> ${escapeHtml(wsInfo.label)}</div>
+                <div class="bot-health-card-value bot-health-network-value">${wsDot}<span class="bot-health-network-name">${escapeHtml(t('health.network.websocket'))}</span> ${escapeHtml(wsInfo.label)}</div>
                 ${wsInfo.detail ? `<div class="bot-health-card-detail">${wsInfo.detail}</div>` : ''}
             </div>
             <div class="bot-health-network-block">
-                <div class="bot-health-card-value bot-health-network-value">${gqlDot}<span class="bot-health-network-name">GraphQL CB</span> ${escapeHtml(gqlInfo.label)}</div>
+                <div class="bot-health-card-value bot-health-network-value">${gqlDot}<span class="bot-health-network-name">${escapeHtml(t('health.network.graphqlCb'))}</span> ${escapeHtml(gqlInfo.label)}</div>
                 ${gqlInfo.detail ? `<div class="bot-health-card-detail">${gqlInfo.detail}</div>` : ''}
             </div>
         </div>
@@ -2263,7 +2332,7 @@ function formatGqlContextFieldRow(label, field) {
             <dd class="gql-context-value ${integrityPanelStateClass(valueKind)}">${escapeHtml(value)}</dd>
         </div>
         <div class="client-integrity-row client-integrity-row-sub">
-            <dt>Обновлено</dt>
+            <dt>${escapeHtml(t('health.updated'))}</dt>
             <dd class="${integrityPanelStateClass(updatedKind)}">${escapeHtml(updated)}</dd>
         </div>
     `;
@@ -2276,7 +2345,7 @@ function renderGqlContextHealthCard(gqlContext) {
     const ctx = gqlContext || {};
     return `
         <div class="bot-health-card bot-health-card-gql-context">
-            <div class="bot-health-card-title">GQL-заголовки</div>
+            <div class="bot-health-card-title">${escapeHtml(t('health.gqlHeaders'))}</div>
             <dl class="client-integrity-rows">
                 ${formatGqlContextFieldRow('Client-Version', ctx.clientVersion)}
                 ${formatGqlContextFieldRow('Client-Session-Id', ctx.clientSessionId)}
@@ -2304,9 +2373,9 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
     let hintText = '';
     let hintClass = 'integrity-capture-hint';
     if (captureStatus?.captureRequestPending) {
-        hintText = 'Ожидание передачи от расширения…';
+        hintText = t('health.integrity.pending');
     } else if (captureStatus?.enabled === false) {
-        hintText = 'Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)';
+        hintText = t('health.integrity.disabled');
         hintClass += ' err';
     }
 
@@ -2314,8 +2383,8 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
         captureStatus?.captureRequestPending || integrityCapturePollTimer != null
     );
     const panelTitle = captureBusy
-        ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE
-        : INTEGRITY_PANEL_CAPTURE_TITLE;
+        ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE()
+        : INTEGRITY_PANEL_CAPTURE_TITLE();
 
     return `
         <div class="bot-health-card bot-health-card-integrity bot-health-card-span-2 client-integrity-panel-clickable" id="clientIntegrityPanel" role="button" tabindex="0" data-state="${captureBusy ? 'requesting' : 'idle'}" data-busy="${captureBusy ? '1' : '0'}" title="${escapeHtml(panelTitle)}" aria-live="polite"${captureBusy ? ' aria-busy="true"' : ''}>
@@ -2323,23 +2392,23 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
             <p class="client-integrity-click-hint">Нажмите на карточку для запроса токена</p>
             <dl class="client-integrity-rows">
                 <div class="client-integrity-row">
-                    <dt>Обновлён</dt>
+                    <dt>${escapeHtml(t('health.updated'))}</dt>
                     <dd id="integrityLastUpdated" class="${integrityPanelStateClass(lastUp.kind)}">${escapeHtml(lastUp.text)}</dd>
                 </div>
                 <div class="client-integrity-row">
-                    <dt>Токен</dt>
+                    <dt>${escapeHtml(t('integrity.token'))}</dt>
                     <dd id="integrityTokenState" class="${integrityPanelStateClass(token.kind)}">${escapeHtml(token.text)}</dd>
                 </div>
                 <div class="client-integrity-row">
-                    <dt>Прошлый токен</dt>
+                    <dt>${escapeHtml(t('integrity.previousToken'))}</dt>
                     <dd id="integrityPreviousToken" class="integrity-token-prefix ${integrityPanelStateClass(prevPrefix ? 'ok' : 'muted')}">${escapeHtml(prevPrefix || '—')}</dd>
                 </div>
                 <div class="client-integrity-row">
-                    <dt>Текущий токен</dt>
+                    <dt>${escapeHtml(t('integrity.currentToken'))}</dt>
                     <dd id="integrityCurrentToken" class="integrity-token-prefix ${integrityPanelStateClass(curPrefix ? 'ok' : 'muted')}">${escapeHtml(curPrefix || '—')}</dd>
                 </div>
                 <div class="client-integrity-row">
-                    <dt>Сбор бонусов</dt>
+                    <dt>${escapeHtml(t('integrity.bonusClaim'))}</dt>
                     <dd id="integrityClaimState" class="${integrityPanelStateClass(claim.kind)}">${escapeHtml(claim.text)}</dd>
                 </div>
             </dl>
@@ -2364,7 +2433,7 @@ async function updateBotHealth() {
     if (!health || health.error) {
         grid.innerHTML =
             integrityCard +
-            `<p class="bot-health-empty bot-health-grid-message">${escapeHtml(health?.error || 'Watcher не запущен')}</p>`;
+            `<p class="bot-health-empty bot-health-grid-message">${escapeHtml(health?.error || t('health.watcherNotRunning'))}</p>`;
         bindClientIntegrityPanelClick();
         if (claimsEl) {
             claimsEl.innerHTML = '<p class="bot-health-empty">—</p>';
@@ -2393,14 +2462,14 @@ async function updateBotHealth() {
 
     const claims = health.claimByStreamer || [];
     if (claims.length === 0) {
-        claimsEl.innerHTML = '<p class="bot-health-empty">Пока нет попыток сбора бонусов в этой сессии</p>';
+        claimsEl.innerHTML = `<p class="bot-health-empty">${escapeHtml(t('health.claimsEmptySession'))}</p>`;
         return;
     }
 
     claimsEl.innerHTML = claims
         .map((c) => {
             const outcomeClass = c.outcome === 'success' ? 'success' : 'failed';
-            const outcomeText = c.outcome === 'success' ? 'Успех' : 'Ошибка';
+            const outcomeText = c.outcome === 'success' ? t('health.claim.success') : t('health.claim.error');
             let extraBadge = '';
             if (c.failureKind === 'integrity') {
                 extraBadge = '<span class="bot-health-badge integrity">integrity</span>';
@@ -2423,10 +2492,8 @@ async function updateBotHealth() {
 const DASHBOARD_BRIDGE_MESSAGE_SOURCE = 'twitch-watcher-dashboard';
 const INTEGRITY_CAPTURE_REQUEST_POLL_MS = 2000;
 const INTEGRITY_CAPTURE_REQUEST_TIMEOUT_MS = 120000;
-const INTEGRITY_PANEL_CAPTURE_TITLE =
-    'Нажмите, чтобы запросить Client-Integrity (расширение Edge, twitch.tv)';
-const INTEGRITY_PANEL_CAPTURE_BUSY_TITLE =
-    'Ожидание передачи Client-Integrity от расширения…';
+const INTEGRITY_PANEL_CAPTURE_TITLE = () => t('health.integrity.click');
+const INTEGRITY_PANEL_CAPTURE_BUSY_TITLE = () => t('health.integrity.wait');
 let integrityCapturePollTimer = null;
 
 function isIntegrityCaptureRequestBusy() {
@@ -2441,7 +2508,7 @@ function setIntegrityPanelCaptureBusy(busy) {
     }
     panel.dataset.state = busy ? 'requesting' : 'idle';
     panel.dataset.busy = busy ? '1' : '0';
-    panel.title = busy ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE : INTEGRITY_PANEL_CAPTURE_TITLE;
+    panel.title = busy ? INTEGRITY_PANEL_CAPTURE_BUSY_TITLE() : INTEGRITY_PANEL_CAPTURE_TITLE();
     if (busy) {
         panel.setAttribute('aria-busy', 'true');
     } else {
@@ -2534,12 +2601,12 @@ function formatIntegrityLastUpdated(integrity, captureStatus) {
     const atMs = Math.max(captureAt, integrity?.lastUpdatedAtMs ?? 0);
     if (!atMs) {
         if (integrity?.configured) {
-            return { text: 'неизвестно (токен из config)', kind: 'warn' };
+            return { text: t('integrity.unknownToken'), kind: 'warn' };
         }
-        return { text: 'не обновлялся', kind: 'muted' };
+        return { text: t('integrity.neverUpdated'), kind: 'muted' };
     }
     const estimated = Boolean(integrity?.lastUpdatedAtEstimated) && captureAt <= 0;
-    const suffix = estimated ? ' (прибл.)' : '';
+    const suffix = estimated ? t('integrity.approx') : '';
     return { text: `${formatHealthTimeAgo(atMs)}${suffix}`, kind: 'ok' };
 }
 
@@ -2549,21 +2616,21 @@ function formatIntegrityTokenState(integrity) {
     }
     const sourceLabel = integrity.source === 'manual' ? 'manual' : 'API';
     if (!integrity.configured) {
-        return { text: `не задан (${sourceLabel})`, kind: 'err' };
+        return { text: t('integrity.notSet', { source: sourceLabel }), kind: 'err' };
     }
     if (!integrity.valid) {
-        return { text: `истёк (${sourceLabel})`, kind: 'err' };
+        return { text: t('integrity.expired', { source: sourceLabel }), kind: 'err' };
     }
-    let text = `действует (${sourceLabel})`;
+    let text = t('integrity.valid', { source: sourceLabel });
     if (integrity.expiresInMs != null && integrity.expiresInMs > 0) {
-        text += `, истекает через ${formatHealthDuration(integrity.expiresInMs)}`;
+        text += t('integrity.expiresIn', { duration: formatHealthDuration(integrity.expiresInMs) });
     }
     return { text, kind: 'ok' };
 }
 
 function formatIntegrityClaimState(bonusClaim) {
     if (!bonusClaim) {
-        return { text: 'нет данных', kind: 'muted' };
+        return { text: t('integrity.noData'), kind: 'muted' };
     }
     const kindByStatus = {
         ok: 'ok',
@@ -2595,9 +2662,9 @@ async function renderClientIntegrityPanel(health, captureStatus = null) {
     const integrity = health?.integrity;
 
     if (captureStatus?.captureRequestPending) {
-        setIntegrityCaptureHint('Ожидание передачи от расширения…');
+        setIntegrityCaptureHint(t('health.integrity.pending'));
     } else if (captureStatus?.enabled === false) {
-        setIntegrityCaptureHint('Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)', 'err');
+        setIntegrityCaptureHint(t('health.integrity.disabled'), 'err');
     } else {
         setIntegrityCaptureHint('');
     }
@@ -2736,46 +2803,48 @@ async function updateOverallStats() {
         // Показываем сообщение об ошибке, если сервис недоступен
         const statusText = document.getElementById('statusText');
         if (statusText) {
-            statusText.textContent = 'Service unavailable';
+            statusText.textContent = t('connection.serviceUnavailable');
         }
         // Если был skeleton, заменяем на сообщение об ошибке
         if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
-            statsContainer.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">Failed to load statistics</p>';
+            statsContainer.innerHTML = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.loadFailed'))}</p>`;
         }
         return;
     }
 
     updateConnectionStatus(true);
 
+    lastOverallStatsCache = stats;
+
     // Если был skeleton, заменяем плавно
     if (statsContainer && statsContainer.querySelector('.skeleton-stat-card')) {
         const newContent = `
             <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)"><span>Active Watches</span></h3>
+                <h3 onclick="toggleCard(this)"><span>${escapeHtml(t('stats.activeWatches'))}</span></h3>
                 <div class="stat-card-content">
-                    <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString()}</div>
-                    <div class="label">Currently watching</div>
+                    <div class="value" id="activeWatches">${(stats.activeWatches || 0).toLocaleString(getNumberLocale())}</div>
+                    <div class="label">${escapeHtml(t('stats.activeWatchesLabel'))}</div>
                 </div>
             </div>
             <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)"><span>Total Points</span></h3>
+                <h3 onclick="toggleCard(this)"><span>${escapeHtml(t('stats.totalPoints'))}</span></h3>
                 <div class="stat-card-content">
-                    <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString()}</div>
-                    <div class="label">Points earned this session</div>
+                    <div class="value" id="totalPoints">${(stats.totalPointsEarned || 0).toLocaleString(getNumberLocale())}</div>
+                    <div class="label">${escapeHtml(t('stats.totalPointsLabel'))}</div>
                 </div>
             </div>
             <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)"><span>Streamers</span></h3>
+                <h3 onclick="toggleCard(this)"><span>${escapeHtml(t('stats.streamers'))}</span></h3>
                 <div class="stat-card-content">
-                    <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString()}</div>
-                    <div class="label">Total streamers</div>
+                    <div class="value" id="streamersCount">${(stats.streamersCount || 0).toLocaleString(getNumberLocale())}</div>
+                    <div class="label">${escapeHtml(t('stats.streamersLabel'))}</div>
                 </div>
             </div>
             <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)"><span>Last Online</span></h3>
+                <h3 onclick="toggleCard(this)"><span>${escapeHtml(t('stats.lastOnline'))}</span></h3>
                 <div class="stat-card-content">
                     <div class="value" id="lastActivity">${formatOverallLastActivity(stats)}</div>
-                    <div class="label">Last streamer went live</div>
+                    <div class="label">${escapeHtml(t('stats.lastOnlineLabel'))}</div>
                 </div>
             </div>
         `;
@@ -2961,9 +3030,9 @@ async function checkInitializationStatus() {
         const response = await fetch(`${API_BASE}/initialization-status`);
         if (!response.ok) {
             if (response.status === 404) {
-                statusText.textContent = 'Waiting for server to start...';
+                statusText.textContent = t('loading.waitingServerStart');
             } else {
-                statusText.textContent = 'Waiting for server...';
+                statusText.textContent = t('loading.waitingServer');
             }
             setTimeout(checkInitializationStatus, 1000);
             return;
@@ -2973,18 +3042,18 @@ async function checkInitializationStatus() {
         const progress = Number(status.progress) || 0;
         const isReady = status.isInitialized === true || progress >= 100;
         
-        statusText.textContent = status.currentAction || 'Initializing...';
+        statusText.textContent = status.currentAction || t('loading.initializing');
         progressBar.style.width = `${Math.min(100, progress)}%`;
         progressText.textContent = `${Math.round(Math.min(100, progress))}%`;
         
         if (isReady) {
             if (status.needsToken) {
-                statusText.textContent = status.currentAction || 'Укажите токен в «Конфиг бота»';
+                statusText.textContent = status.currentAction || t('loading.setTokenInConfig');
             }
             setTimeout(() => {
                 hideLoadingScreen();
                 if (status.needsToken) {
-                    showNotification('info', 'Откройте «Конфиг бота» в шапке и укажите auth-token');
+                    showNotification('info', t('notify.openBotConfig'));
                 }
             }, 300);
             return;
@@ -2992,7 +3061,7 @@ async function checkInitializationStatus() {
 
         setTimeout(checkInitializationStatus, 500);
     } catch (error) {
-        statusText.textContent = 'Connecting to server...';
+        statusText.textContent = t('loading.connectingServer');
         setTimeout(checkInitializationStatus, 1000);
     }
 }
@@ -3221,14 +3290,14 @@ async function updateStatistics(options = {}) {
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
-            table.innerHTML = '<p style="color: #adadb8; text-align: center; padding: 20px;">Failed to load statistics</p>';
+            table.innerHTML = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.loadFailed'))}</p>`;
         }
         return;
     }
 
     if (stats.length === 0) {
         lastAllStreamerNames = [];
-        const emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
+        const emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noStreamers'))}</p>`;
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
         } else {
@@ -3303,11 +3372,11 @@ async function updateStatistics(options = {}) {
     if (sortedStats.length === 0) {
         let emptyMessage;
         if (selectedFavoriteCategoryFilterIds.size > 0) {
-            emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">Нет стримеров по выбранным категориям</p>';
+            emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noCategoryFilter'))}</p>`;
         } else if (!showOffline) {
-            emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers are currently online</p>';
+            emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noOnline'))}</p>`;
         } else {
-            emptyMessage = '<p style="color: #adadb8; text-align: center; padding: 20px;">No streamers configured</p>';
+            emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noStreamers'))}</p>`;
         }
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
@@ -3323,17 +3392,15 @@ async function updateStatistics(options = {}) {
 
     // Определяем колонки с их видимостью
     const allNotifyOn = areAllStreamerNotificationsEnabled(lastAllStreamerNames);
-    const notifyHeaderTitle = allNotifyOn
-        ? 'Выключить оповещения у всех стримеров'
-        : 'Включить оповещения у всех стримеров';
+    const notifyHeaderTitle = allNotifyOn ? t('col.notifyAllOff') : t('col.notifyAllOn');
     const columns = [
         { key: 'notify', label: allNotifyOn ? '🔔' : '🔕', visible: visibleColumns.notify !== false },
-        { key: 'streamer', label: 'Streamer', visible: visibleColumns.streamer !== false },
-        { key: 'status', label: 'Status', visible: visibleColumns.status !== false },
-        { key: 'watchTime', label: 'Watch Time', visible: visibleColumns.watchTime !== false },
-        { key: 'pointsEarned', label: 'Points Earned', visible: visibleColumns.pointsEarned !== false },
-        { key: 'currentPoints', label: 'Current Points', visible: visibleColumns.currentPoints !== false },
-        { key: 'game', label: 'Category', visible: visibleColumns.game !== false },
+        { key: 'streamer', label: getTableColumnLabel('streamer'), visible: visibleColumns.streamer !== false },
+        { key: 'status', label: getTableColumnLabel('status'), visible: visibleColumns.status !== false },
+        { key: 'watchTime', label: getTableColumnLabel('watchTime'), visible: visibleColumns.watchTime !== false },
+        { key: 'pointsEarned', label: getTableColumnLabel('pointsEarned'), visible: visibleColumns.pointsEarned !== false },
+        { key: 'currentPoints', label: getTableColumnLabel('currentPoints'), visible: visibleColumns.currentPoints !== false },
+        { key: 'game', label: getTableColumnLabel('game'), visible: visibleColumns.game !== false },
         {
             key: 'streamsLast30Days',
             label: getStreamsCountColumnLabel(),
@@ -3341,17 +3408,17 @@ async function updateStatistics(options = {}) {
         },
         {
             key: 'viewersCount',
-            label: 'Viewers',
+            label: getTableColumnLabel('viewersCount'),
             visible: visibleColumns.viewersCount !== false,
         },
-        { key: 'lastStreamStart', label: 'Last Stream Start', visible: visibleColumns.lastStreamStart !== false },
-        { key: 'lastStreamEnd', label: 'Last Stream End', visible: visibleColumns.lastStreamEnd !== false },
+        { key: 'lastStreamStart', label: getTableColumnLabel('lastStreamStart'), visible: visibleColumns.lastStreamStart !== false },
+        { key: 'lastStreamEnd', label: getTableColumnLabel('lastStreamEnd'), visible: visibleColumns.lastStreamEnd !== false },
         {
             key: 'lastStreamDuration',
-            label: 'Last Stream Duration',
+            label: getTableColumnLabel('lastStreamDuration'),
             visible: visibleColumns.lastStreamDuration !== false,
         },
-        { key: 'actions', label: 'Actions', visible: visibleColumns.actions !== false }
+        { key: 'actions', label: getTableColumnLabel('actions'), visible: visibleColumns.actions !== false }
     ];
     
     const visibleColumnsList = columns.filter(c => c.visible);
@@ -3382,7 +3449,7 @@ async function updateStatistics(options = {}) {
                             col.key === 'streamsLast30Days' ? ' streams-count-header' : '';
                         const streamsHeaderTitle =
                             col.key === 'streamsLast30Days'
-                                ? ' title="Правый клик — выбрать период (7d / 14d / 30d / 60d)"'
+                                ? ` title="${escapeHtml(t('col.streamsPeriodTitle'))}"`
                                 : '';
                         const categoryHeaderClass = col.key === 'game' ? ' category-column-header' : '';
                         
@@ -3404,7 +3471,7 @@ async function updateStatistics(options = {}) {
                                     data-streamer="${safeAttr}"
                                     onclick="toggleStreamerNotify(this)"
                                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStreamerNotify(this);}"
-                                    title="${notifyOn ? 'Уведомления включены' : 'Уведомления выключены'}">${notifyOn ? '🔔' : '🔕'}</span>
+                                    title="${notifyOn ? escapeHtml(t('col.notifyOn')) : escapeHtml(t('col.notifyOff'))}">${notifyOn ? '🔔' : '🔕'}</span>
                             </td>`;
                         })() : ''}
                         ${visibleColumns.streamer !== false ? (() => {
@@ -3416,7 +3483,7 @@ async function updateStatistics(options = {}) {
                             <td>
                                 <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
                                     <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
-                                    ${s.status}
+                                    ${translateStreamStatus(s.status)}
                                 </span>
                             </td>
                         ` : ''}
@@ -3472,15 +3539,15 @@ async function updateStatistics(options = {}) {
                             if (durationMs == null) {
                                 return '<td>-</td>';
                             }
-                            return `<td title="Последний завершённый стрим">${formatTime(durationMs)}</td>`;
+                            return `<td title="${escapeHtml(t('table.lastStreamTitle'))}">${formatTime(durationMs)}</td>`;
                         })() : ''}
                         ${visibleColumns.actions !== false ? `
                             <td>
                                 <button onclick="removeStreamer('${s.streamerName}')" 
                                         class="remove-btn" 
                                         style="padding: 4px 12px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
-                                        title="Remove streamer">
-                                    Remove
+                                        title="${escapeHtml(t('table.remove'))}">
+                                    ${escapeHtml(t('table.remove'))}
                                 </button>
                             </td>
                         ` : ''}
@@ -4261,19 +4328,9 @@ function startAutoUpdate() {
 function toggleOfflineStreamers() {
     showOffline = !showOffline;
     
-    // Сохраняем состояние в localStorage
     safeSetLocalStorage('showOffline', showOffline.toString());
+    updateToggleOfflineText();
     
-    const toggleBtn = document.getElementById('toggleOfflineBtn');
-    const toggleText = document.getElementById('toggleOfflineText');
-    
-    if (showOffline) {
-        toggleText.textContent = 'Hide Offline';
-    } else {
-        toggleText.textContent = 'Show Offline';
-    }
-    
-    // Перерисовываем таблицу из кэша — без повторного GraphQL на сервере
     updateStatistics({ skipFetch: Boolean(cachedStatisticsRows) });
 }
 
@@ -4284,7 +4341,7 @@ function exportLogs(format, streamerName) {
     // Показываем индикатор загрузки
     if (exportBtn) {
         exportBtn.disabled = true;
-        exportBtn.innerHTML = '<span>⏳</span><span>Exporting...</span>';
+        exportBtn.innerHTML = `<span>⏳</span><span>${escapeHtml(t('export.exporting'))}</span>`;
     }
     
     // Формируем URL для экспорта
@@ -4363,6 +4420,14 @@ function startDashboardCore() {
         return;
     }
     dashboardCoreStarted = true;
+    if (typeof initLanguageSwitch === 'function') {
+        initLanguageSwitch();
+    }
+    if (typeof onLocaleChange === 'function') {
+        onLocaleChange(() => {
+            void refreshDashboardLocale();
+        });
+    }
     forceVersionRefreshOnReady =
         new URL(window.location.href).searchParams.get('vrefresh') === '1';
     checkInitializationStatus();
@@ -4419,10 +4484,7 @@ window.addEventListener('load', () => {
     });
     
     // Восстанавливаем состояние кнопки показа/скрытия офлайн стримеров
-    const toggleText = document.getElementById('toggleOfflineText');
-    if (toggleText) {
-        toggleText.textContent = showOffline ? 'Hide Offline' : 'Show Offline';
-    }
+    updateToggleOfflineText();
     
     // Восстанавливаем активную кнопку интервала обновления
     document.querySelectorAll('.interval-btn').forEach(btn => {
@@ -4604,14 +4666,14 @@ async function fillTestData() {
     if (!btn) return;
     
     // Подтверждение действия
-    if (!confirm('Вы уверены, что хотите заполнить приложение тестовыми данными?\n\nЭто действие создаст:\n- Около 1000 тестовых событий различных типов\n- Несколько тестовых стримеров\n\nЭто действие предназначено только для тестирования.')) {
+    if (!confirm(t('testData.confirm'))) {
         return;
     }
     
     // Отключаем кнопку на время запроса
     btn.disabled = true;
     const originalText = btn.textContent;
-    btn.textContent = '⏳ Generating...';
+    btn.textContent = `⏳ ${t('testData.generating')}`;
     
     try {
         const response = await fetch(`${API_BASE}/test/fill-data`, {
@@ -4624,18 +4686,18 @@ async function fillTestData() {
         const result = await response.json();
         
         if (result.success) {
-            showNotification('success', `Test data generated successfully!\n- ${result.eventsCount || 0} events created\n- ${result.streamersCount || 0} streamers added`);
+            showNotification('success', t('testData.success', { events: result.eventsCount || 0, streamers: result.streamersCount || 0 }));
             // Обновляем все данные
             await Promise.all([
                 updateStatistics(),
                 updateOverallStats()
             ]);
         } else {
-            showNotification('error', result.message || 'Failed to generate test data');
+            showNotification('error', result.message || t('testData.failed'));
         }
     } catch (error) {
         console.error('Error filling test data:', error);
-        showNotification('error', 'Failed to generate test data');
+        showNotification('error', t('testData.failed'));
     } finally {
         // Восстанавливаем кнопку
         btn.disabled = false;
@@ -4651,14 +4713,14 @@ async function markTokenAsInvalid() {
     if (!btn) return;
     
     // Подтверждение действия
-    if (!confirm('Вы уверены, что хотите пометить токен как невалидный?\n\nЭто действие вызовет критическое уведомление и может привести к перезапуску контейнера через healthcheck.\n\nЭто действие предназначено только для тестирования.')) {
+    if (!confirm(t('tokenInvalid.confirm'))) {
         return;
     }
     
     // Отключаем кнопку на время запроса
     btn.disabled = true;
     const originalText = btn.textContent;
-    btn.textContent = '⏳ Processing...';
+    btn.textContent = `⏳ ${t('tokenInvalid.processing')}`;
     
     try {
         const response = await fetch(`${API_BASE}/token/mark-invalid`, {
@@ -4671,17 +4733,17 @@ async function markTokenAsInvalid() {
         const result = await response.json();
         
         if (result.success) {
-            showNotification('success', 'Token marked as invalid. Container restart will be triggered by healthcheck.');
+            showNotification('success', t('tokenInvalid.success'));
             // Обновляем информацию о токене
             await updateTokenInfo();
             // Обновляем критические уведомления
             await updateCriticalNotifications();
         } else {
-            showNotification('error', result.message || 'Failed to mark token as invalid');
+            showNotification('error', result.message || t('tokenInvalid.failed'));
         }
     } catch (error) {
         console.error('Error marking token as invalid:', error);
-        showNotification('error', 'Failed to mark token as invalid');
+        showNotification('error', t('tokenInvalid.failed'));
     } finally {
         // Восстанавливаем кнопку
         btn.disabled = false;
@@ -4698,7 +4760,7 @@ async function addStreamer() {
     
     const username = input.value.trim();
     if (!username) {
-        showNotification('warning', 'Please enter a streamer name');
+        showNotification('warning', t('notify.enterStreamer'));
         return;
     }
 
@@ -4727,13 +4789,13 @@ async function addStreamer() {
             await updateOverallStats();
             
             // Показываем уведомление об успехе
-            showNotification('success', `Streamer ${username} added successfully`);
+            showNotification('success', t('notify.streamerAdded', { name: username }));
         } else {
-            showNotification('error', result.message || 'Failed to add streamer');
+            showNotification('error', result.message || t('notify.streamerAddFailed'));
         }
     } catch (error) {
         console.error('Error adding streamer:', error);
-        showNotification('error', 'Failed to add streamer. Please try again.');
+        showNotification('error', t('notify.streamerAddFailed'));
     } finally {
         // Включаем кнопку и поле ввода
         input.disabled = false;
@@ -4879,7 +4941,7 @@ async function testOsNotification(isOnline) {
         if (!availability.ok && availability.message) {
             showOsPermissionWarning(availability.message);
         } else {
-            showNotification('error', 'Не удалось показать уведомление ОС. Обновите страницу и проверьте настройки сайта.');
+            showNotification('error', t('notify.osFailed'));
         }
     }
 }
@@ -4904,7 +4966,7 @@ async function loadWatchSettingsIntoForm() {
     const data = await fetchData('/watch-settings');
     if (!data) {
         if (hint) {
-            hint.textContent = 'Не удалось загрузить настройки просмотра с сервера.';
+            hint.textContent = t('appConfig.settingsLoadFailed');
         }
         return;
     }
@@ -5129,7 +5191,7 @@ async function showAppConfigModal() {
     const hint = document.getElementById('appConfigLoadHint');
     const restartHint = document.getElementById('appConfigRestartHint');
     if (hint) {
-        hint.textContent = 'Загрузка настроек с сервера…';
+        hint.textContent = t('appConfig.settingsLoading');
     }
     if (restartHint) {
         restartHint.style.display = 'none';
@@ -5163,9 +5225,9 @@ async function showAppConfigModal() {
         void loadWatchSettingsIntoForm();
     } catch (e) {
         if (hint) {
-            hint.textContent = 'Не удалось загрузить настройки: ' + (e.message || e);
+            hint.textContent = t('appConfig.settingsLoadError', { error: e.message || e });
         }
-        showNotification('error', 'Не удалось загрузить конфиг бота');
+        showNotification('error', t('notify.configLoadFailed'));
     }
 }
 
@@ -5196,7 +5258,7 @@ async function saveAppConfig() {
 
         const watchResult = await saveWatchSettingsFromForm();
         if (!watchResult.ok) {
-            showNotification('error', watchResult.message || 'Не удалось сохранить интервал просмотра');
+            showNotification('error', watchResult.message || t('notify.watchSaveFailed'));
             return;
         }
 
@@ -5221,7 +5283,7 @@ async function saveAppConfig() {
             setTimeout(() => window.location.reload(), 800);
         }
     } catch (e) {
-        showNotification('error', e.message || 'Не удалось сохранить конфиг');
+        showNotification('error', e.message || t('notify.configSaveFailed'));
     } finally {
         if (saveBtn) {
             saveBtn.disabled = false;
@@ -5258,9 +5320,9 @@ async function showSettingsModal() {
         if (!availability.ok) {
             osHint.textContent = availability.message || '';
         } else if (denied) {
-            osHint.textContent = 'Уведомления ОС заблокированы. Разрешите в настройках сайта (замок в адресной строке) и обновите страницу.';
+            osHint.textContent = t('settings.osBlocked');
         } else {
-            osHint.textContent = 'Разрешите уведомления в браузере при сохранении настроек.';
+            osHint.textContent = t('settings.osAllow');
         }
     }
     
@@ -5316,7 +5378,7 @@ async function saveSettings() {
     applySettings(settings);
 
     closeSettingsModal();
-    showNotification('success', 'Настройки интерфейса сохранены');
+    showNotification('success', t('notify.settingsSaved'));
 }
 
 /**
@@ -5334,7 +5396,7 @@ function exportSettings() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showNotification('success', 'Настройки экспортированы');
+    showNotification('success', t('notify.settingsExported'));
 }
 
 /**
@@ -5379,10 +5441,10 @@ function handleSettingsImport(event) {
             document.getElementById('osNotificationsSetting').checked = validSettings.osNotifications;
             document.getElementById('soundNotificationsSetting').checked = validSettings.soundNotifications;
             
-            showNotification('success', 'Настройки импортированы');
+            showNotification('success', t('notify.settingsImported'));
         } catch (error) {
             console.error('Error importing settings:', error);
-            showNotification('error', 'Ошибка при импорте настроек');
+            showNotification('error', t('notify.settingsImportError'));
         }
     };
     reader.readAsText(file);
@@ -5395,8 +5457,8 @@ function handleSettingsImport(event) {
  */
 async function removeStreamer(username) {
     showConfirmModal(
-        'Подтверждение удаления',
-        `Вы уверены, что хотите удалить ${username} из отслеживания?`,
+        t('notify.removeStreamerTitle'),
+        t('notify.removeStreamerBody', { name: username }),
         async () => {
             try {
                 const response = await fetch(`${API_BASE}/streamers/${encodeURIComponent(username)}`, {
@@ -5411,13 +5473,13 @@ async function removeStreamer(username) {
                     await updateOverallStats();
                     
                     // Показываем уведомление об успехе
-                    showNotification('success', `Streamer ${username} removed successfully`);
+                    showNotification('success', t('notify.streamerRemoved', { name: username }));
                 } else {
-                    showNotification('error', result.message || 'Failed to remove streamer');
+                    showNotification('error', result.message || t('notify.streamerRemoveFailed'));
                 }
             } catch (error) {
                 console.error('Error removing streamer:', error);
-                showNotification('error', 'Failed to remove streamer. Please try again.');
+                showNotification('error', t('notify.streamerRemoveRetry'));
             }
         }
     );
@@ -5856,27 +5918,7 @@ function findBestCategoryFuzzyMatch(name, categories) {
 }
 
 /**
- * Склонение русских слов по числу
- * @param {number} value
- * @param {string} one
- * @param {string} few
- * @param {string} many
- * @returns {string}
- */
-function pluralizeRu(value, one, few, many) {
-    const mod10 = Math.abs(value) % 10;
-    const mod100 = Math.abs(value) % 100;
-    if (mod10 === 1 && mod100 !== 11) {
-        return one;
-    }
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
-        return few;
-    }
-    return many;
-}
-
-/**
- * Форматирует длительность стримов категории по-русски
+ * Форматирует длительность стримов категории
  * @param {number} durationMs
  * @returns {string}
  */
@@ -5887,10 +5929,10 @@ function formatCategoryStreamDuration(durationMs) {
     const parts = [];
 
     if (hours > 0) {
-        parts.push(`${hours} ${pluralizeRu(hours, 'час', 'часа', 'часов')}`);
+        parts.push(pluralizeDuration(hours, 'hour'));
     }
     if (minutes > 0 || hours === 0) {
-        parts.push(`${minutes} ${pluralizeRu(minutes, 'минута', 'минуты', 'минут')}`);
+        parts.push(pluralizeDuration(minutes, 'minute'));
     }
 
     return parts.join(' ');
@@ -5909,7 +5951,7 @@ let expandedCategoryStreamStats = new Set();
  */
 function buildCategoryStreamDurationStreamersHtml(streamers) {
     if (!Array.isArray(streamers) || streamers.length === 0) {
-        return '<p class="category-stream-duration-streamers-empty">Нет данных по стримерам</p>';
+        return `<p class="category-stream-duration-streamers-empty">${escapeHtml(t('catStats.noStreamers'))}</p>`;
     }
 
     const items = streamers
@@ -5938,7 +5980,11 @@ async function loadCategoryStreamStats() {
         renderCategoryStreamStats();
         return;
     }
-    categoryStreamDurationStats = Array.isArray(data.categories) ? data.categories : [];
+    categoryStreamDurationStats = (Array.isArray(data.categories) ? data.categories : [])
+        .filter((entry) => {
+            const ms = Math.max(0, Math.floor(Number(entry?.durationMs) || 0));
+            return ms > 0 && Math.floor(ms / 60000) > 0;
+        });
     renderCategoryStreamStats();
 }
 
@@ -5959,7 +6005,7 @@ function renderCategoryStreamStats() {
     }
 
     if (!categoryStreamDurationStats.length) {
-        wrap.innerHTML = '<p class="category-stream-duration-empty">Пока нет зафиксированных категорий</p>';
+        wrap.innerHTML = `<p class="category-stream-duration-empty">${escapeHtml(t('catStats.empty'))}</p>`;
         return;
     }
 
@@ -5984,7 +6030,7 @@ function renderCategoryStreamStats() {
                     class="category-stream-duration-toggle"
                     data-category="${safeCategoryAttr}"
                     aria-expanded="${expanded ? 'true' : 'false'}"
-                    title="${expanded ? 'Свернуть' : 'Развернуть'}"
+                    title="${expanded ? escapeHtml(t('catStats.collapse')) : escapeHtml(t('catStats.expand'))}"
                 >
                     <span class="category-stream-duration-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span>
                     <span class="category-stream-duration-header">
@@ -5999,6 +6045,53 @@ function renderCategoryStreamStats() {
     }).join('');
 
     wrap.innerHTML = `<ul class="category-stream-duration-list">${rows}</ul>`;
+}
+
+/**
+ * Сбрасывает статистику времени стримов по категориям
+ */
+function resetCategoryStreamStats() {
+    showConfirmModal(
+        t('catStats.resetConfirmTitle'),
+        t('catStats.resetConfirmBody'),
+        () => {
+            void performCategoryStreamStatsReset();
+        }
+    );
+}
+
+/**
+ * Выполняет сброс статистики по категориям на сервере
+ */
+async function performCategoryStreamStatsReset() {
+    const btn = document.getElementById('resetCategoryStreamStatsBtn');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span aria-hidden="true">⏳</span><span>${escapeHtml(t('catStats.resetting'))}</span>`;
+    }
+
+    try {
+        const result = await postApi('/category-stream-stats/reset', {});
+        if (result.ok) {
+            expandedCategoryStreamStats.clear();
+            categoryStreamDurationStats = [];
+            renderCategoryStreamStats();
+            await loadCategoryStreamStats();
+            showNotification('success', t('notify.catStatsResetSuccess'));
+        } else {
+            showNotification('error', result.message || t('notify.catStatsResetFailed'));
+        }
+    } catch (error) {
+        console.error('Error resetting category stream stats:', error);
+        showNotification('error', t('notify.catStatsResetFailed'));
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            applyI18nToDocument();
+        }
+    }
 }
 
 /**
@@ -6023,6 +6116,16 @@ function initCategoryStreamStatsSection() {
                 expandedCategoryStreamStats.add(categoryKey);
             }
             renderCategoryStreamStats();
+        });
+    }
+
+    const resetBtn = document.getElementById('resetCategoryStreamStatsBtn');
+    if (resetBtn && !resetBtn.dataset.bound) {
+        resetBtn.dataset.bound = '1';
+        resetBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            resetCategoryStreamStats();
         });
     }
 
@@ -6096,7 +6199,7 @@ function renderFavoriteCategoriesTable() {
     }
 
     if (!favoriteCategories.length) {
-        wrap.innerHTML = '<p class="favorite-categories-empty">Нет избранных категорий</p>';
+        wrap.innerHTML = `<p class="favorite-categories-empty">${escapeHtml(t('fav.empty'))}</p>`;
         return;
     }
 
@@ -6107,19 +6210,17 @@ function renderFavoriteCategoriesTable() {
         const isSelected = selectedFavoriteCategoryFilterIds.has(cat.id);
         const selectedClass = isSelected ? ' is-selected' : '';
         const onlineCount = onlineCounts.get(cat.id) || 0;
-        const selectedTitle = isSelected
-            ? 'Снять фильтр по этой категории'
-            : 'Показать стримеров с этой категорией';
+        const selectedTitle = isSelected ? t('fav.clearFilter') : t('fav.applyFilter');
         return `
-            <button type="button" class="favorite-category-chip${selectedClass}" data-category-id="${escapeHtml(cat.id)}" title="${selectedTitle}">
+            <button type="button" class="favorite-category-chip${selectedClass}" data-category-id="${escapeHtml(cat.id)}" title="${escapeHtml(selectedTitle)}">
                 <span class="favorite-category-chip-name" style="color: ${color};">${escapeHtml(cat.name)}<span class="favorite-category-chip-online-count"> (${onlineCount})</span></span>
-                <span class="favorite-category-chip-remove" data-category-id="${escapeHtml(cat.id)}" title="Удалить из избранного" aria-label="Удалить категорию" role="button" tabindex="0">✕</span>
+                <span class="favorite-category-chip-remove" data-category-id="${escapeHtml(cat.id)}" title="${escapeHtml(t('fav.remove'))}" aria-label="${escapeHtml(t('fav.removeAria'))}" role="button" tabindex="0">✕</span>
             </button>
         `;
     }).join('');
 
     const filterHint = selectedFavoriteCategoryFilterIds.size > 0
-        ? '<p class="favorite-categories-filter-hint">Фильтр по текущей (онлайн) или последней (офлайн) категории. Офлайн-стримеры скрываются кнопкой Hide Offline.</p>'
+        ? `<p class="favorite-categories-filter-hint">${escapeHtml(t('fav.filterHint'))}</p>`
         : '';
 
     wrap.innerHTML = `<div class="favorite-categories-wrap">${chips}</div>${filterHint}`;
@@ -6225,7 +6326,7 @@ function renderCategoryAutocomplete(categories) {
     categorySearchResults = categories;
 
     if (!categories.length) {
-        dropdown.innerHTML = '<div class="category-suggestion-empty">Ничего не найдено</div>';
+        dropdown.innerHTML = `<div class="category-suggestion-empty">${escapeHtml(t('search.nothingFound'))}</div>`;
         dropdown.hidden = false;
         positionCategoryAutocompleteDropdown();
         attachCategoryAutocompletePositionListeners();
@@ -6290,7 +6391,7 @@ async function searchCategoriesForAutocomplete(query) {
     if (!data) {
         categorySearchResults = [];
         hideCategoryAutocomplete();
-        showNotification('error', 'Не удалось загрузить подсказки категорий');
+        showNotification('error', t('notify.categoryHintsFailed'));
         return;
     }
     if (data.error) {
@@ -6353,7 +6454,7 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
     }
 
     if (!category?.id || !category?.name) {
-        showNotification('error', 'Выберите категорию из списка подсказок');
+        showNotification('error', t('notify.pickCategory'));
         return;
     }
 
@@ -6364,7 +6465,7 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
     });
 
     if (!result.ok) {
-        showNotification('error', result.message || 'Не удалось добавить категорию');
+        showNotification('error', result.message || t('notify.categoryAddFailed'));
         return;
     }
 
@@ -6376,7 +6477,7 @@ async function addFavoriteCategoryFromUi(categoryOverride) {
     selectedCategorySuggestion = null;
     categorySearchResults = [];
     hideCategoryAutocomplete();
-    showNotification('success', `Категория «${category.name}» добавлена`);
+    showNotification('success', t('notify.categoryAdded', { name: category.name }));
 }
 
 /**
@@ -6396,16 +6497,16 @@ async function removeFavoriteCategory(id) {
         });
         const result = await response.json();
         if (!response.ok) {
-            showNotification('error', result.error || result.message || 'Не удалось удалить категорию');
+            showNotification('error', result.error || result.message || t('notify.categoryRemoveFailed'));
             return;
         }
 
         favoriteCategories = Array.isArray(result.categories) ? result.categories : favoriteCategories;
         applyFavoriteCategoriesState();
-        showNotification('success', 'Категория удалена');
+        showNotification('success', t('notify.categoryRemoved'));
     } catch (error) {
         console.error('Error removing favorite category:', error);
-        showNotification('error', 'Не удалось удалить категорию');
+        showNotification('error', t('notify.categoryRemoveFailed'));
     }
 }
 
