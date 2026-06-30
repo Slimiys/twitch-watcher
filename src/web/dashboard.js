@@ -2403,7 +2403,7 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
     const integrity = health?.integrity;
     const lastUp = formatIntegrityLastUpdated(integrity, captureStatus);
     const token = formatIntegrityTokenState(integrity);
-    const claim = formatIntegrityClaimState(integrity?.bonusClaim);
+    const claim = formatIntegrityClaimState(integrity?.bonusClaim, integrity);
     const prevPrefix = integrity?.tokenPreviousPrefix || '';
     const curPrefix = integrity?.tokenCurrentPrefix || '';
 
@@ -2665,7 +2665,7 @@ function formatIntegrityTokenState(integrity) {
     return { text, kind: 'ok' };
 }
 
-function formatIntegrityClaimState(bonusClaim) {
+function formatIntegrityClaimState(bonusClaim, integrity = null) {
     if (!bonusClaim) {
         return { text: t('integrity.noData'), kind: 'muted' };
     }
@@ -2676,7 +2676,34 @@ function formatIntegrityClaimState(bonusClaim) {
         integrity_blocked: 'err',
         claim_failed: 'warn',
     };
-    let text = bonusClaim.message;
+
+    let text;
+    switch (bonusClaim.status) {
+        case 'no_attempts':
+            text = t('integrity.claim.noAttempts');
+            break;
+        case 'ok':
+            text = t('integrity.claim.ok');
+            break;
+        case 'token_invalid':
+            text = integrity?.configured === false
+                ? t('integrity.claim.tokenNotSet')
+                : t('integrity.claim.tokenInvalid');
+            break;
+        case 'integrity_blocked':
+            text = t('integrity.claim.integrityBlocked', {
+                streamer: bonusClaim.lastClaimStreamer || '—',
+            });
+            break;
+        case 'claim_failed':
+            text = t('integrity.claim.failed', {
+                streamer: bonusClaim.lastClaimStreamer || '—',
+            });
+            break;
+        default:
+            text = bonusClaim.message;
+    }
+
     if (bonusClaim.lastClaimAtMs) {
         text += ` (${formatHealthTimeAgo(bonusClaim.lastClaimAtMs)})`;
     }
@@ -2715,7 +2742,7 @@ async function renderClientIntegrityPanel(health, captureStatus = null) {
     setIntegrityPanelTokenPrefix('integrityPreviousToken', integrity?.tokenPreviousPrefix);
     setIntegrityPanelTokenPrefix('integrityCurrentToken', integrity?.tokenCurrentPrefix);
 
-    const claim = formatIntegrityClaimState(integrity?.bonusClaim);
+    const claim = formatIntegrityClaimState(integrity?.bonusClaim, integrity);
     setIntegrityPanelValue('integrityClaimState', claim.text, claim.kind);
 
     const captureBusy = Boolean(
