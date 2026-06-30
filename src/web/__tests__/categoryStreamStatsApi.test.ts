@@ -28,4 +28,16 @@ describe('categoryStreamStatsApi', () => {
     expect(result.categories).toEqual([{ category: 'Torchlight', durationMs: 3600000 }]);
     expect(result.error).toBeUndefined();
   });
+
+  it('readCategoryStreamStatsForApi предпочитает живые данные провайдера', () => {
+    const provider = {
+      getCategoryStreamDurationTotalsForDashboard: () => [
+        { category: 'Path of Exile', durationMs: 120000 },
+      ],
+    };
+
+    const result = readCategoryStreamStatsForApi(null, provider);
+    expect(result.categories).toEqual([{ category: 'Path of Exile', durationMs: 120000 }]);
+    expect(result.error).toBeUndefined();
+  });
 });

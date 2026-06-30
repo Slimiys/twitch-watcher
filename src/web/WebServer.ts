@@ -795,7 +795,7 @@ export class WebServer {
       try {
         const streamWatcher = this.statisticsProvider as StreamWatcher | null;
         const databaseStorage = streamWatcher?.getDatabaseStorage?.() ?? null;
-        const result = readCategoryStreamStatsForApi(databaseStorage);
+        const result = readCategoryStreamStatsForApi(databaseStorage, streamWatcher);
         if (result.error) {
           res.status(200).json({ categories: [], error: result.error });
           return;
