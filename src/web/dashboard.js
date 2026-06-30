@@ -1571,13 +1571,50 @@ function formatRevisionWithCommitDate(revision, committedAtIso) {
 }
 
 /**
+ * Локализованная подпись индикатора карточки «Версия»
+ * @param {object|null|undefined} st
+ * @returns {string}
+ */
+function getVersionIndicatorLabel(st) {
+    if (!st) {
+        return t('lifecycle.checking');
+    }
+
+    const uiState = st.uiState || 'checking';
+    switch (uiState) {
+        case 'checking':
+            return t('lifecycle.checking');
+        case 'current':
+            return t('version.currentLabel');
+        case 'updating':
+            return `${t('lifecycle.update')}…`;
+        case 'error':
+            return t('version.errorLabel');
+        case 'available':
+            if (st.remoteRevision) {
+                const when = st.remoteRevisionCommittedAt
+                    ? formatCommitDateTime(st.remoteRevisionCommittedAt)
+                    : '';
+                return when
+                    ? t('version.availableWithRevision', { revision: st.remoteRevision, when })
+                    : t('version.availableWithRevisionOnly', { revision: st.remoteRevision });
+            }
+            return t('version.availableShort');
+        case 'unavailable':
+            return st.checkSkippedReason || t('version.checkUnavailable');
+        default:
+            return st.indicatorLabel || '—';
+    }
+}
+
+/**
  * Карточка «Версия» с индикатором состояния обновления
  */
 function renderVersionHealthCard(health) {
     const st = versionUpdateStatus;
     const uiState = st?.uiState || 'checking';
     const dotKind = versionCardDotKind(uiState);
-    const indicatorLabel = st?.indicatorLabel || t('lifecycle.checking');
+    const indicatorLabel = getVersionIndicatorLabel(st);
 
     let title = t('version.checkTitle');
     if (uiState === 'available') {
@@ -2389,7 +2426,7 @@ async function renderIntegrityHealthCard(health, captureStatus = null) {
     return `
         <div class="bot-health-card bot-health-card-integrity bot-health-card-span-2 client-integrity-panel-clickable" id="clientIntegrityPanel" role="button" tabindex="0" data-state="${captureBusy ? 'requesting' : 'idle'}" data-busy="${captureBusy ? '1' : '0'}" title="${escapeHtml(panelTitle)}" aria-live="polite"${captureBusy ? ' aria-busy="true"' : ''}>
             <div class="bot-health-card-title">Integrity</div>
-            <p class="client-integrity-click-hint">Нажмите на карточку для запроса токена</p>
+            <p class="client-integrity-click-hint">${escapeHtml(t('integrity.cardClickHint'))}</p>
             <dl class="client-integrity-rows">
                 <div class="client-integrity-row">
                     <dt>${escapeHtml(t('health.updated'))}</dt>

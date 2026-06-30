@@ -151,6 +151,7 @@
             'integrity.previousToken': 'Прошлый токен',
             'integrity.currentToken': 'Текущий токен',
             'integrity.bonusClaim': 'Сбор бонусов',
+            'integrity.cardClickHint': 'Нажмите на карточку для запроса токена',
 
             'catStats.title': 'Статистика',
             'catStats.loading': 'Загрузка…',
@@ -313,6 +314,12 @@
             'version.title': 'Версия',
             'version.availableTitle': 'Доступно обновление с dev — нажмите для установки',
             'version.okTitle': 'Версия совпадает с origin/dev',
+            'version.currentLabel': 'Актуальная версия',
+            'version.errorLabel': 'Ошибка проверки',
+            'version.availableShort': 'Доступно обновление',
+            'version.availableWithRevision': 'Доступно: {revision} ({when})',
+            'version.availableWithRevisionOnly': 'Доступно: {revision}',
+            'version.checkUnavailable': 'Проверка недоступна',
             'version.updatingTitle': 'Идёт обновление…',
             'version.errorTitle': 'Ошибка проверки — нажмите повторить',
             'version.local': 'Локально:',
@@ -473,6 +480,7 @@
             'integrity.previousToken': 'Previous token',
             'integrity.currentToken': 'Current token',
             'integrity.bonusClaim': 'Bonus claims',
+            'integrity.cardClickHint': 'Click the card to request a token',
 
             'catStats.title': 'Statistics',
             'catStats.loading': 'Loading…',
@@ -635,6 +643,12 @@
             'version.title': 'Version',
             'version.availableTitle': 'Update available on dev — click to install',
             'version.okTitle': 'Version matches origin/dev',
+            'version.currentLabel': 'Up to date',
+            'version.errorLabel': 'Check failed',
+            'version.availableShort': 'Update available',
+            'version.availableWithRevision': 'Available: {revision} ({when})',
+            'version.availableWithRevisionOnly': 'Available: {revision}',
+            'version.checkUnavailable': 'Check unavailable',
             'version.updatingTitle': 'Updating…',
             'version.errorTitle': 'Check failed — click to retry',
             'version.local': 'Local:',
@@ -764,13 +778,14 @@
         }
         const mod10 = n % 10;
         const mod100 = n % 100;
-        let form = 'Many';
+        let key;
         if (mod10 === 1 && mod100 !== 11) {
-            form = '';
+            key = `duration.${unit}`;
         } else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
-            form = 'Few';
+            key = `duration.${unit}sFew`;
+        } else {
+            key = `duration.${unit}sMany`;
         }
-        const key = `duration.${unit}${form}`;
         return `${n} ${t(key)}`;
     }
 
