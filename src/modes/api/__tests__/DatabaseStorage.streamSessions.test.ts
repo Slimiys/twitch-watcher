@@ -203,13 +203,13 @@ describe('DatabaseStorage stream sessions', () => {
   });
 
   it('суммирует длительность стримов по категориям', () => {
-    expect(storage.addCategoryStreamDuration('Path of Exile', 6 * 60 * 60_000 + 53 * 60_000)).toBe(
-      true
-    );
-    expect(storage.addCategoryStreamDuration('Path of Exile 2', 4 * 60 * 60_000 + 34 * 60_000)).toBe(
-      true
-    );
-    expect(storage.addCategoryStreamDuration('Path of Exile', 60_000)).toBe(true);
+    expect(
+      storage.addCategoryStreamDuration('poe_user', 'Path of Exile', 6 * 60 * 60_000 + 53 * 60_000)
+    ).toBe(true);
+    expect(
+      storage.addCategoryStreamDuration('poe2_user', 'Path of Exile 2', 4 * 60 * 60_000 + 34 * 60_000)
+    ).toBe(true);
+    expect(storage.addCategoryStreamDuration('poe_user', 'Path of Exile', 60_000)).toBe(true);
 
     const totals = storage.getCategoryStreamDurationTotals();
     expect(totals).toHaveLength(2);
@@ -217,5 +217,19 @@ describe('DatabaseStorage stream sessions', () => {
     expect(totals[0].durationMs).toBe(6 * 60 * 60_000 + 54 * 60_000);
     expect(totals[1].category).toBe('Path of Exile 2');
     expect(totals[1].durationMs).toBe(4 * 60 * 60_000 + 34 * 60_000);
+  });
+
+  it('суммирует длительность по стримерам внутри категории', () => {
+    storage.addCategoryStreamDuration('alpha', 'Torchlight', 2 * 60 * 60_000);
+    storage.addCategoryStreamDuration('beta', 'Torchlight', 60 * 60_000);
+    storage.addCategoryStreamDuration('alpha', 'Torchlight', 30 * 60_000);
+
+    const details = storage.getCategoryStreamDurationDetails();
+    const torchlight = details.find((entry) => entry.category === 'Torchlight');
+    expect(torchlight?.durationMs).toBe(3 * 60 * 60_000 + 30 * 60_000);
+    expect(torchlight?.streamers).toEqual([
+      { streamerName: 'alpha', durationMs: 2 * 60 * 60_000 + 30 * 60_000 },
+      { streamerName: 'beta', durationMs: 60 * 60_000 },
+    ]);
   });
 });

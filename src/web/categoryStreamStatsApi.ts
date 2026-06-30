@@ -32,5 +32,5 @@ export function readCategoryStreamStatsForApi(
     return { categories: [], error: 'Database storage not available' };
   }
 
-  return { categories: databaseStorage.getCategoryStreamDurationTotals() };
+  return { categories: databaseStorage.getCategoryStreamDurationDetails() };
 }

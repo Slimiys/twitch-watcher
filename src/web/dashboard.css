@@ -3334,17 +3334,52 @@ th.notify-header-clickable:active {
 
 .category-stream-duration-item {
     display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 10px 12px;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
     background: #1f1f23;
     border: 1px solid #26262c;
     border-radius: 8px;
+    overflow: hidden;
 }
 
 .category-stream-duration-item.is-favorite-category {
     border-color: rgba(145, 71, 255, 0.45);
+}
+
+.category-stream-duration-toggle {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+
+.category-stream-duration-toggle:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.category-stream-duration-chevron {
+    flex: 0 0 auto;
+    width: 14px;
+    color: #adadb8;
+    font-size: 11px;
+    line-height: 1;
+    user-select: none;
+}
+
+.category-stream-duration-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-width: 0;
 }
 
 .category-stream-duration-name {
@@ -3361,5 +3396,45 @@ th.notify-header-clickable:active {
     color: #efeff1;
     font-size: 14px;
     font-variant-numeric: tabular-nums;
+}
+
+.category-stream-duration-streamers {
+    list-style: none;
+    margin: 0;
+    padding: 0 12px 10px 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid #26262c;
+}
+
+.category-stream-duration-streamer-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+}
+
+.category-stream-duration-streamer-name {
+    color: #dedee3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.category-stream-duration-streamer-time {
+    color: #adadb8;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.category-stream-duration-streamers-empty {
+    margin: 0;
+    padding: 8px 12px 10px 36px;
+    color: #adadb8;
+    font-size: 13px;
+    border-top: 1px solid #26262c;
 }
 

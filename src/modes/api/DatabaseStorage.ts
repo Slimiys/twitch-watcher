@@ -113,6 +113,13 @@ export interface StreamerCategoryStreamCount {
 export interface CategoryStreamDurationTotal {
   category: string;
   durationMs: number;
+  streamers: StreamerCategoryStreamDurationEntry[];
+}
+
+/** Время стримов стримера в конкретной категории */
+export interface StreamerCategoryStreamDurationEntry {
+  streamerName: string;
+  durationMs: number;
 }
 
 /** Даты начала стримов по периодам для дашборда */
@@ -410,6 +417,18 @@ export class DatabaseStorage {
       )
     `);
 
+    // Суммарное время стримов по категориям для каждого стримера
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS streamer_category_stream_duration_totals (
+        streamer_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (streamer_id, category),
+        FOREIGN KEY (streamer_id) REFERENCES streamers(id) ON DELETE CASCADE
+      )
+    `);
+
     // Создаем индексы для быстрого поиска
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_daily_points_streamer_date 
@@ -423,6 +442,9 @@ export class DatabaseStorage {
 
       CREATE INDEX IF NOT EXISTS idx_stream_session_categories_session
       ON stream_session_categories(stream_session_id);
+
+      CREATE INDEX IF NOT EXISTS idx_streamer_cat_duration_category
+      ON streamer_category_stream_duration_totals(category);
     `);
 
     logger.verbose(`📊  Database tables created`);
@@ -740,27 +762,47 @@ export class DatabaseStorage {
   }
 
   /**
-   * Добавляет время стрима к суммарной статистике категории
+   * Добавляет время стрима к суммарной статистике категории и стримера
    */
-  addCategoryStreamDuration(category: string, durationMs: number): boolean {
+  addCategoryStreamDuration(username: string, category: string, durationMs: number): boolean {
+    const normalizedUsername = username?.trim();
     const normalizedCategory = category?.trim();
     const delta = Math.floor(durationMs);
-    if (!isDatabaseAvailable || !this.db || !normalizedCategory || delta <= 0) {
+    if (
+      !isDatabaseAvailable ||
+      !this.db ||
+      !normalizedUsername ||
+      !normalizedCategory ||
+      delta <= 0
+    ) {
       return false;
     }
 
     try {
+      const streamerId = this.getOrCreateStreamer(normalizedUsername);
       const now = Date.now();
-      const stmt = this.db.prepare(`
+
+      const categoryStmt = this.db.prepare(`
         INSERT INTO category_stream_duration_totals (category, duration_ms, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(category) DO UPDATE SET
           duration_ms = duration_ms + excluded.duration_ms,
           updated_at = excluded.updated_at
       `);
-      stmt.bind([normalizedCategory, delta, now]);
-      stmt.step();
-      stmt.free();
+      categoryStmt.bind([normalizedCategory, delta, now]);
+      categoryStmt.step();
+      categoryStmt.free();
+
+      const streamerStmt = this.db.prepare(`
+        INSERT INTO streamer_category_stream_duration_totals (streamer_id, category, duration_ms, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(streamer_id, category) DO UPDATE SET
+          duration_ms = duration_ms + excluded.duration_ms,
+          updated_at = excluded.updated_at
+      `);
+      streamerStmt.bind([streamerId, normalizedCategory, delta, now]);
+      streamerStmt.step();
+      streamerStmt.free();
 
       if (this.config.autoSave) {
         this.saveDatabase();
@@ -770,6 +812,116 @@ export class DatabaseStorage {
       logger.error(`❌  Failed to add category stream duration: ${error.message || error}`);
       return false;
     }
+  }
+
+  /**
+   * Возвращает время стримов по стримерам для одной категории
+   */
+  getStreamerCategoryStreamDurations(category: string): StreamerCategoryStreamDurationEntry[] {
+    const normalizedCategory = category?.trim();
+    const result: StreamerCategoryStreamDurationEntry[] = [];
+    if (!isDatabaseAvailable || !this.db || !normalizedCategory) {
+      return result;
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT s.username, sc.duration_ms
+        FROM streamer_category_stream_duration_totals sc
+        INNER JOIN streamers s ON s.id = sc.streamer_id
+        WHERE sc.category = ? AND sc.duration_ms > 0
+        ORDER BY sc.duration_ms DESC, s.username ASC
+      `);
+      stmt.bind([normalizedCategory]);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as { username: string; duration_ms: number };
+        if (!row.username) {
+          continue;
+        }
+        result.push({
+          streamerName: String(row.username),
+          durationMs: Number(row.duration_ms) || 0,
+        });
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(
+        `❌  Failed to get streamer category stream durations: ${error.message || error}`
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Возвращает все записи времени стримов по парам стример-категория
+   */
+  getAllStreamerCategoryStreamDurationRows(): Array<{
+    category: string;
+    streamerName: string;
+    durationMs: number;
+  }> {
+    const result: Array<{ category: string; streamerName: string; durationMs: number }> = [];
+    if (!isDatabaseAvailable || !this.db) {
+      return result;
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT sc.category, s.username, sc.duration_ms
+        FROM streamer_category_stream_duration_totals sc
+        INNER JOIN streamers s ON s.id = sc.streamer_id
+        WHERE sc.duration_ms > 0
+        ORDER BY sc.category ASC, sc.duration_ms DESC, s.username ASC
+      `);
+
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as {
+          category: string;
+          username: string;
+          duration_ms: number;
+        };
+        if (!row.category || !row.username) {
+          continue;
+        }
+        result.push({
+          category: String(row.category),
+          streamerName: String(row.username),
+          durationMs: Number(row.duration_ms) || 0,
+        });
+      }
+      stmt.free();
+    } catch (error: any) {
+      logger.error(
+        `❌  Failed to get all streamer category stream durations: ${error.message || error}`
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Возвращает суммарное время стримов по категориям с разбивкой по стримерам
+   */
+  getCategoryStreamDurationDetails(): CategoryStreamDurationTotal[] {
+    const totals = this.getCategoryStreamDurationTotals();
+    const streamersByCategory = new Map<string, StreamerCategoryStreamDurationEntry[]>();
+
+    for (const row of this.getAllStreamerCategoryStreamDurationRows()) {
+      if (!streamersByCategory.has(row.category)) {
+        streamersByCategory.set(row.category, []);
+      }
+      streamersByCategory.get(row.category)!.push({
+        streamerName: row.streamerName,
+        durationMs: row.durationMs,
+      });
+    }
+
+    return totals.map((entry) => ({
+      ...entry,
+      streamers: streamersByCategory.get(entry.category) ?? [],
+    }));
   }
 
   /**
@@ -797,6 +949,7 @@ export class DatabaseStorage {
         result.push({
           category: String(row.category),
           durationMs: Number(row.duration_ms) || 0,
+          streamers: [],
         });
       }
       stmt.free();

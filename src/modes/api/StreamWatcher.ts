@@ -2087,7 +2087,7 @@ export class StreamWatcher {
 
     const durationMs = untilMs - active.since;
     if (durationMs > 0 && this.databaseStorage?.isReady()) {
-      this.databaseStorage.addCategoryStreamDuration(active.category, durationMs);
+      this.databaseStorage.addCategoryStreamDuration(username, active.category, durationMs);
     }
 
     this.activeCategoryWatch.delete(username);
@@ -2107,7 +2107,7 @@ export class StreamWatcher {
       return;
     }
 
-    this.databaseStorage.addCategoryStreamDuration(active.category, durationMs);
+    this.databaseStorage.addCategoryStreamDuration(username, active.category, durationMs);
     active.since = untilMs;
   }
 
@@ -3011,24 +3011,61 @@ export class StreamWatcher {
    * Возвращает суммарное время стримов по категориям (БД + текущие активные сегменты)
    */
   getCategoryStreamDurationTotalsForDashboard(): CategoryStreamDurationTotal[] {
-    const totals = new Map<string, number>();
+    const categoryTotals = new Map<string, number>();
+    const streamersByCategory = new Map<string, Map<string, number>>();
+
+    const addSegment = (category: string, streamerName: string, durationMs: number): void => {
+      if (durationMs <= 0) {
+        return;
+      }
+      categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + durationMs);
+      if (!streamersByCategory.has(category)) {
+        streamersByCategory.set(category, new Map());
+      }
+      const streamerTotals = streamersByCategory.get(category)!;
+      streamerTotals.set(
+        streamerName,
+        (streamerTotals.get(streamerName) ?? 0) + durationMs
+      );
+    };
 
     if (this.databaseStorage?.isReady()) {
       for (const entry of this.databaseStorage.getCategoryStreamDurationTotals()) {
-        totals.set(entry.category, entry.durationMs);
+        categoryTotals.set(entry.category, entry.durationMs);
+      }
+      for (const row of this.databaseStorage.getAllStreamerCategoryStreamDurationRows()) {
+        if (!streamersByCategory.has(row.category)) {
+          streamersByCategory.set(row.category, new Map());
+        }
+        streamersByCategory.get(row.category)!.set(row.streamerName, row.durationMs);
       }
     }
 
     const now = Date.now();
-    for (const active of this.activeCategoryWatch.values()) {
-      const pendingMs = now - active.since;
-      if (pendingMs > 0) {
-        totals.set(active.category, (totals.get(active.category) ?? 0) + pendingMs);
-      }
+    for (const [username, active] of this.activeCategoryWatch.entries()) {
+      addSegment(active.category, username, now - active.since);
     }
 
-    return [...totals.entries()]
-      .map(([category, durationMs]) => ({ category, durationMs }))
+    const categories = new Set([...categoryTotals.keys(), ...streamersByCategory.keys()]);
+
+    return [...categories]
+      .map((category) => {
+        const streamerMap = streamersByCategory.get(category) ?? new Map<string, number>();
+        const streamers = [...streamerMap.entries()]
+          .map(([streamerName, durationMs]) => ({ streamerName, durationMs }))
+          .filter((entry) => entry.durationMs > 0)
+          .sort(
+            (a, b) =>
+              b.durationMs - a.durationMs ||
+              a.streamerName.localeCompare(b.streamerName, 'ru')
+          );
+
+        const durationMs =
+          categoryTotals.get(category) ??
+          streamers.reduce((sum, entry) => sum + entry.durationMs, 0);
+
+        return { category, durationMs, streamers };
+      })
       .filter((entry) => entry.durationMs > 0)
       .sort((a, b) => b.durationMs - a.durationMs || a.category.localeCompare(b.category, 'ru'));
   }

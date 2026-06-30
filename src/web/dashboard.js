@@ -5899,6 +5899,35 @@ function formatCategoryStreamDuration(durationMs) {
 /** Статистика времени стримов по категориям */
 let categoryStreamDurationStats = [];
 
+/** Раскрытые категории в секции статистики */
+let expandedCategoryStreamStats = new Set();
+
+/**
+ * Строит HTML списка стримеров для раскрытой категории
+ * @param {Array<{streamerName:string, durationMs:number}>} streamers
+ * @returns {string}
+ */
+function buildCategoryStreamDurationStreamersHtml(streamers) {
+    if (!Array.isArray(streamers) || streamers.length === 0) {
+        return '<p class="category-stream-duration-streamers-empty">Нет данных по стримерам</p>';
+    }
+
+    const items = streamers
+        .map((row) => {
+            const streamerName = row?.streamerName || '—';
+            const durationLabel = formatCategoryStreamDuration(row?.durationMs ?? 0);
+            return `
+                <li class="category-stream-duration-streamer-item">
+                    <span class="category-stream-duration-streamer-name">${escapeHtml(streamerName)}</span>
+                    <span class="category-stream-duration-streamer-time">${escapeHtml(durationLabel)}</span>
+                </li>
+            `;
+        })
+        .join('');
+
+    return `<ul class="category-stream-duration-streamers">${items}</ul>`;
+}
+
 /**
  * Загружает статистику стримов по категориям
  */
@@ -5936,14 +5965,35 @@ function renderCategoryStreamStats() {
 
     const rows = categoryStreamDurationStats.map((entry) => {
         const name = entry?.category || '—';
+        const categoryKey = normalizeCategoryNameForMatch(name);
+        const expanded = expandedCategoryStreamStats.has(categoryKey);
         const color = generateColorFromString(name);
         const favoriteClass = isFavoriteStreamerCategory(name) ? ' is-favorite-category' : '';
         const durationLabel = formatCategoryStreamDuration(entry?.durationMs ?? 0);
+        const safeCategoryAttr = String(name)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;');
+        const streamersHtml = expanded
+            ? buildCategoryStreamDurationStreamersHtml(entry?.streamers)
+            : '';
+
         return `
-            <li class="category-stream-duration-item${favoriteClass}">
-                <span class="category-stream-duration-name" style="color: ${color};">${escapeHtml(name)}</span>
-                <span class="category-stream-duration-separator">|</span>
-                <span class="category-stream-duration-time">${escapeHtml(durationLabel)}</span>
+            <li class="category-stream-duration-item${favoriteClass}${expanded ? ' is-expanded' : ''}">
+                <button
+                    type="button"
+                    class="category-stream-duration-toggle"
+                    data-category="${safeCategoryAttr}"
+                    aria-expanded="${expanded ? 'true' : 'false'}"
+                    title="${expanded ? 'Свернуть' : 'Развернуть'}"
+                >
+                    <span class="category-stream-duration-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span>
+                    <span class="category-stream-duration-header">
+                        <span class="category-stream-duration-name" style="color: ${color};">${escapeHtml(name)}</span>
+                        <span class="category-stream-duration-separator">|</span>
+                        <span class="category-stream-duration-time">${escapeHtml(durationLabel)}</span>
+                    </span>
+                </button>
+                ${streamersHtml}
             </li>
         `;
     }).join('');
@@ -5955,6 +6005,27 @@ function renderCategoryStreamStats() {
  * Инициализирует секцию статистики по категориям
  */
 function initCategoryStreamStatsSection() {
+    const wrap = document.getElementById('categoryStreamStatsWrap');
+    if (wrap && !wrap.dataset.categoryStatsBound) {
+        wrap.dataset.categoryStatsBound = '1';
+        wrap.addEventListener('click', (event) => {
+            const toggle = event.target.closest('.category-stream-duration-toggle');
+            if (!toggle || !wrap.contains(toggle)) {
+                return;
+            }
+            const categoryKey = normalizeCategoryNameForMatch(toggle.dataset.category || '');
+            if (!categoryKey) {
+                return;
+            }
+            if (expandedCategoryStreamStats.has(categoryKey)) {
+                expandedCategoryStreamStats.delete(categoryKey);
+            } else {
+                expandedCategoryStreamStats.add(categoryKey);
+            }
+            renderCategoryStreamStats();
+        });
+    }
+
     loadCategoryStreamStats();
 }
 
