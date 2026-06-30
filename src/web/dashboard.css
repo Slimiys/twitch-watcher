@@ -3259,6 +3259,31 @@ th.notify-header-clickable:active {
     background: #1f1f23;
     border: 1px solid #26262c;
     border-radius: 999px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+}
+
+.favorite-category-chip:hover {
+    background: #26262c;
+}
+
+.favorite-category-chip.is-selected {
+    border-color: #9147ff;
+    background: rgba(145, 71, 255, 0.12);
+    box-shadow: 0 0 0 1px rgba(145, 71, 255, 0.35);
+}
+
+.favorite-category-chip.is-selected:hover {
+    background: rgba(145, 71, 255, 0.18);
+}
+
+.favorite-categories-filter-hint {
+    margin: 10px 0 0;
+    color: #adadb8;
+    font-size: 12px;
+    line-height: 1.4;
 }
 
 .favorite-category-chip-name {
@@ -3266,6 +3291,11 @@ th.notify-header-clickable:active {
     font-weight: 600;
     line-height: 1.2;
     word-break: break-word;
+}
+
+.favorite-category-chip-online-count {
+    color: #adadb8;
+    font-weight: 500;
 }
 
 .favorite-category-chip-remove {
