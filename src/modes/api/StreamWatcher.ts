@@ -38,6 +38,7 @@ import {
   shouldFinalizeOffline,
 } from './streamOnlineGrace';
 import { publishDashboardHubEvent } from './dashboardEventHub';
+import { isSameStreamCategory } from './streamCategoryIdentity';
 import { loadStatisticsConfig } from './configLoader';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -106,7 +107,10 @@ export class StreamWatcher {
   /** Активные ключи сессий стримов для учёта категорий (username -> sessionKey) */
   private activeStreamSessionKeys: Map<string, string> = new Map();
   /** Текущий отслеживаемый сегмент категории для подсчёта длительности */
-  private activeCategoryWatch: Map<string, { category: string; since: number }> = new Map();
+  private activeCategoryWatch: Map<
+    string,
+    { category: string; categoryId: string | null; since: number }
+  > = new Map();
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
   private claimCheckInterval: NodeJS.Timeout | null = null;
@@ -1089,6 +1093,7 @@ export class StreamWatcher {
       isOnline: false,
       broadcastId: null,
       game: null,
+      gameId: null,
       title: null,
       tags: [],
       spadeUrl: null,
@@ -1698,8 +1703,11 @@ export class StreamWatcher {
       while (index < candidates.length) {
         const streamerInfo = candidates[index];
         index += 1;
+        const previousGame = streamerInfo.game;
+        const previousGameId = streamerInfo.gameId ?? null;
         try {
           await this.twitchAPI.updateStreamerInfo(streamerInfo);
+          this.saveGameToDatabaseIfChanged(streamerInfo, previousGame, previousGameId);
         } catch (error: any) {
           logger.verbose(
             `⚠️  [${streamerInfo.username}] Status sync for dashboard failed: ${error.message || error}`
@@ -1982,7 +1990,7 @@ export class StreamWatcher {
     const sessionKey = buildStreamSessionKey(startedAt, streamerInfo.broadcastId);
     this.activeStreamSessionKeys.set(streamerInfo.username, sessionKey);
     this.trackStreamCategoryForSession(streamerInfo);
-    this.startCategoryDurationWatch(streamerInfo.username, streamerInfo.game);
+    this.syncCategoryDurationWithStreamerGame(streamerInfo);
   }
 
   /**
@@ -2010,7 +2018,7 @@ export class StreamWatcher {
       }
       this.trackStreamCategoryForSession(streamerInfo);
     }
-    this.startCategoryDurationWatch(streamerInfo.username, streamerInfo.game);
+    this.syncCategoryDurationWithStreamerGame(streamerInfo);
   }
 
   /**
@@ -2030,50 +2038,50 @@ export class StreamWatcher {
         streamerInfo.startTime = startedAt;
       }
       this.restoreStreamSessionCategoryTracking(streamerInfo);
-    }
-
-    if (streamerInfo.game?.trim() && !this.activeCategoryWatch.has(streamerInfo.username)) {
-      this.startCategoryDurationWatch(streamerInfo.username, streamerInfo.game);
-    }
-  }
-
-  /**
-   * Начинает отслеживание длительности текущей категории стримера
-   */
-  private startCategoryDurationWatch(
-    username: string,
-    category: string | null | undefined
-  ): void {
-    const trimmed = category?.trim();
-    if (!trimmed) {
       return;
     }
 
-    const existing = this.activeCategoryWatch.get(username);
-    if (existing?.category === trimmed) {
+    this.syncCategoryDurationWithStreamerGame(streamerInfo);
+  }
+
+  /**
+   * Синхронизирует таймер категории с актуальной игрой стримера
+   */
+  private syncCategoryDurationWithStreamerGame(streamerInfo: StreamerInfo): void {
+    if (!isEffectivelyOnline(streamerInfo)) {
+      return;
+    }
+
+    if (!this.activeStreamSessionKeys.has(streamerInfo.username)) {
+      return;
+    }
+
+    const category = streamerInfo.game?.trim();
+    if (!category) {
+      return;
+    }
+
+    const categoryId = streamerInfo.gameId?.trim() || null;
+    const existing = this.activeCategoryWatch.get(streamerInfo.username);
+    if (
+      existing &&
+      isSameStreamCategory(
+        { name: existing.category, id: existing.categoryId },
+        { name: category, id: categoryId }
+      )
+    ) {
       return;
     }
 
     if (existing) {
-      this.flushCategoryDurationWatch(username);
+      this.flushCategoryDurationWatch(streamerInfo.username);
     }
 
-    this.activeCategoryWatch.set(username, { category: trimmed, since: Date.now() });
-  }
-
-  /**
-   * Переключает отслеживание категории и сохраняет длительность предыдущей
-   */
-  private switchCategoryDurationWatch(
-    username: string,
-    category: string | null | undefined
-  ): void {
-    this.flushCategoryDurationWatch(username);
-    const trimmed = category?.trim();
-    if (!trimmed) {
-      return;
-    }
-    this.activeCategoryWatch.set(username, { category: trimmed, since: Date.now() });
+    this.activeCategoryWatch.set(streamerInfo.username, {
+      category,
+      categoryId,
+      since: Date.now(),
+    });
   }
 
   /**
@@ -2195,10 +2203,11 @@ export class StreamWatcher {
         const wasOnline = streamerInfo.isOnline;
         const wasBriefOfflinePending = canResumeFromBriefOffline(streamerInfo);
         const previousGame = streamerInfo.game;
+        const previousGameId = streamerInfo.gameId ?? null;
         await this.twitchAPI.updateStreamerInfo(streamerInfo);
         
         // Сохраняем категорию в БД при изменении
-        this.saveGameToDatabaseIfChanged(streamerInfo, previousGame);
+        this.saveGameToDatabaseIfChanged(streamerInfo, previousGame, previousGameId);
 
         if (!wasOnline && streamerInfo.isOnline) {
           if (wasBriefOfflinePending || canResumeFromBriefOffline(streamerInfo)) {
@@ -3412,12 +3421,21 @@ export class StreamWatcher {
    * @param streamerInfo Информация о стримере
    * @param previousGame Предыдущая категория (для проверки изменения)
    */
-  private saveGameToDatabaseIfChanged(streamerInfo: StreamerInfo, previousGame: string | null): void {
+  private saveGameToDatabaseIfChanged(
+    streamerInfo: StreamerInfo,
+    previousGame: string | null,
+    previousGameId: string | null = null
+  ): void {
     if (!this.databaseStorage || !this.databaseStorage.isReady()) {
       return;
     }
 
-    if (streamerInfo.game === previousGame) {
+    if (
+      isSameStreamCategory(
+        { name: previousGame, id: previousGameId },
+        { name: streamerInfo.game, id: streamerInfo.gameId }
+      )
+    ) {
       return;
     }
 
@@ -3426,7 +3444,7 @@ export class StreamWatcher {
         this.ensureStreamCategoryTracking(streamerInfo);
       }
       if (this.activeStreamSessionKeys.has(streamerInfo.username)) {
-        this.switchCategoryDurationWatch(streamerInfo.username, streamerInfo.game);
+        this.syncCategoryDurationWithStreamerGame(streamerInfo);
         if (streamerInfo.game) {
           this.databaseStorage.updateLastGame(streamerInfo.username, streamerInfo.game);
           this.trackStreamCategoryForSession(streamerInfo);
@@ -3473,8 +3491,8 @@ export class StreamWatcher {
         }
         if (dbStats.lastGame) {
           logger.verbose(`📊  [${streamerInfo.username}] Last game: ${dbStats.lastGame}`);
-          // Загружаем последнюю категорию из БД, если текущая категория не установлена
-          if (!streamerInfo.game && dbStats.lastGame) {
+          // Загружаем последнюю категорию из БД только для офлайн-стримеров (для отображения)
+          if (!streamerInfo.isOnline && !streamerInfo.game && dbStats.lastGame) {
             streamerInfo.game = dbStats.lastGame;
           }
         }

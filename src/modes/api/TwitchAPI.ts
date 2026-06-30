@@ -475,6 +475,7 @@ export class TwitchAPI {
         streamerInfo.broadcastId = streamInfo.broadcastId;
         streamerInfo.title = streamInfo.title;
         streamerInfo.game = streamInfo.game?.name || null;
+        streamerInfo.gameId = streamInfo.game?.id || null;
         streamerInfo.tags = streamInfo.tags.map((tag: any) => tag.localizedName || tag.name);
         streamerInfo.viewersCount = streamInfo.viewersCount ?? 0;
 
@@ -722,6 +723,7 @@ export class TwitchAPI {
         isOnline: broadcastId !== null,
         broadcastId,
         game: null,
+        gameId: null,
         title: null,
         tags: [],
         spadeUrl: null,

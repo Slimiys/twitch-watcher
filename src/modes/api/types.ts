@@ -21,6 +21,8 @@ export interface StreamerInfo {
   isOnline: boolean;
   broadcastId: string | null;
   game: string | null;
+  /** ID категории Twitch (для точного сопоставления, напр. PoE vs PoE2) */
+  gameId?: string | null;
   title: string | null;
   tags: string[];
   spadeUrl: string | null;
