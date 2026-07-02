@@ -4,10 +4,38 @@ const botUrlInput = document.getElementById('botUrl');
 const apiKeyInput = document.getElementById('apiKey');
 const enabledInput = document.getElementById('enabled');
 const statusEl = document.getElementById('status');
+const toggleStreamNotifyBtn = document.getElementById('toggleStreamNotify');
 
 function setStatus(text, kind) {
   statusEl.textContent = text;
   statusEl.className = 'status' + (kind ? ` ${kind}` : '');
+}
+
+function renderStreamNotifyButton(enabled) {
+  toggleStreamNotifyBtn.textContent = enabled
+    ? 'Уведомления: вкл'
+    : 'Уведомления: выкл';
+  toggleStreamNotifyBtn.classList.toggle('on', enabled);
+  toggleStreamNotifyBtn.classList.toggle('off', !enabled);
+}
+
+function renderStreamNotifyStatus(enabled) {
+  renderStreamNotifyButton(enabled);
+  setStatus(
+    enabled ? 'Уведомления о стримах включены' : 'Уведомления о стримах выключены',
+    enabled ? 'ok' : ''
+  );
+}
+
+async function readStreamNotificationsEnabled() {
+  const data = await chrome.storage.local.get(['streamNotificationsEnabled']);
+  return data.streamNotificationsEnabled === true;
+}
+
+async function loadStreamNotifyState() {
+  const enabled = await readStreamNotificationsEnabled();
+  renderStreamNotifyButton(enabled);
+  return enabled;
 }
 
 async function load() {
@@ -24,9 +52,11 @@ async function load() {
   apiKeyInput.value = data.apiKey || '';
   enabledInput.checked = data.enabled !== false;
 
+  await loadStreamNotifyState();
+
   if (data.lastSuccessAt) {
     const ago = Math.round((Date.now() - data.lastSuccessAt) / 1000);
-    setStatus(`Последняя передача: ${ago} с назад. ${data.lastMessage || ''}`, 'ok');
+    setStatus(`Последняя передача integrity: ${ago} с назад. ${data.lastMessage || ''}`, 'ok');
   } else if (data.lastErrorAt) {
     setStatus(`Ошибка: ${data.lastMessage || '—'}`, 'err');
   }
@@ -61,6 +91,30 @@ document.getElementById('test').addEventListener('click', async () => {
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), 'err');
   }
+});
+
+toggleStreamNotifyBtn.addEventListener('click', async () => {
+  toggleStreamNotifyBtn.disabled = true;
+  try {
+    const enabled = await readStreamNotificationsEnabled();
+    const next = !enabled;
+    // Сразу обновляем UI; background подхватит через storage.onChanged
+    renderStreamNotifyStatus(next);
+    await chrome.storage.local.set({ streamNotificationsEnabled: next });
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), 'err');
+    await loadStreamNotifyState();
+  } finally {
+    toggleStreamNotifyBtn.disabled = false;
+  }
+});
+
+// Синхронизация при переключении хоткеем или из background
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || changes.streamNotificationsEnabled == null) {
+    return;
+  }
+  renderStreamNotifyButton(Boolean(changes.streamNotificationsEnabled.newValue));
 });
 
 load();

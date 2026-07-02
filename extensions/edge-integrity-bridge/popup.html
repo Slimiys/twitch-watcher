@@ -21,8 +21,16 @@
 
   <label class="row">
     <input id="enabled" type="checkbox" checked />
-    <span>Передавать в бот</span>
+    <span>Передавать integrity в бот</span>
   </label>
+
+  <hr class="section-divider" />
+
+  <h2 class="section-title">Уведомления о стримах</h2>
+  <p class="hint">События stream-up и stream-down с локального бота (без открытого дашборда).</p>
+
+  <button id="toggleStreamNotify" type="button" class="btn-notify off">Уведомления: выкл</button>
+  <p id="streamNotifyHint" class="hint hotkey">Горячая клавиша: Ctrl+Shift+Y — настроить в <code>edge://extensions/shortcuts</code></p>
 
   <div class="actions">
     <button id="test" type="button" class="btn-primary">Проверить бота</button>

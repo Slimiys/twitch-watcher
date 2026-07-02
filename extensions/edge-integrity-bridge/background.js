@@ -216,17 +216,6 @@ function scheduleCaptureRequestPoll() {
   }, CAPTURE_REQUEST_POLL_MS);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === 'REQUEST_INTEGRITY_CAPTURE') {
-    void triggerTwitchIntegrityCapture().then(() => {
-      scheduleCaptureRequestPoll();
-      sendResponse({ ok: true });
-    });
-    return true;
-  }
-  return false;
-});
-
 chrome.alarms.create('pollCaptureRequest', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'pollCaptureRequest') {
@@ -235,3 +224,46 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 void pollBridgeCaptureRequest();
+
+// --- Уведомления stream-up / stream-down ---
+importScripts('streamNotifications.js');
+
+void initStreamNotifications();
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== 'toggle-stream-notifications') {
+    return;
+  }
+  void toggleStreamNotifications().then((enabled) => {
+    showStreamNotifyToggleFeedback(enabled);
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'REQUEST_INTEGRITY_CAPTURE') {
+    void triggerTwitchIntegrityCapture().then(() => {
+      scheduleCaptureRequestPoll();
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+  if (message?.type === 'GET_STREAM_NOTIFICATIONS_STATE') {
+    void loadStreamNotificationsState().then((enabled) => {
+      sendResponse({ enabled });
+    });
+    return true;
+  }
+  if (message?.type === 'SET_STREAM_NOTIFICATIONS') {
+    void setStreamNotificationsEnabled(Boolean(message.enabled)).then((enabled) => {
+      sendResponse({ enabled });
+    });
+    return true;
+  }
+  if (message?.type === 'TOGGLE_STREAM_NOTIFICATIONS') {
+    void toggleStreamNotifications().then((enabled) => {
+      sendResponse({ enabled });
+    });
+    return true;
+  }
+  return false;
+});

@@ -100,6 +100,57 @@ input[type="password"] {
   background: #4f4f56;
 }
 
+.section-divider {
+  border: none;
+  border-top: 1px solid #3a3a3d;
+  margin: 14px 0;
+}
+
+.section-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.btn-notify {
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.btn-notify.on {
+  background: #00a86b;
+  color: #fff;
+}
+
+.btn-notify.on:hover {
+  background: #008f5a;
+}
+
+.btn-notify.off {
+  background: #3a3a3d;
+  color: #efeff1;
+}
+
+.btn-notify.off:hover {
+  background: #4f4f56;
+}
+
+.hint.hotkey {
+  margin-bottom: 0;
+  font-size: 11px;
+}
+
+.hint code {
+  font-size: 10px;
+  color: #cecece;
+}
+
 .status {
   margin-top: 12px;
   padding: 8px;
