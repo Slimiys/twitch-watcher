@@ -3295,7 +3295,7 @@ th.notify-header-clickable:active {
     background: #1f1f23;
     border: 1px solid #26262c;
     border-radius: 999px;
-    cursor: pointer;
+    cursor: context-menu;
     font: inherit;
     color: inherit;
     transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;

@@ -112,6 +112,7 @@
             'fav.applyFilter': 'Показать стримеров с этой категорией',
             'fav.remove': 'Удалить из избранного',
             'fav.removeAria': 'Удалить категорию',
+            'fav.contextOpenCategory': 'Перейти в категорию',
             'fav.filterHint': 'Фильтр по текущей (онлайн) или последней (офлайн) категории. Офлайн-стримеры скрываются кнопкой «Скрыть офлайн».',
 
             'streams.noStreams': 'Нет стримов за выбранный период',
@@ -447,6 +448,7 @@
             'fav.applyFilter': 'Show streamers in this category',
             'fav.remove': 'Remove from favorites',
             'fav.removeAria': 'Remove category',
+            'fav.contextOpenCategory': 'Open category page',
             'fav.filterHint': 'Filter by current (online) or last (offline) category. Offline streamers are hidden with Hide Offline.',
 
             'streams.noStreams': 'No streams in the selected period',

@@ -241,6 +241,76 @@ function hideStreamsCountWindowMenu() {
 }
 
 /**
+ * Закрывает контекстное меню избранной категории
+ */
+function hideFavoriteCategoryContextMenu() {
+    const menu = document.getElementById('favoriteCategoryContextMenu');
+    if (menu) {
+        menu.remove();
+    }
+}
+
+/**
+ * Строит URL страницы категории на Twitch
+ * @param {{ name?: string }} category
+ * @returns {string}
+ */
+function buildTwitchCategoryDirectoryUrl(category) {
+    const name = String(category?.name ?? '').trim();
+    if (!name) {
+        return 'https://www.twitch.tv/directory';
+    }
+    const slug = name
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    if (slug) {
+        return `https://www.twitch.tv/directory/category/${slug}`;
+    }
+    return `https://www.twitch.tv/directory/game/${encodeURIComponent(name)}`;
+}
+
+/**
+ * Показывает контекстное меню избранной категории
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {{ id: string, name: string }} category
+ */
+function showFavoriteCategoryContextMenu(clientX, clientY, category) {
+    hideFavoriteCategoryContextMenu();
+
+    const menu = document.createElement('div');
+    menu.id = 'favoriteCategoryContextMenu';
+    menu.className = 'streams-window-menu show';
+    menu.style.left = `${clientX}px`;
+    menu.style.top = `${clientY}px`;
+
+    const openItem = document.createElement('button');
+    openItem.type = 'button';
+    openItem.className = 'streams-window-menu-item';
+    openItem.textContent = t('fav.contextOpenCategory');
+    openItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideFavoriteCategoryContextMenu();
+        const url = buildTwitchCategoryDirectoryUrl(category);
+        window.open(url, '_blank', 'noopener,noreferrer');
+    });
+    menu.appendChild(openItem);
+
+    document.body.appendChild(menu);
+
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        menu.style.left = `${Math.max(8, window.innerWidth - rect.width - 8)}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+        menu.style.top = `${Math.max(8, window.innerHeight - rect.height - 8)}px`;
+    }
+}
+
+/**
  * Показывает меню выбора периода Streams у курсора
  * @param {number} clientX
  * @param {number} clientY
@@ -4678,6 +4748,11 @@ window.addEventListener('load', () => {
             hideStreamsCountWindowMenu();
         }
 
+        const favoriteCategoryContextMenu = document.getElementById('favoriteCategoryContextMenu');
+        if (favoriteCategoryContextMenu && !favoriteCategoryContextMenu.contains(e.target)) {
+            hideFavoriteCategoryContextMenu();
+        }
+
         const categoryStreamStatsMenu = document.getElementById('categoryStreamStatsMenu');
         if (
             categoryStreamStatsMenu &&
@@ -6575,12 +6650,38 @@ async function removeFavoriteCategory(id) {
 }
 
 /**
+ * Инициализирует контекстное меню избранных категорий (ПКМ)
+ */
+function initFavoriteCategoryContextMenu() {
+    const wrap = document.getElementById('favoriteCategoriesTableWrap');
+    if (!wrap || wrap.dataset.favoriteCategoryContextMenuBound === '1') {
+        return;
+    }
+    wrap.dataset.favoriteCategoryContextMenuBound = '1';
+
+    wrap.addEventListener('contextmenu', (e) => {
+        const chip = e.target.closest('.favorite-category-chip');
+        if (!chip || e.target.closest('.favorite-category-chip-remove')) {
+            return;
+        }
+        const categoryId = chip.dataset.categoryId;
+        const category = favoriteCategories.find((cat) => cat.id === categoryId);
+        if (!category) {
+            return;
+        }
+        e.preventDefault();
+        showFavoriteCategoryContextMenu(e.clientX, e.clientY, category);
+    });
+}
+
+/**
  * Инициализирует секцию избранных категорий
  */
 function initFavoriteCategoriesSection() {
     const input = document.getElementById('favoriteCategoryInput');
     const addBtn = document.getElementById('addFavoriteCategoryBtn');
 
+    initFavoriteCategoryContextMenu();
     loadFavoriteCategories();
 
     if (input) {
