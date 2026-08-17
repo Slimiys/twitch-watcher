@@ -3380,7 +3380,7 @@ th.notify-header-clickable:active {
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0;
 }
 
 .category-stream-duration-item {
@@ -3388,14 +3388,32 @@ th.notify-header-clickable:active {
     flex-direction: column;
     gap: 0;
     padding: 0;
-    background: #1f1f23;
-    border: 1px solid #26262c;
-    border-radius: 8px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid #26262c;
+    border-radius: 0;
     overflow: hidden;
+    transition: background-color 0.15s ease;
 }
 
 .category-stream-duration-item.is-favorite-category {
-    border-color: rgba(145, 71, 255, 0.45);
+    box-shadow: inset 3px 0 0 rgba(145, 71, 255, 0.55);
+}
+
+.category-stream-duration-item:hover,
+.category-stream-duration-item.is-expanded,
+.category-stream-duration-item.is-selected {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.category-stream-duration-item.is-expanded,
+.category-stream-duration-item.is-selected {
+    background: rgba(145, 71, 255, 0.12);
+}
+
+.category-stream-duration-item.is-expanded:hover,
+.category-stream-duration-item.is-selected:hover {
+    background: rgba(145, 71, 255, 0.16);
 }
 
 .category-stream-duration-toggle {
@@ -3410,10 +3428,6 @@ th.notify-header-clickable:active {
     text-align: left;
     cursor: pointer;
     font: inherit;
-}
-
-.category-stream-duration-toggle:hover {
-    background: rgba(255, 255, 255, 0.04);
 }
 
 .category-stream-duration-chevron {
@@ -3452,11 +3466,10 @@ th.notify-header-clickable:active {
 .category-stream-duration-streamers {
     list-style: none;
     margin: 0;
-    padding: 0 12px 10px 36px;
+    padding: 0 12px 8px 36px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    border-top: 1px solid #26262c;
+    gap: 0;
 }
 
 .category-stream-duration-streamer-item {
@@ -3464,7 +3477,24 @@ th.notify-header-clickable:active {
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+    margin: 0 -12px 0 -36px;
+    padding: 8px 12px 8px 36px;
     font-size: 13px;
+    border-top: 1px solid #26262c;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.category-stream-duration-streamer-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.category-stream-duration-streamer-item.is-selected {
+    background: rgba(145, 71, 255, 0.14);
+}
+
+.category-stream-duration-streamer-item.is-selected:hover {
+    background: rgba(145, 71, 255, 0.18);
 }
 
 .category-stream-duration-streamer-name {

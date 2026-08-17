@@ -6083,12 +6083,15 @@ let categoryStreamDurationStats = [];
 /** Раскрытые категории в секции статистики */
 let expandedCategoryStreamStats = new Set();
 
+/** Выделенная строка стримера в секции статистики: `категория|стример` */
+let selectedCategoryStreamStreamerKey = '';
+
 /**
  * Строит HTML списка стримеров для раскрытой категории
  * @param {Array<{streamerName:string, durationMs:number}>} streamers
  * @returns {string}
  */
-function buildCategoryStreamDurationStreamersHtml(streamers) {
+function buildCategoryStreamDurationStreamersHtml(streamers, categoryKey) {
     if (!Array.isArray(streamers) || streamers.length === 0) {
         return `<p class="category-stream-duration-streamers-empty">${escapeHtml(t('catStats.noStreamers'))}</p>`;
     }
@@ -6097,8 +6100,13 @@ function buildCategoryStreamDurationStreamersHtml(streamers) {
         .map((row) => {
             const streamerName = row?.streamerName || '—';
             const durationLabel = formatCategoryStreamDuration(row?.durationMs ?? 0);
+            const rowKey = `${categoryKey}|${normalizeCategoryNameForMatch(streamerName)}`;
+            const selectedClass = selectedCategoryStreamStreamerKey === rowKey ? ' is-selected' : '';
+            const safeStreamerAttr = String(streamerName)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;');
             return `
-                <li class="category-stream-duration-streamer-item">
+                <li class="category-stream-duration-streamer-item${selectedClass}" data-streamer="${safeStreamerAttr}">
                     <span class="category-stream-duration-streamer-name">${escapeHtml(streamerName)}</span>
                     <span class="category-stream-duration-streamer-time">${escapeHtml(durationLabel)}</span>
                 </li>
@@ -6159,7 +6167,7 @@ function renderCategoryStreamStats() {
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;');
         const streamersHtml = expanded
-            ? buildCategoryStreamDurationStreamersHtml(entry?.streamers)
+            ? buildCategoryStreamDurationStreamersHtml(entry?.streamers, categoryKey)
             : '';
 
         return `
@@ -6214,6 +6222,7 @@ async function performCategoryStreamStatsReset() {
         const result = await postApi('/category-stream-stats/reset', {});
         if (result.ok) {
             expandedCategoryStreamStats.clear();
+            selectedCategoryStreamStreamerKey = '';
             categoryStreamDurationStats = [];
             renderCategoryStreamStats();
             await loadCategoryStreamStats();
@@ -6241,6 +6250,21 @@ function initCategoryStreamStatsSection() {
     if (wrap && !wrap.dataset.categoryStatsBound) {
         wrap.dataset.categoryStatsBound = '1';
         wrap.addEventListener('click', (event) => {
+            const streamerRow = event.target.closest('.category-stream-duration-streamer-item');
+            if (streamerRow && wrap.contains(streamerRow)) {
+                const categoryItem = streamerRow.closest('.category-stream-duration-item');
+                const toggle = categoryItem?.querySelector('.category-stream-duration-toggle');
+                const categoryKey = normalizeCategoryNameForMatch(toggle?.dataset.category || '');
+                const streamerKey = normalizeCategoryNameForMatch(streamerRow.dataset.streamer || '');
+                if (!categoryKey || !streamerKey) {
+                    return;
+                }
+                const rowKey = `${categoryKey}|${streamerKey}`;
+                selectedCategoryStreamStreamerKey = selectedCategoryStreamStreamerKey === rowKey ? '' : rowKey;
+                renderCategoryStreamStats();
+                return;
+            }
+
             const toggle = event.target.closest('.category-stream-duration-toggle');
             if (!toggle || !wrap.contains(toggle)) {
                 return;
@@ -6251,6 +6275,9 @@ function initCategoryStreamStatsSection() {
             }
             if (expandedCategoryStreamStats.has(categoryKey)) {
                 expandedCategoryStreamStats.delete(categoryKey);
+                if (selectedCategoryStreamStreamerKey.startsWith(`${categoryKey}|`)) {
+                    selectedCategoryStreamStreamerKey = '';
+                }
             } else {
                 expandedCategoryStreamStats.add(categoryKey);
             }
