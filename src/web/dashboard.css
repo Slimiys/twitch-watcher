@@ -1873,9 +1873,9 @@ th.category-column-header {
     border: 1px solid #adadb8;
 }
 
-/* Колонка уведомлений: заголовок и ячейки с одним выравниванием */
-th.notify-header,
-td.notify-cell {
+/* Колонка избранных стримеров */
+th.favorite-header,
+td.favorite-cell {
     width: 36px;
     min-width: 36px;
     max-width: 36px;
@@ -1885,21 +1885,13 @@ td.notify-cell {
     padding-right: 12px;
 }
 
-th.notify-header {
+th.favorite-header {
     text-transform: none;
     font-size: 16px;
+    color: #adadb8;
 }
 
-th.notify-header-clickable:hover {
-    opacity: 0.85;
-    transform: scale(1.08);
-}
-
-th.notify-header-clickable:active {
-    transform: scale(1);
-}
-
-.streamer-notify-toggle {
+.streamer-favorite-toggle {
     display: inline-block;
     background: none;
     border: none;
@@ -1909,33 +1901,56 @@ th.notify-header-clickable:active {
     -webkit-appearance: none;
     appearance: none;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1;
     padding: 0;
     margin: 0;
     vertical-align: middle;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
-    transition: opacity 0.2s, transform 0.15s;
+    transition: color 0.2s, transform 0.15s, opacity 0.2s;
 }
 
-.streamer-notify-toggle:hover,
-.streamer-notify-toggle:focus,
-.streamer-notify-toggle:focus-visible,
-.streamer-notify-toggle:active {
+.streamer-favorite-toggle:hover,
+.streamer-favorite-toggle:focus,
+.streamer-favorite-toggle:focus-visible,
+.streamer-favorite-toggle:active {
     background: none;
     border: none;
     box-shadow: none;
     outline: none;
-    transform: scale(1.1);
+    transform: scale(1.12);
 }
 
-.streamer-notify-toggle.streamer-notify-off {
-    opacity: 0.45;
+.streamer-favorite-toggle.streamer-favorite-off {
+    color: #adadb8;
+    opacity: 0.9;
 }
 
-.streamer-notify-toggle.streamer-notify-on {
+.streamer-favorite-toggle.streamer-favorite-on {
+    color: #ffd166;
     opacity: 1;
+}
+
+tr.is-favorite-streamer {
+    background: rgba(255, 209, 102, 0.03);
+}
+
+tr.is-favorite-streamer:hover {
+    background: rgba(255, 209, 102, 0.06);
+}
+
+.status-online-star {
+    background: none;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    margin-right: 6px;
+    color: #00d166;
+    font-size: 14px;
+    line-height: 1;
+    box-shadow: none;
+    text-shadow: 0 0 8px rgba(0, 209, 102, 0.45);
 }
 
 .toast-icon {

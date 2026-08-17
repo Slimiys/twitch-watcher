@@ -127,13 +127,17 @@ let botUptimeSyncTimer = null;
 // Настройки видимых колонок таблицы стримеров
 let visibleColumns = {};
 try {
-    const columns = safeGetLocalStorage('visibleColumns') || '{"notify": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "streamsLast30Days": true, "viewersCount": true, "lastStreamStart": true, "lastStreamEnd": true, "lastStreamDuration": true, "actions": true}';
+    const columns = safeGetLocalStorage('visibleColumns') || '{"favorite": true, "streamer": true, "status": true, "watchTime": true, "pointsEarned": true, "currentPoints": true, "game": true, "streamsLast30Days": true, "viewersCount": true, "lastStreamStart": true, "lastStreamEnd": true, "lastStreamDuration": true, "actions": true}';
     visibleColumns = JSON.parse(columns);
     if (visibleColumns.lastStreamDuration === undefined) {
         visibleColumns.lastStreamDuration = true;
     }
+    if (visibleColumns.favorite === undefined && visibleColumns.notify !== undefined) {
+        visibleColumns.favorite = visibleColumns.notify;
+        delete visibleColumns.notify;
+    }
 } catch (e) {
-    visibleColumns = {notify: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, lastStreamDuration: true, actions: true};
+    visibleColumns = {favorite: true, streamer: true, status: true, watchTime: true, pointsEarned: true, currentPoints: true, game: true, lastStreamStart: true, lastStreamEnd: true, lastStreamDuration: true, actions: true};
 }
 
 /** Допустимые периоды для колонки Streams (сутки) */
@@ -773,17 +777,15 @@ function initStreamsCountWindowMenu() {
 let previousStreamerStatus = {};
 let streamStatusTrackingReady = false;
 
-// Уведомления по стримерам: true = включено (по умолчанию)
-let streamerNotifyPrefs = {};
-/** Имена всех стримеров из последнего ответа /statistics (для массового переключения уведомлений) */
-let lastAllStreamerNames = [];
+// Избранные стримеры (localStorage)
+let favoriteStreamers = new Set();
 try {
-    const prefs = safeGetLocalStorage('streamerNotifyPrefs');
-    if (prefs) {
-        streamerNotifyPrefs = JSON.parse(prefs);
+    const savedFavorites = JSON.parse(safeGetLocalStorage('favoriteStreamers', '[]'));
+    if (Array.isArray(savedFavorites)) {
+        favoriteStreamers = new Set(savedFavorites.filter(Boolean).map((name) => String(name).toLowerCase()));
     }
 } catch (e) {
-    streamerNotifyPrefs = {};
+    favoriteStreamers = new Set();
 }
 
 // Настройки сортировки таблицы
@@ -3247,128 +3249,178 @@ function compareWithNulls(valueA, valueB, compareFn = null, treatZeroAsEmpty = f
 }
 
 /**
+ * Сравнивает две строки таблицы (без учёта online/offline и избранного)
+ * @param {Object} a
+ * @param {Object} b
+ * @param {Object} sort
+ * @returns {number}
+ */
+function compareTableRows(a, b, sort) {
+    if (!sort.column) {
+        const startA = a.lastStreamStart ? Number(a.lastStreamStart) : 0;
+        const startB = b.lastStreamStart ? Number(b.lastStreamStart) : 0;
+        if (startA !== startB) {
+            return startB - startA;
+        }
+        return a.streamerName.localeCompare(b.streamerName);
+    }
+
+    const direction = sort.direction === 'desc' ? -1 : 1;
+
+    let valueA;
+    let valueB;
+    let treatZeroAsEmpty = false;
+
+    switch (sort.column) {
+        case 'streamer':
+            valueA = a.streamerName;
+            valueB = b.streamerName;
+            break;
+        case 'lastStreamStart':
+            valueA = a.lastStreamStart ? Number(a.lastStreamStart) : null;
+            valueB = b.lastStreamStart ? Number(b.lastStreamStart) : null;
+            treatZeroAsEmpty = true;
+            break;
+        case 'lastStreamEnd':
+            valueA = a.lastStreamEnd ? Number(a.lastStreamEnd) : null;
+            valueB = b.lastStreamEnd ? Number(b.lastStreamEnd) : null;
+            treatZeroAsEmpty = true;
+            break;
+        case 'lastStreamDuration':
+            valueA = resolveLastStreamDurationMs(a);
+            valueB = resolveLastStreamDurationMs(b);
+            treatZeroAsEmpty = true;
+            break;
+        case 'game':
+            valueA = a.game;
+            valueB = b.game;
+            break;
+        case 'watchTime':
+            valueA = a.elapsedTime;
+            valueB = b.elapsedTime;
+            break;
+        case 'pointsEarned':
+            valueA = a.pointsEarned;
+            valueB = b.pointsEarned;
+            break;
+        case 'currentPoints':
+            valueA = a.currentPoints;
+            valueB = b.currentPoints;
+            break;
+        case 'streamsLast30Days':
+            valueA = getStreamerStreamCount(a);
+            valueB = getStreamerStreamCount(b);
+            break;
+        case 'viewersCount':
+            valueA = a.viewersCount != null ? Number(a.viewersCount) : null;
+            valueB = b.viewersCount != null ? Number(b.viewersCount) : null;
+            break;
+        case 'status':
+            valueA = a.status;
+            valueB = b.status;
+            break;
+        default:
+            valueA = a.streamerName;
+            valueB = b.streamerName;
+            break;
+    }
+
+    let isEmptyA = valueA === null || valueA === undefined || valueA === '';
+    let isEmptyB = valueB === null || valueB === undefined || valueB === '';
+
+    if (typeof valueA === 'number') {
+        isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
+    }
+    if (typeof valueB === 'number') {
+        isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
+    }
+
+    if (isEmptyA && isEmptyB) {
+        return 0;
+    }
+    if (isEmptyA) {
+        return 1;
+    }
+    if (isEmptyB) {
+        return -1;
+    }
+
+    let comparison = 0;
+
+    switch (sort.column) {
+        case 'streamer':
+        case 'game':
+            comparison = String(valueA).localeCompare(String(valueB));
+            break;
+        case 'lastStreamStart':
+        case 'lastStreamEnd':
+        case 'lastStreamDuration':
+        case 'watchTime':
+        case 'pointsEarned':
+        case 'currentPoints':
+        case 'streamsLast30Days':
+        case 'viewersCount':
+            comparison = Number(valueA) - Number(valueB);
+            break;
+        case 'status': {
+            const statusOrder = { ONLINE: 0, OFFLINE: 1 };
+            comparison = (statusOrder[valueA] || 2) - (statusOrder[valueB] || 2);
+            break;
+        }
+        default:
+            comparison = String(valueA).localeCompare(String(valueB));
+            break;
+    }
+
+    return comparison * direction;
+}
+
+/**
+ * Уровень отображения стримера в таблице (порядок групп)
+ * @param {Object} stat
+ * @returns {number}
+ */
+function getStreamerDisplayTier(stat) {
+    const isFavorite = isFavoriteStreamer(stat?.streamerName);
+    const isOnline = stat?.status === 'ONLINE';
+
+    if (isOnline && isFavorite) {
+        return 0;
+    }
+    if (isOnline) {
+        return 1;
+    }
+    if (!isFavorite) {
+        return 2;
+    }
+    return 3;
+}
+
+/**
+ * Сортирует стримеров с учётом избранного и online/offline
+ * @param {Array} data
+ * @param {Object} sort
+ * @returns {Array}
+ */
+function sortStreamersForDisplay(data, sort) {
+    return [...data].sort((a, b) => {
+        const tierA = getStreamerDisplayTier(a);
+        const tierB = getStreamerDisplayTier(b);
+        if (tierA !== tierB) {
+            return tierA - tierB;
+        }
+        return compareTableRows(a, b, sort);
+    });
+}
+
+/**
  * Сортирует данные таблицы по указанной колонке и направлению
  * @param {Array} data Массив данных для сортировки
  * @param {Object} sort Объект с полями column и direction
  * @returns {Array} Отсортированный массив
  */
 function sortTableData(data, sort) {
-    if (!sort.column) {
-        const result = data.sort((a, b) => {
-            if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
-            if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
-            return a.streamerName.localeCompare(b.streamerName);
-        });
-        return result;
-    }
-
-    const direction = sort.direction === 'desc' ? -1 : 1;
-
-    const result = data.sort((a, b) => {
-        if (a.status === 'ONLINE' && b.status === 'OFFLINE') return -1;
-        if (a.status === 'OFFLINE' && b.status === 'ONLINE') return 1;
-        
-        let valueA, valueB, treatZeroAsEmpty = false;
-        
-        switch (sort.column) {
-            case 'streamer':
-                valueA = a.streamerName;
-                valueB = b.streamerName;
-                break;
-            case 'lastStreamStart':
-                valueA = a.lastStreamStart ? Number(a.lastStreamStart) : null;
-                valueB = b.lastStreamStart ? Number(b.lastStreamStart) : null;
-                treatZeroAsEmpty = true;
-                break;
-            case 'lastStreamEnd':
-                valueA = a.lastStreamEnd ? Number(a.lastStreamEnd) : null;
-                valueB = b.lastStreamEnd ? Number(b.lastStreamEnd) : null;
-                treatZeroAsEmpty = true;
-                break;
-            case 'lastStreamDuration':
-                valueA = resolveLastStreamDurationMs(a);
-                valueB = resolveLastStreamDurationMs(b);
-                treatZeroAsEmpty = true;
-                break;
-            case 'game':
-                valueA = a.game;
-                valueB = b.game;
-                break;
-            case 'watchTime':
-                valueA = a.elapsedTime;
-                valueB = b.elapsedTime;
-                break;
-            case 'pointsEarned':
-                valueA = a.pointsEarned;
-                valueB = b.pointsEarned;
-                break;
-            case 'currentPoints':
-                valueA = a.currentPoints;
-                valueB = b.currentPoints;
-                break;
-            case 'streamsLast30Days':
-                valueA = getStreamerStreamCount(a);
-                valueB = getStreamerStreamCount(b);
-                break;
-            case 'viewersCount':
-                valueA = a.viewersCount != null ? Number(a.viewersCount) : null;
-                valueB = b.viewersCount != null ? Number(b.viewersCount) : null;
-                break;
-            case 'status':
-                valueA = a.status;
-                valueB = b.status;
-                break;
-            default:
-                valueA = a.streamerName;
-                valueB = b.streamerName;
-                break;
-        }
-
-        let isEmptyA = valueA === null || valueA === undefined || valueA === '';
-        let isEmptyB = valueB === null || valueB === undefined || valueB === '';
-        
-        if (typeof valueA === 'number') {
-            isEmptyA = isEmptyA || isNaN(valueA) || (treatZeroAsEmpty && valueA <= 0);
-        }
-        if (typeof valueB === 'number') {
-            isEmptyB = isEmptyB || isNaN(valueB) || (treatZeroAsEmpty && valueB <= 0);
-        }
-
-        if (isEmptyA && isEmptyB) return 0;
-        if (isEmptyA) return 1;
-        if (isEmptyB) return -1;
-
-        let comparison = 0;
-        
-        switch (sort.column) {
-            case 'streamer':
-                comparison = valueA.localeCompare(valueB);
-                break;
-            case 'lastStreamStart':
-            case 'lastStreamEnd':
-            case 'lastStreamDuration':
-                comparison = Number(valueA) - Number(valueB);
-                break;
-            case 'game':
-                comparison = valueA.localeCompare(valueB);
-                break;
-            case 'watchTime':
-            case 'pointsEarned':
-            case 'currentPoints':
-            case 'streamsLast30Days':
-            case 'viewersCount':
-                comparison = Number(valueA) - Number(valueB);
-                break;
-            case 'status':
-                const statusOrder = { 'ONLINE': 0, 'OFFLINE': 1 };
-                comparison = (statusOrder[valueA] || 2) - (statusOrder[valueB] || 2);
-                break;
-        }
-
-        return comparison * direction;
-    });
-
-    return result;
+    return sortStreamersForDisplay(data, sort);
 }
 
 /**
@@ -3430,7 +3482,6 @@ async function updateStatistics(options = {}) {
     }
 
     if (stats.length === 0) {
-        lastAllStreamerNames = [];
         const emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noStreamers'))}</p>`;
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
@@ -3441,8 +3492,6 @@ async function updateStatistics(options = {}) {
         previousStreamerStatus = {};
         return;
     }
-
-    lastAllStreamerNames = stats.map((s) => s.streamerName).filter(Boolean);
 
     if (!skipFetch) {
         try {
@@ -3461,7 +3510,9 @@ async function updateStatistics(options = {}) {
         filteredStats = filteredStats.filter((s) => streamerMatchesFavoriteCategoryFilters(s));
     }
     if (!showOffline) {
-        filteredStats = filteredStats.filter((s) => s.status === 'ONLINE');
+        filteredStats = filteredStats.filter(
+            (s) => s.status === 'ONLINE' || isFavoriteStreamer(s.streamerName)
+        );
     }
 
     // Разница в скобках: только между прошлым и текущим обновлением (Event / interval)
@@ -3525,10 +3576,8 @@ async function updateStatistics(options = {}) {
     }
 
     // Определяем колонки с их видимостью
-    const allNotifyOn = areAllStreamerNotificationsEnabled(lastAllStreamerNames);
-    const notifyHeaderTitle = allNotifyOn ? t('col.notifyAllOff') : t('col.notifyAllOn');
     const columns = [
-        { key: 'notify', label: allNotifyOn ? '🔔' : '🔕', visible: visibleColumns.notify !== false },
+        { key: 'favorite', label: '★', visible: visibleColumns.favorite !== false },
         { key: 'streamer', label: getTableColumnLabel('streamer'), visible: visibleColumns.streamer !== false },
         { key: 'status', label: getTableColumnLabel('status'), visible: visibleColumns.status !== false },
         { key: 'watchTime', label: getTableColumnLabel('watchTime'), visible: visibleColumns.watchTime !== false },
@@ -3569,16 +3618,14 @@ async function updateStatistics(options = {}) {
                             ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼')
                             : (isSortable ? ' ↕' : '');
                         const sortClass = isSorted ? ` sort-${tableSort.direction}` : '';
-                        const clickHandler = col.key === 'notify'
-                            ? ' onclick="toggleAllStreamerNotifications()"'
-                            : (isSortable ? ` onclick="handleTableSort('${col.key}')"` : '');
+                        const clickHandler = isSortable ? ` onclick="handleTableSort('${col.key}')"` : '';
                         const cursorStyle = col.key === 'streamsLast30Days'
                             ? ' style="cursor: context-menu; user-select: none;"'
-                            : ((col.key === 'notify' || isSortable)
-                                ? ' style="cursor: pointer; user-select: none;"'
-                                : '');
-                        const notifyClass = col.key === 'notify' ? ' notify-header notify-header-clickable' : '';
-                        const notifyTitle = col.key === 'notify' ? ` title="${notifyHeaderTitle}"` : '';
+                            : (isSortable ? ' style="cursor: pointer; user-select: none;"' : '');
+                        const favoriteHeaderClass = col.key === 'favorite' ? ' favorite-header' : '';
+                        const favoriteHeaderTitle = col.key === 'favorite'
+                            ? ` title="${escapeHtml(t('col.favoriteTitle'))}"`
+                            : '';
                         const streamsHeaderClass =
                             col.key === 'streamsLast30Days' ? ' streams-count-header' : '';
                         const streamsHeaderTitle =
@@ -3587,25 +3634,26 @@ async function updateStatistics(options = {}) {
                                 : '';
                         const categoryHeaderClass = col.key === 'game' ? ' category-column-header' : '';
                         
-                        return `<th class="table-header${notifyClass}${streamsHeaderClass}${categoryHeaderClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${notifyTitle}${streamsHeaderTitle}>${col.label}${sortIcon}</th>`;
+                        return `<th class="table-header${favoriteHeaderClass}${streamsHeaderClass}${categoryHeaderClass}${isSortable ? ' sortable' : ''}${sortClass}"${clickHandler}${cursorStyle}${favoriteHeaderTitle}${streamsHeaderTitle}>${col.label}${sortIcon}</th>`;
                     }).join('')}
                 </tr>
             </thead>
             <tbody>
                 ${sortedStats.map(s => `
-                    <tr>
-                        ${visibleColumns.notify !== false ? (() => {
-                            const notifyOn = isStreamerNotifyEnabled(s.streamerName);
+                    <tr class="${isFavoriteStreamer(s.streamerName) ? 'is-favorite-streamer' : ''}">
+                        ${visibleColumns.favorite !== false ? (() => {
+                            const isFavorite = isFavoriteStreamer(s.streamerName);
                             const safeAttr = String(s.streamerName)
                                 .replace(/&/g, '&amp;')
                                 .replace(/"/g, '&quot;');
-                            return `<td class="notify-cell">
+                            return `<td class="favorite-cell">
                                 <span role="button" tabindex="0"
-                                    class="streamer-notify-toggle ${notifyOn ? 'streamer-notify-on' : 'streamer-notify-off'}"
+                                    class="streamer-favorite-toggle ${isFavorite ? 'streamer-favorite-on' : 'streamer-favorite-off'}"
                                     data-streamer="${safeAttr}"
-                                    onclick="toggleStreamerNotify(this)"
-                                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStreamerNotify(this);}"
-                                    title="${notifyOn ? escapeHtml(t('col.notifyOn')) : escapeHtml(t('col.notifyOff'))}">${notifyOn ? '🔔' : '🔕'}</span>
+                                    onclick="toggleFavoriteStreamer(this)"
+                                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFavoriteStreamer(this);}"
+                                    title="${isFavorite ? escapeHtml(t('col.favoriteRemove')) : escapeHtml(t('col.favoriteAdd'))}"
+                                    aria-label="${isFavorite ? escapeHtml(t('col.favoriteRemove')) : escapeHtml(t('col.favoriteAdd'))}">${isFavorite ? '★' : '☆'}</span>
                             </td>`;
                         })() : ''}
                         ${visibleColumns.streamer !== false ? (() => {
@@ -3616,7 +3664,7 @@ async function updateStatistics(options = {}) {
                         ${visibleColumns.status !== false ? `
                             <td>
                                 <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
-                                    <span class="status-indicator ${s.status === 'ONLINE' ? 'status-online' : 'status-offline'}"></span>
+                                    ${renderStreamerStatusIndicator(s)}
                                     ${translateStreamStatus(s.status)}
                                 </span>
                             </td>
@@ -3812,77 +3860,63 @@ function escapeHtml(text) {
 }
 
 /**
- * Включены ли уведомления для стримера (online/offline)
+ * Индикатор статуса: у избранного онлайн-стримера — зелёная звезда
+ * @param {{ streamerName?: string, status?: string }} stat
+ * @returns {string}
  */
-function isStreamerNotifyEnabled(streamerName) {
+function renderStreamerStatusIndicator(stat) {
+    const isOnline = stat?.status === 'ONLINE';
+    const isFavorite = isFavoriteStreamer(stat?.streamerName);
+    if (isOnline && isFavorite) {
+        return '<span class="status-indicator status-online-star" aria-hidden="true">★</span>';
+    }
+    return `<span class="status-indicator ${isOnline ? 'status-online' : 'status-offline'}"></span>`;
+}
+
+/**
+ * Избранный ли стример
+ */
+function isFavoriteStreamer(streamerName) {
     if (!streamerName) {
-        return true;
+        return false;
     }
-    const key = streamerName.toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(streamerNotifyPrefs, key)) {
-        return streamerNotifyPrefs[key] !== false;
-    }
-    return true;
+    return favoriteStreamers.has(String(streamerName).toLowerCase());
 }
 
 /**
- * Сохраняет настройку уведомлений для стримера
+ * Сохраняет список избранных стримеров
  */
-function setStreamerNotifyEnabled(streamerName, enabled) {
-    const key = streamerName.toLowerCase();
-    streamerNotifyPrefs[key] = enabled;
-    safeSetLocalStorage('streamerNotifyPrefs', JSON.stringify(streamerNotifyPrefs));
+function persistFavoriteStreamers() {
+    safeSetLocalStorage('favoriteStreamers', JSON.stringify([...favoriteStreamers]));
 }
 
 /**
- * Проверяет, включены ли уведомления у всех указанных стримеров
+ * Добавляет или убирает стримера из избранного
  */
-function areAllStreamerNotificationsEnabled(streamerNames) {
-    if (!streamerNames?.length) {
-        return true;
-    }
-    return streamerNames.every((name) => isStreamerNotifyEnabled(name));
-}
-
-/**
- * Включает или выключает уведомления у всех стримеров (клик по заголовку колонки)
- */
-function toggleAllStreamerNotifications() {
-    if (!lastAllStreamerNames.length) {
+function setFavoriteStreamer(streamerName, enabled) {
+    const key = String(streamerName).toLowerCase();
+    if (!key) {
         return;
     }
-
-    const enableAll = !areAllStreamerNotificationsEnabled(lastAllStreamerNames);
-    lastAllStreamerNames.forEach((name) => setStreamerNotifyEnabled(name, enableAll));
-    updateStatistics();
+    if (enabled) {
+        favoriteStreamers.add(key);
+    } else {
+        favoriteStreamers.delete(key);
+    }
+    persistFavoriteStreamers();
 }
 
 /**
- * Переключает уведомления для стримера (кнопка в таблице)
+ * Переключает избранное для стримера (кнопка в таблице)
  */
-function toggleStreamerNotify(buttonEl) {
+function toggleFavoriteStreamer(buttonEl) {
     const streamerName = buttonEl?.dataset?.streamer;
     if (!streamerName) {
         return;
     }
-    const next = !isStreamerNotifyEnabled(streamerName);
-    setStreamerNotifyEnabled(streamerName, next);
-    updateStreamerNotifyButton(buttonEl, next);
-}
-
-/**
- * Обновляет вид кнопки уведомлений в таблице
- */
-function updateStreamerNotifyButton(buttonEl, enabled) {
-    if (!buttonEl) {
-        return;
-    }
-    buttonEl.classList.toggle('streamer-notify-off', !enabled);
-    buttonEl.classList.toggle('streamer-notify-on', enabled);
-    buttonEl.textContent = enabled ? '🔔' : '🔕';
-    buttonEl.title = enabled
-        ? 'Уведомления при старте/остановке стрима включены'
-        : 'Уведомления при старте/остановке стрима выключены';
+    const next = !isFavoriteStreamer(streamerName);
+    setFavoriteStreamer(streamerName, next);
+    updateStatistics({ skipFetch: true });
 }
 
 /** Время последнего предупреждения о разрешении ОС (чтобы не дублировать toast) */
@@ -4092,7 +4126,7 @@ function processStreamStatusNotifications(items) {
 
     items.forEach((item, index) => {
         const streamerName = item.streamer || item.streamerName;
-        if (!streamerName || !isStreamerNotifyEnabled(streamerName)) {
+        if (!streamerName) {
             return;
         }
         const isOnline = item.type === 'stream-up';
@@ -5607,6 +5641,7 @@ async function removeStreamer(username) {
                 const result = await response.json();
 
                 if (result.success) {
+                    setFavoriteStreamer(username, false);
                     // Обновляем статистику
                     await updateStatistics();
                     await updateOverallStats();
@@ -5793,8 +5828,7 @@ window.closeSettingsModal = closeSettingsModal;
 window.exportSettings = exportSettings;
 window.importSettings = importSettings;
 window.saveSettings = saveSettings;
-window.toggleStreamerNotify = toggleStreamerNotify;
-window.toggleAllStreamerNotifications = toggleAllStreamerNotifications;
+window.toggleFavoriteStreamer = toggleFavoriteStreamer;
 window.showSettingsModal = showSettingsModal;
 window.showAppConfigModal = showAppConfigModal;
 window.closeAppConfigModal = closeAppConfigModal;
