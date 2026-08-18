@@ -3390,7 +3390,7 @@ function getStreamerDisplayTier(stat) {
     if (isOnline) {
         return 1;
     }
-    if (!isFavorite) {
+    if (isFavorite) {
         return 2;
     }
     return 3;
