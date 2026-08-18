@@ -3663,7 +3663,7 @@ async function updateStatistics(options = {}) {
                         })() : ''}
                         ${visibleColumns.status !== false ? `
                             <td>
-                                <span class="status-badge ${s.status === 'ONLINE' ? 'online' : 'offline'}">
+                                <span class="status-badge ${getStreamerStatusBadgeClass(s)}">
                                     ${renderStreamerStatusIndicator(s)}
                                     ${translateStreamStatus(s.status)}
                                 </span>
@@ -3860,15 +3860,33 @@ function escapeHtml(text) {
 }
 
 /**
- * Индикатор статуса: у избранного онлайн-стримера — зелёная звезда
+ * CSS-классы бейджа статуса стримера
+ * @param {{ streamerName?: string, status?: string }} stat
+ * @returns {string}
+ */
+function getStreamerStatusBadgeClass(stat) {
+    const isOnline = stat?.status === 'ONLINE';
+    const isFavorite = isFavoriteStreamer(stat?.streamerName);
+    if (isFavorite && isOnline) {
+        return 'online favorite-online';
+    }
+    if (isFavorite) {
+        return 'offline favorite-offline';
+    }
+    return isOnline ? 'online' : 'offline';
+}
+
+/**
+ * Индикатор статуса: у избранных — звезда (золотая онлайн, серая офлайн)
  * @param {{ streamerName?: string, status?: string }} stat
  * @returns {string}
  */
 function renderStreamerStatusIndicator(stat) {
     const isOnline = stat?.status === 'ONLINE';
     const isFavorite = isFavoriteStreamer(stat?.streamerName);
-    if (isOnline && isFavorite) {
-        return '<span class="status-indicator status-online-star" aria-hidden="true">★</span>';
+    if (isFavorite) {
+        const starClass = isOnline ? 'status-favorite-star-online' : 'status-favorite-star-offline';
+        return `<span class="status-indicator ${starClass}" aria-hidden="true">★</span>`;
     }
     return `<span class="status-indicator ${isOnline ? 'status-online' : 'status-offline'}"></span>`;
 }

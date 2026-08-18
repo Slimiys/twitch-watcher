@@ -405,6 +405,18 @@ h1 {
     border: 1px solid rgba(173, 173, 184, 0.3);
 }
 
+.status-badge.favorite-online {
+    background: rgba(255, 209, 102, 0.16);
+    color: #ffd166;
+    border: 1px solid rgba(255, 209, 102, 0.4);
+}
+
+.status-badge.favorite-offline {
+    background: rgba(173, 173, 184, 0.15);
+    color: #adadb8;
+    border: 1px solid rgba(173, 173, 184, 0.3);
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -1940,17 +1952,25 @@ tr.is-favorite-streamer:hover {
     background: rgba(255, 209, 102, 0.06);
 }
 
-.status-online-star {
+.status-favorite-star-online,
+.status-favorite-star-offline {
     background: none;
     width: auto;
     height: auto;
     border-radius: 0;
     margin-right: 6px;
-    color: #00d166;
     font-size: 14px;
     line-height: 1;
     box-shadow: none;
-    text-shadow: 0 0 8px rgba(0, 209, 102, 0.45);
+}
+
+.status-favorite-star-online {
+    color: #ffd166;
+    text-shadow: 0 0 8px rgba(255, 209, 102, 0.45);
+}
+
+.status-favorite-star-offline {
+    color: #adadb8;
 }
 
 .toast-icon {
