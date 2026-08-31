@@ -3797,6 +3797,10 @@ function updateStaleDataIndicator(key, container) {
 const defaultSettings = {
     fontSize: 'medium',
     density: 'normal',
+    autoScrollEvents: false,
+    eventsPageSize: 20,
+    saveChartZoom: false,
+    autoUpdateChart: true,
     showToastNotifications: true,
     osNotifications: false,
     soundNotifications: false
@@ -5494,10 +5498,10 @@ async function showSettingsModal() {
     // Заполняем форму
     document.getElementById('fontSizeSetting').value = settings.fontSize;
     document.getElementById('densitySetting').value = settings.density;
-    document.getElementById('autoScrollEventsSetting').checked = settings.autoScrollEvents;
-    document.getElementById('eventsPageSizeSetting').value = settings.eventsPageSize.toString();
-    document.getElementById('saveChartZoomSetting').checked = settings.saveChartZoom;
-    document.getElementById('autoUpdateChartSetting').checked = settings.autoUpdateChart;
+    document.getElementById('autoScrollEventsSetting').checked = Boolean(settings.autoScrollEvents);
+    document.getElementById('eventsPageSizeSetting').value = String(settings.eventsPageSize ?? defaultSettings.eventsPageSize);
+    document.getElementById('saveChartZoomSetting').checked = Boolean(settings.saveChartZoom);
+    document.getElementById('autoUpdateChartSetting').checked = settings.autoUpdateChart !== false;
     document.getElementById('showToastNotificationsSetting').checked = settings.showToastNotifications;
     document.getElementById('osNotificationsSetting').checked = settings.osNotifications;
     document.getElementById('soundNotificationsSetting').checked = settings.soundNotifications;
@@ -5624,10 +5628,10 @@ function handleSettingsImport(event) {
             // Обновляем форму
             document.getElementById('fontSizeSetting').value = validSettings.fontSize;
             document.getElementById('densitySetting').value = validSettings.density;
-            document.getElementById('autoScrollEventsSetting').checked = validSettings.autoScrollEvents;
-            document.getElementById('eventsPageSizeSetting').value = validSettings.eventsPageSize.toString();
-            document.getElementById('saveChartZoomSetting').checked = validSettings.saveChartZoom;
-            document.getElementById('autoUpdateChartSetting').checked = validSettings.autoUpdateChart;
+            document.getElementById('autoScrollEventsSetting').checked = Boolean(validSettings.autoScrollEvents);
+            document.getElementById('eventsPageSizeSetting').value = String(validSettings.eventsPageSize ?? defaultSettings.eventsPageSize);
+            document.getElementById('saveChartZoomSetting').checked = Boolean(validSettings.saveChartZoom);
+            document.getElementById('autoUpdateChartSetting').checked = validSettings.autoUpdateChart !== false;
             document.getElementById('showToastNotificationsSetting').checked = validSettings.showToastNotifications;
             document.getElementById('osNotificationsSetting').checked = validSettings.osNotifications;
             document.getElementById('soundNotificationsSetting').checked = validSettings.soundNotifications;
