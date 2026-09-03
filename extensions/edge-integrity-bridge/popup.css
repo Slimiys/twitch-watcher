@@ -141,6 +141,24 @@ input[type="password"] {
   background: #4f4f56;
 }
 
+.btn-notify-test {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #3a3a3d;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 6px;
+  background: transparent;
+  color: #efeff1;
+}
+
+.btn-notify-test:hover {
+  background: #1f1f23;
+  border-color: #9147ff;
+}
+
 .hint.hotkey {
   margin-bottom: 0;
   font-size: 11px;

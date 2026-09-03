@@ -14,10 +14,7 @@
     <input id="botUrl" type="url" placeholder="http://127.0.0.1:3001" />
   </label>
 
-  <label>
-    <span>API-ключ (WEB_DASHBOARD_API_KEY)</span>
-    <input id="apiKey" type="password" placeholder="если задан в config" autocomplete="off" />
-  </label>
+  <p class="hint">API-ключ подтягивается автоматически с открытого dashboard (если сохранён в «Конфиг бота»).</p>
 
   <label class="row">
     <input id="enabled" type="checkbox" checked />
@@ -30,6 +27,7 @@
   <p class="hint">События stream-up и stream-down с локального бота (без открытого дашборда).</p>
 
   <button id="toggleStreamNotify" type="button" class="btn-notify off">Уведомления: выкл</button>
+  <button id="testStreamNotify" type="button" class="btn-notify-test">Тест уведомления</button>
   <p id="streamNotifyHint" class="hint hotkey">Горячая клавиша: Ctrl+Shift+Y — настроить в <code>edge://extensions/shortcuts</code></p>
 
   <div class="actions">

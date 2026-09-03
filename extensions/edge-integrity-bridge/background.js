@@ -22,6 +22,31 @@ chrome.storage.local.get(['botUrl', 'apiKey', 'enabled'], (data) => {
   }
 });
 
+/**
+ * Подтягивает URL бота с публичного status, если не задан в storage
+ */
+async function ensureDefaultBotUrlFromStatus() {
+  const stored = await chrome.storage.local.get(['botUrl']);
+  if (stored.botUrl?.trim()) {
+    return;
+  }
+  for (const base of [DEFAULT_BOT_URL, 'http://localhost:3001']) {
+    try {
+      const res = await fetch(`${base.replace(/\/$/, '')}/api/integrity/capture/status`);
+      if (!res.ok) {
+        continue;
+      }
+      const body = await res.json();
+      if (body?.suggestedBotUrl) {
+        await chrome.storage.local.set({ botUrl: body.suggestedBotUrl.replace(/\/$/, '') });
+        return;
+      }
+    } catch {
+      // пробуем следующий URL
+    }
+  }
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || changes.enabled == null) {
     return;
@@ -224,6 +249,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 void pollBridgeCaptureRequest();
+void ensureDefaultBotUrlFromStatus();
 
 // --- Уведомления stream-up / stream-down ---
 importScripts('streamNotifications.js');
@@ -240,6 +266,18 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'SYNC_BRIDGE_CONFIG') {
+    void (async () => {
+      const botUrl = String(message.botUrl || DEFAULT_BOT_URL).replace(/\/$/, '');
+      const apiKey = String(message.apiKey || '').trim();
+      await chrome.storage.local.set({ botUrl, apiKey });
+      if (typeof connectStreamEventSource === 'function') {
+        connectStreamEventSource();
+      }
+      sendResponse({ ok: true, botUrl, apiKeySet: apiKey.length > 0 });
+    })();
+    return true;
+  }
   if (message?.type === 'REQUEST_INTEGRITY_CAPTURE') {
     void triggerTwitchIntegrityCapture().then(() => {
       scheduleCaptureRequestPoll();
@@ -265,6 +303,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'TOGGLE_STREAM_NOTIFICATIONS') {
     void toggleStreamNotifications().then((enabled) => {
       sendResponse({ enabled });
+    });
+    return true;
+  }
+  if (message?.type === 'TEST_STREAM_NOTIFICATION') {
+    void showTestStreamNotification(message.kind).then((result) => {
+      sendResponse(result);
     });
     return true;
   }

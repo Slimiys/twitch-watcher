@@ -1,10 +1,10 @@
 const DEFAULT_BOT_URL = 'http://127.0.0.1:3001';
 
 const botUrlInput = document.getElementById('botUrl');
-const apiKeyInput = document.getElementById('apiKey');
 const enabledInput = document.getElementById('enabled');
 const statusEl = document.getElementById('status');
 const toggleStreamNotifyBtn = document.getElementById('toggleStreamNotify');
+const testStreamNotifyBtn = document.getElementById('testStreamNotify');
 
 function setStatus(text, kind) {
   statusEl.textContent = text;
@@ -25,6 +25,10 @@ function renderStreamNotifyStatus(enabled) {
     enabled ? 'Уведомления о стримах включены' : 'Уведомления о стримах выключены',
     enabled ? 'ok' : ''
   );
+}
+
+async function readStoredBridgeConfig() {
+  return chrome.storage.local.get(['botUrl', 'apiKey', 'enabled']);
 }
 
 async function readStreamNotificationsEnabled() {
@@ -49,7 +53,6 @@ async function load() {
   ]);
 
   botUrlInput.value = data.botUrl || DEFAULT_BOT_URL;
-  apiKeyInput.value = data.apiKey || '';
   enabledInput.checked = data.enabled !== false;
 
   await loadStreamNotifyState();
@@ -59,13 +62,19 @@ async function load() {
     setStatus(`Последняя передача integrity: ${ago} с назад. ${data.lastMessage || ''}`, 'ok');
   } else if (data.lastErrorAt) {
     setStatus(`Ошибка: ${data.lastMessage || '—'}`, 'err');
+  } else if (data.apiKey?.trim()) {
+    setStatus('API-ключ получен с dashboard', 'ok');
   }
 }
 
 document.getElementById('save').addEventListener('click', async () => {
+  const stored = await readStoredBridgeConfig();
+  const botUrl = botUrlInput.value.trim() || DEFAULT_BOT_URL;
+  const apiKey = stored.apiKey?.trim() || '';
+
   await chrome.storage.local.set({
-    botUrl: botUrlInput.value.trim() || DEFAULT_BOT_URL,
-    apiKey: apiKeyInput.value.trim(),
+    botUrl,
+    apiKey,
     enabled: enabledInput.checked,
   });
   setStatus('Сохранено', 'ok');
@@ -73,15 +82,16 @@ document.getElementById('save').addEventListener('click', async () => {
     await chrome.runtime.sendMessage({
       type: 'SET_STREAM_NOTIFICATIONS',
       enabled: true,
-      botUrl: botUrlInput.value.trim() || DEFAULT_BOT_URL,
-      apiKey: apiKeyInput.value.trim(),
+      botUrl,
+      apiKey,
     });
   }
 });
 
 document.getElementById('test').addEventListener('click', async () => {
+  const stored = await readStoredBridgeConfig();
   const botUrl = (botUrlInput.value.trim() || DEFAULT_BOT_URL).replace(/\/$/, '');
-  const apiKey = apiKeyInput.value.trim();
+  const apiKey = stored.apiKey?.trim() || '';
   const headers = {};
   if (apiKey) {
     headers['X-API-Key'] = apiKey;
@@ -94,7 +104,11 @@ document.getElementById('test').addEventListener('click', async () => {
       setStatus(`HTTP ${res.status}: ${body.message || body.error || ''}`, 'err');
       return;
     }
-    const keyHint = body.apiKeyRequired ? 'нужен API-ключ' : 'ключ не требуется';
+    if (body.apiKeyRequired && !apiKey) {
+      setStatus('Бот доступен, но нужен API-ключ — откройте dashboard и сохраните «Конфиг бота»', 'err');
+      return;
+    }
+    const keyHint = body.apiKeyRequired ? 'ключ получен' : 'ключ не требуется';
     setStatus(`Бот доступен (${keyHint})`, 'ok');
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), 'err');
@@ -104,13 +118,16 @@ document.getElementById('test').addEventListener('click', async () => {
 toggleStreamNotifyBtn.addEventListener('click', async () => {
   toggleStreamNotifyBtn.disabled = true;
   try {
+    const stored = await readStoredBridgeConfig();
     const enabled = await readStreamNotificationsEnabled();
     const next = !enabled;
+    const botUrl = botUrlInput.value.trim() || DEFAULT_BOT_URL;
+    const apiKey = stored.apiKey?.trim() || '';
     const response = await chrome.runtime.sendMessage({
       type: 'SET_STREAM_NOTIFICATIONS',
       enabled: next,
-      botUrl: botUrlInput.value.trim() || DEFAULT_BOT_URL,
-      apiKey: apiKeyInput.value.trim(),
+      botUrl,
+      apiKey,
     });
     renderStreamNotifyStatus(Boolean(response?.enabled ?? next));
   } catch (err) {
@@ -121,12 +138,35 @@ toggleStreamNotifyBtn.addEventListener('click', async () => {
   }
 });
 
-// Синхронизация при переключении хоткеем или из background
+testStreamNotifyBtn.addEventListener('click', async () => {
+  testStreamNotifyBtn.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'TEST_STREAM_NOTIFICATION',
+      kind: 'stream-up',
+    });
+    if (response?.ok) {
+      setStatus('Тестовое уведомление отправлено (ONLINE: test_streamer)', 'ok');
+      return;
+    }
+    setStatus(response?.message || 'Не удалось показать уведомление', 'err');
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), 'err');
+  } finally {
+    testStreamNotifyBtn.disabled = false;
+  }
+});
+
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || changes.streamNotificationsEnabled == null) {
+  if (area !== 'local') {
     return;
   }
-  renderStreamNotifyButton(Boolean(changes.streamNotificationsEnabled.newValue));
+  if (changes.streamNotificationsEnabled != null) {
+    renderStreamNotifyButton(Boolean(changes.streamNotificationsEnabled.newValue));
+  }
+  if (changes.apiKey?.newValue) {
+    setStatus('API-ключ получен с dashboard', 'ok');
+  }
 });
 
 load();

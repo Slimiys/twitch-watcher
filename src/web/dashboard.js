@@ -2666,6 +2666,21 @@ function notifyIntegrityBridgeExtension() {
     );
 }
 
+/**
+ * Передаёт URL бота и API-ключ расширению (localStorage dashboard → extension)
+ */
+function syncExtensionBridgeConfig() {
+    window.postMessage(
+        {
+            source: DASHBOARD_BRIDGE_MESSAGE_SOURCE,
+            type: 'SYNC_BRIDGE_CONFIG',
+            botUrl: window.location.origin,
+            apiKey: getDashboardApiKey() || '',
+        },
+        window.location.origin
+    );
+}
+
 function stopIntegrityCapturePoll() {
     if (integrityCapturePollTimer != null) {
         clearInterval(integrityCapturePollTimer);
@@ -4635,6 +4650,7 @@ function startDashboardCore() {
     startVersionUpdatePolling();
     startAutoUpdate();
     startDashboardEventStream();
+    syncExtensionBridgeConfig();
     if (!document.documentElement.dataset.dashboardVisibilityBound) {
         document.documentElement.dataset.dashboardVisibilityBound = '1';
         document.addEventListener('visibilitychange', onDashboardVisibilityChange);
@@ -5458,6 +5474,7 @@ async function saveAppConfig() {
         if (apiKey) {
             setDashboardApiKey(apiKey);
             startDashboardEventStream();
+            syncExtensionBridgeConfig();
         }
 
         const watchResult = await saveWatchSettingsFromForm();

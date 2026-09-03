@@ -6,6 +6,28 @@ const STREAM_EVENTS_ALARM = 'pollStreamEvents';
 const SSE_RECONNECT_MS = 5000;
 const STREAM_EVENT_TYPES = new Set(['stream-up', 'stream-down']);
 
+/**
+ * Edge требует iconUrl для chrome.notifications (type, title, message, iconUrl)
+ */
+function getNotificationIconUrl() {
+  return chrome.runtime.getURL('icon128.png');
+}
+
+/**
+ * @param {string} title
+ * @param {string} message
+ * @param {number} [priority]
+ */
+function buildBasicNotificationOptions(title, message, priority = 2) {
+  return {
+    type: 'basic',
+    iconUrl: getNotificationIconUrl(),
+    title,
+    message,
+    priority,
+  };
+}
+
 /** @type {EventSource|null} */
 let streamEventSource = null;
 /** @type {ReturnType<typeof setTimeout>|null} */
@@ -87,12 +109,10 @@ async function handleStreamHubEvent(event) {
     event.message?.trim() ||
     (isUp ? 'Стример вышел в эфир' : 'Стрим завершён');
 
-  chrome.notifications.create(`stream-${streamer}-${lastStreamEventTimestamp}`, {
-    type: 'basic',
-    title: `${title}: ${streamer}`,
-    message,
-    priority: 2,
-  });
+  chrome.notifications.create(
+    `stream-${streamer}-${lastStreamEventTimestamp}`,
+    buildBasicNotificationOptions(`${title}: ${streamer}`, message, 2)
+  );
 }
 
 function disconnectStreamEventSource() {
@@ -248,11 +268,40 @@ function updateExtensionActionBadge() {
   if (streamNotificationsEnabled) {
     chrome.action.setBadgeText({ text: 'ON' });
     chrome.action.setBadgeBackgroundColor({ color: '#00a86b' });
-    chrome.action.setTitle('Twitch Watcher Bridge — уведомления о стримах включены');
+    chrome.action.setTitle({ title: 'Twitch Watcher Bridge — уведомления о стримах включены' });
   } else {
     chrome.action.setBadgeText({ text: '' });
-    chrome.action.setTitle('Twitch Watcher Bridge — уведомления о стримах выключены');
+    chrome.action.setTitle({ title: 'Twitch Watcher Bridge — уведомления о стримах выключены' });
   }
+}
+
+/**
+ * Тестовое системное уведомление (проверка разрешений Windows / Edge)
+ * @param {'stream-up'|'stream-down'} [kind]
+ * @returns {Promise<{ ok: boolean, message?: string }>}
+ */
+function showTestStreamNotification(kind = 'stream-up') {
+  return new Promise((resolve) => {
+    const isUp = kind === 'stream-up';
+    const streamer = 'test_streamer';
+    const title = isUp ? 'Стрим ONLINE' : 'Стрим OFFLINE';
+    const message = isUp
+      ? 'Тестовое уведомление: стример вышел в эфир'
+      : 'Тестовое уведомление: стрим завершён';
+
+    chrome.notifications.create(
+      `stream-test-${Date.now()}`,
+      buildBasicNotificationOptions(`${title}: ${streamer}`, message, 2),
+      () => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          resolve({ ok: false, message: err.message || String(err) });
+          return;
+        }
+        resolve({ ok: true });
+      }
+    );
+  });
 }
 
 /**
@@ -260,14 +309,14 @@ function updateExtensionActionBadge() {
  * @param {boolean} enabled
  */
 function showStreamNotifyToggleFeedback(enabled) {
-  chrome.notifications.create(`stream-notify-toggle-${Date.now()}`, {
-    type: 'basic',
-    title: 'Twitch Watcher',
-    message: enabled
-      ? 'Уведомления о стримах включены'
-      : 'Уведомления о стримах выключены',
-    priority: 0,
-  });
+  chrome.notifications.create(
+    `stream-notify-toggle-${Date.now()}`,
+    buildBasicNotificationOptions(
+      'Twitch Watcher',
+      enabled ? 'Уведомления о стримах включены' : 'Уведомления о стримах выключены',
+      0
+    )
+  );
 }
 
 /**

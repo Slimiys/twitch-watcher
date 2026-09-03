@@ -1,14 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Twitch Watcher — Integrity Bridge",
-  "version": "1.1.1",
+  "version": "1.1.4",
   "description": "Client-Integrity для Twitch Watcher и уведомления stream-up/stream-down",
   "permissions": ["storage", "webRequest", "tabs", "alarms", "notifications"],
+  "icons": {
+    "128": "icon128.png"
+  },
   "host_permissions": [
     "https://gql.twitch.tv/*",
     "https://*.twitch.tv/*",
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://127.0.0.1/*",
+    "https://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -27,7 +32,9 @@
       "matches": [
         "http://127.0.0.1/*",
         "http://localhost/*",
-        "http://0.0.0.0/*"
+        "http://0.0.0.0/*",
+        "https://127.0.0.1/*",
+        "https://localhost/*"
       ],
       "js": ["dashboard-bridge.js"],
       "run_at": "document_idle"
@@ -35,6 +42,9 @@
   ],
   "action": {
     "default_title": "Twitch Watcher Bridge",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icon128.png"
+    }
   }
 }
