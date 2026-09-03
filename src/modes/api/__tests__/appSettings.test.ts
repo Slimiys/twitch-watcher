@@ -75,6 +75,16 @@ describe('appSettings', () => {
     expect(result.settings.LOG_LEVEL).toBe('normal');
   });
 
+  it('excludes hidden fields from API snapshot', () => {
+    const snapshot = readAppSettingsForApi(configPath);
+    const hiddenKeys = new Set(
+      snapshot.fields.filter((field) => field.hidden).map((field) => field.key)
+    );
+    expect(hiddenKeys.size).toBe(0);
+    expect(snapshot.fields.some((field) => field.key === 'TWITCH_CLIENT_INTEGRITY')).toBe(false);
+    expect(snapshot.fields.some((field) => field.key === 'TWITCH_INTEGRITY_SOURCE')).toBe(true);
+  });
+
   it('updates token when provided', () => {
     const result = applyAppSettingsFromInput({ token: 'new-token-value' }, configPath);
     const file = JSON.parse(fs.readFileSync(configPath, 'utf8'));

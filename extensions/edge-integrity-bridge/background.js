@@ -254,7 +254,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'SET_STREAM_NOTIFICATIONS') {
-    void setStreamNotificationsEnabled(Boolean(message.enabled)).then((enabled) => {
+    void setStreamNotificationsEnabled(Boolean(message.enabled), {
+      botUrl: message.botUrl,
+      apiKey: message.apiKey,
+    }).then((enabled) => {
       sendResponse({ enabled });
     });
     return true;

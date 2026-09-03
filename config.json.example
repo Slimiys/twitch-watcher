@@ -6,9 +6,6 @@
     "HEALTH_CHECK_PORT": "3000",
     "TWITCH_INTEGRITY_SOURCE": "auto",
     "TWITCH_INTEGRITY_AUTO_REFRESH": "true",
-    "TWITCH_DEVICE_ID": "",
-    "TWITCH_COOKIES": "unique_id=…; api_token=…",
-    "TWITCH_CLIENT_INTEGRITY": "",
     "WEB_DASHBOARD_API_KEY": ""
   },
   "streamers": [

@@ -2162,6 +2162,14 @@ function handleDashboardStreamEvent(data) {
 /**
  * Подключает SSE-поток событий бота (push, не зависит от троттлинга setInterval)
  */
+function buildDashboardEventStreamUrl() {
+    const apiKey = getDashboardApiKey();
+    if (!apiKey) {
+        return `${API_BASE}/events/stream`;
+    }
+    return `${API_BASE}/events/stream?apiKey=${encodeURIComponent(apiKey)}`;
+}
+
 function startDashboardEventStream() {
     if (typeof EventSource === 'undefined') {
         return;
@@ -2171,7 +2179,7 @@ function startDashboardEventStream() {
         eventSource = null;
     }
     try {
-        eventSource = new EventSource(`${API_BASE}/events/stream`);
+        eventSource = new EventSource(buildDashboardEventStreamUrl());
         eventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -5449,6 +5457,7 @@ async function saveAppConfig() {
         const apiKey = payload.settings?.WEB_DASHBOARD_API_KEY;
         if (apiKey) {
             setDashboardApiKey(apiKey);
+            startDashboardEventStream();
         }
 
         const watchResult = await saveWatchSettingsFromForm();

@@ -69,6 +69,14 @@ document.getElementById('save').addEventListener('click', async () => {
     enabled: enabledInput.checked,
   });
   setStatus('Сохранено', 'ok');
+  if (await readStreamNotificationsEnabled()) {
+    await chrome.runtime.sendMessage({
+      type: 'SET_STREAM_NOTIFICATIONS',
+      enabled: true,
+      botUrl: botUrlInput.value.trim() || DEFAULT_BOT_URL,
+      apiKey: apiKeyInput.value.trim(),
+    });
+  }
 });
 
 document.getElementById('test').addEventListener('click', async () => {
@@ -98,9 +106,13 @@ toggleStreamNotifyBtn.addEventListener('click', async () => {
   try {
     const enabled = await readStreamNotificationsEnabled();
     const next = !enabled;
-    // Сразу обновляем UI; background подхватит через storage.onChanged
-    renderStreamNotifyStatus(next);
-    await chrome.storage.local.set({ streamNotificationsEnabled: next });
+    const response = await chrome.runtime.sendMessage({
+      type: 'SET_STREAM_NOTIFICATIONS',
+      enabled: next,
+      botUrl: botUrlInput.value.trim() || DEFAULT_BOT_URL,
+      apiKey: apiKeyInput.value.trim(),
+    });
+    renderStreamNotifyStatus(Boolean(response?.enabled ?? next));
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), 'err');
     await loadStreamNotifyState();

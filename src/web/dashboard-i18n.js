@@ -248,7 +248,7 @@
             'settings.import': 'Импорт настроек',
 
             'appConfig.title': 'Конфиг бота',
-            'appConfig.hint': 'Параметры сохраняются в config.json (секция app и поле token). В подписях в скобках — имена из DevTools (Cookies / Request Headers запроса gql).',
+            'appConfig.hint': 'Параметры сохраняются в config.json. Client-Integrity и GQL-заголовки передаёт расширение Edge или обновляет бот (см. Bot Health).',
             'appConfig.loading': 'Загрузка…',
             'appConfig.watch': 'Просмотр (minute-watched)',
             'appConfig.watchHint': 'Ротация по очереди: один онлайн-канал за раз.',
@@ -584,7 +584,7 @@
             'settings.import': 'Import settings',
 
             'appConfig.title': 'Bot config',
-            'appConfig.hint': 'Settings are saved to config.json (app section and token field). Labels in parentheses match DevTools (Cookies / gql request headers).',
+            'appConfig.hint': 'Settings are saved to config.json. Client-Integrity and GQL headers come from the Edge extension or bot auto-update (see Bot Health).',
             'appConfig.loading': 'Loading…',
             'appConfig.watch': 'Watching (minute-watched)',
             'appConfig.watchHint': 'Round-robin: one online channel at a time.',

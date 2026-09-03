@@ -63,6 +63,22 @@ describe('apiAuth', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('accepts apiKey query param on protected path (EventSource)', () => {
+    process.env.WEB_DASHBOARD_API_KEY = 'secret';
+    const middleware = createDashboardApiKeyMiddleware();
+    const next = vi.fn();
+    middleware(
+      {
+        path: '/api/events/stream',
+        header: () => undefined,
+        query: { apiKey: 'secret' },
+      } as unknown as Request,
+      mockRes(),
+      next as NextFunction
+    );
+    expect(next).toHaveBeenCalled();
+  });
+
   it('accepts X-API-Key on protected path', () => {
     process.env.WEB_DASHBOARD_API_KEY = 'secret';
     const middleware = createDashboardApiKeyMiddleware();

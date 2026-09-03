@@ -23,6 +23,8 @@ export interface AppSettingFieldMeta {
   options?: Array<{ value: string; label: string }>;
   /** Требуется перезапуск процесса */
   restartRequired?: boolean;
+  /** Скрыто в UI «Конфиг бота» (значение из config.json, расширения или авто) */
+  hidden?: boolean;
 }
 
 const SECRET_KEYS = new Set([
@@ -93,12 +95,14 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     section: 'Логирование',
     inputType: 'text',
     placeholder: './logs',
+    hidden: true,
   },
   {
     key: 'LOG_FILE_MAX_MB',
     label: 'Макс. размер файла (МБ)',
     section: 'Логирование',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'LOG_FILE_BASENAME',
@@ -106,12 +110,14 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     section: 'Логирование',
     inputType: 'text',
     placeholder: 'twitch-watcher',
+    hidden: true,
   },
   {
     key: 'LOG_CLEAR_ON_START',
     label: 'Очищать каталог логов при старте',
     section: 'Логирование',
     inputType: 'boolean',
+    hidden: true,
   },
   {
     key: 'MAX_SIMULTANEOUS_CHANNELS',
@@ -125,30 +131,35 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     label: 'Обновление стримера перед watch (мс)',
     section: 'Просмотр',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'WATCH_OPERATION_TIMEOUT_MS',
     label: 'Таймаут watch/spade (мс)',
     section: 'Просмотр',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'CLAIM_CHECK_INTERVAL_MS',
     label: 'Интервал опроса claim (мс)',
     section: 'Просмотр',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'CLAIM_FAILED_BLOCK_MS',
     label: 'Blocklist при FORBIDDEN (мс)',
     section: 'Просмотр',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'WATCH_RESUME_MAX_AGE_MS',
     label: 'Макс. возраст resume-состояния (мс)',
     section: 'Просмотр',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'FETCH_TIMEOUT_MS',
@@ -184,81 +195,91 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     label: 'User ID (ответ id.twitch.tv / validate)',
     section: 'Twitch',
     inputType: 'text',
-    hint: 'Не из Cookies; user_id из validate, если id.twitch.tv недоступен',
+    hint: 'Определяется автоматически через validate; задайте вручную только при недоступности id.twitch.tv',
+    hidden: true,
   },
   {
     key: 'TWITCH_INTEGRITY_SOURCE',
-    label: 'Источник integrity (настройка бота)',
-    section: 'Client-Integrity (Network → gql)',
+    label: 'Источник integrity',
+    section: 'Client-Integrity',
     inputType: 'select',
     options: [
       { value: 'auto', label: 'auto' },
       { value: 'manual', label: 'manual' },
       { value: 'api', label: 'api' },
     ],
+    hint: 'Токен и GQL-заголовки передаёт расширение Edge или обновляет бот; статус — в панели Bot Health',
   },
   {
     key: 'TWITCH_CLIENT_INTEGRITY',
     label: 'Integrity (заголовок: Client-Integrity)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'password',
-    hint: 'Request Headers → Client-Integrity (запрос к gql.twitch.tv)',
+    hint: 'Задаётся расширением Edge или автообновлением',
+    hidden: true,
   },
   {
     key: 'TWITCH_CLIENT_INTEGRITY_EXPIRES',
     label: 'Срок integrity (ответ /integrity, expiration)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'text',
-    hint: 'Unix sec/ms из ответа POST integrity, если копируете вручную',
+    hint: 'Записывается автоматически при обновлении integrity',
+    hidden: true,
   },
   {
     key: 'TWITCH_INTEGRITY_AUTO_REFRESH',
     label: 'Автообновление Client-Integrity',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'boolean',
     hint: 'По умолчанию включено: POST /integrity до истечения срока и при ошибке claim',
   },
   {
     key: 'TWITCH_INTEGRITY_AUTO_PERSIST',
     label: 'Сохранять integrity в config.json',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'boolean',
-    hint: 'После автообновления записывать токен и expiration в конфиг (перезапуск не нужен)',
+    hint: 'Включено по умолчанию',
+    hidden: true,
   },
   {
     key: 'TWITCH_INTEGRITY_FALLBACK_API',
     label: 'Fallback POST /integrity (устаревшее)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'boolean',
-    hint: 'Дублирует автообновление; оставьте выключенным, если включено «Автообновление»',
+    hint: 'Не используется',
+    hidden: true,
   },
   {
     key: 'TWITCH_DEVICE_ID',
     label: 'Device ID (заголовок: X-Device-Id)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'text',
-    hint: 'Обычно совпадает с cookie unique_id (Application → Cookies)',
+    hint: 'Передаётся расширением Edge или генерируется автоматически',
+    hidden: true,
   },
   {
     key: 'TWITCH_COOKIES',
     label: 'Доп. cookies (unique_id, api_token, …)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'password',
-    hint: 'Application → Cookies: unique_id, api_token, … — формат name=value; через «;»',
+    hint: 'Передаётся расширением Edge',
+    hidden: true,
   },
   {
     key: 'TWITCH_CLIENT_VERSION',
     label: 'Версия клиента (заголовок: Client-Version)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'text',
-    hint: 'Request Headers → Client-Version',
+    hint: 'Передаётся расширением Edge или подгружается ботом',
+    hidden: true,
   },
   {
     key: 'TWITCH_CLIENT_SESSION_ID',
     label: 'Сессия (заголовок: Client-Session-Id)',
-    section: 'Client-Integrity (Network → gql)',
+    section: 'Client-Integrity',
     inputType: 'text',
-    hint: 'Request Headers → Client-Session-Id',
+    hint: 'Передаётся расширением Edge или генерируется ботом',
+    hidden: true,
   },
   {
     key: 'HEALTH_CHECK_PORT',
@@ -313,12 +334,14 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
     label: 'Проверка WebSocket (мс)',
     section: 'WebSocket',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'WS_CONNECT_TIMEOUT_MS',
     label: 'Таймаут подключения WS (мс)',
     section: 'WebSocket',
     inputType: 'number',
+    hidden: true,
   },
   {
     key: 'AUTO_EXIT_ON_UNHEALTHY',
@@ -330,6 +353,7 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
       { value: 'true', label: 'true' },
       { value: 'false', label: 'false' },
     ],
+    hidden: true,
   },
   {
     key: 'AUTO_EXIT_ON_INVALID_TOKEN',
@@ -341,12 +365,20 @@ export const APP_SETTING_FIELDS: AppSettingFieldMeta[] = [
       { value: 'true', label: 'true' },
       { value: 'false', label: 'false' },
     ],
+    hidden: true,
   },
 ];
 
 const APP_SETTING_KEYS = new Set(
   APP_SETTING_FIELDS.filter((f) => f.key !== 'token').map((f) => f.key)
 );
+
+/**
+ * Поля, отображаемые в dashboard → «Конфиг бота»
+ */
+export function getVisibleAppSettingFields(): AppSettingFieldMeta[] {
+  return APP_SETTING_FIELDS.filter((field) => !field.hidden);
+}
 
 /**
  * Путь к config.json
@@ -505,7 +537,7 @@ export function readAppSettingsForApi(configPath: string = getAppConfigPath()): 
     settings,
     tokenSet: token.length > 0,
     tokenMasked: token.length > 0 ? maskSecretValue(token) : null,
-    fields: APP_SETTING_FIELDS,
+    fields: getVisibleAppSettingFields(),
     configPath,
   };
 }

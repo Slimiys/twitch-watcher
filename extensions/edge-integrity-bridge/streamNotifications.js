@@ -117,6 +117,19 @@ function scheduleStreamSseReconnect() {
 }
 
 /**
+ * URL SSE с API-ключом (EventSource не поддерживает заголовки)
+ * @param {string} botUrl
+ * @param {string} apiKey
+ */
+function buildStreamEventSourceUrl(botUrl, apiKey) {
+  let url = `${botUrl}/api/events/stream`;
+  if (apiKey) {
+    url += `?apiKey=${encodeURIComponent(apiKey)}`;
+  }
+  return url;
+}
+
+/**
  * Подключает SSE /api/events/stream
  */
 async function connectStreamEventSource() {
@@ -126,9 +139,10 @@ async function connectStreamEventSource() {
 
   disconnectStreamEventSource();
 
-  const { botUrl } = await getBotRequestConfig();
+  const { botUrl, headers } = await getBotRequestConfig();
+  const apiKey = headers['X-API-Key'] || '';
   try {
-    const source = new EventSource(`${botUrl}/api/events/stream`);
+    const source = new EventSource(buildStreamEventSourceUrl(botUrl, apiKey));
     streamEventSource = source;
 
     source.onmessage = (messageEvent) => {
@@ -145,10 +159,12 @@ async function connectStreamEventSource() {
       if (streamEventSource === source) {
         streamEventSource = null;
       }
+      void pollRecentStreamEvents();
       scheduleStreamSseReconnect();
     };
   } catch (err) {
     console.warn('[Stream Notify] SSE connect:', err);
+    void pollRecentStreamEvents();
     scheduleStreamSseReconnect();
   }
 }
@@ -183,8 +199,16 @@ async function pollRecentStreamEvents() {
 
 /**
  * @param {boolean} enabled
+ * @param {{ botUrl?: string, apiKey?: string }} [options]
  */
-async function setStreamNotificationsEnabled(enabled) {
+async function setStreamNotificationsEnabled(enabled, options = {}) {
+  if (options.botUrl != null || options.apiKey != null) {
+    await chrome.storage.local.set({
+      ...(options.botUrl != null ? { botUrl: options.botUrl } : {}),
+      ...(options.apiKey != null ? { apiKey: options.apiKey } : {}),
+    });
+  }
+
   streamNotificationsEnabled = enabled;
   await chrome.storage.local.set({ streamNotificationsEnabled: enabled });
 
