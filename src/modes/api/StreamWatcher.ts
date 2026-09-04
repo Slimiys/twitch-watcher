@@ -2239,6 +2239,7 @@ export class StreamWatcher {
             streamerInfo.broadcastId
           );
           this.beginStreamSessionCategoryTracking(streamerInfo, streamStartTime);
+          this.addEvent('stream-up', streamerInfo.username, 'Stream went online');
           
           try {
             await this.updateInitialPoints(streamerInfo);

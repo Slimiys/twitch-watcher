@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Twitch Watcher — Integrity Bridge",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "Client-Integrity для Twitch Watcher и уведомления stream-up/stream-down",
-  "permissions": ["storage", "webRequest", "tabs", "alarms", "notifications"],
+  "permissions": ["storage", "webRequest", "tabs", "alarms", "notifications", "offscreen"],
   "icons": {
     "128": "icon128.png"
   },

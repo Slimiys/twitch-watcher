@@ -895,22 +895,39 @@ function getPointsCategory(points) {
 }
 
 /**
- * Генерирует цвет на основе строки (детерминированно)
+ * FNV-1a 32-bit хеш строки — лучше разводит похожие имена, чем djb2
+ * @param {string} str
+ * @returns {number}
+ */
+function hashStringFnv1a(str) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+        hash ^= str.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return hash >>> 0;
+}
+
+/**
+ * Генерирует уникальный цвет на основе имени (детерминированно, регистронезависимо)
  * @param {string} str Строка для генерации цвета
  * @returns {string} HSL-цвет
  */
 function generateColorFromString(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const normalized = String(str ?? '').trim().toLowerCase();
+    if (!normalized) {
+        return 'hsl(0, 0%, 65%)';
     }
-    hash = Math.abs(hash);
 
-    // Золотое сечение — равномернее по всей палитре, чем hash % 360
+    const hueSeed = hashStringFnv1a(normalized);
+    const satSeed = hashStringFnv1a(`${normalized}\x00sat`);
+    const lightSeed = hashStringFnv1a(`${normalized}\x00light`);
+
+    // Золотое сечение — равномерное распределение оттенков по кругу HSL
     const goldenRatioConjugate = 0.618033988749895;
-    const hue = Math.round(((hash * goldenRatioConjugate) % 1) * 360);
-    const saturation = 52 + (hash % 28); // 52–79%
-    const lightness = 56 + ((hash >> 6) % 14); // 56–69%
+    const hue = Math.round(((hueSeed * goldenRatioConjugate) % 1) * 360);
+    const saturation = 58 + (satSeed % 22); // 58–79%
+    const lightness = 54 + (lightSeed % 16); // 54–69%
 
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
@@ -1099,36 +1116,6 @@ function replaceSkeletonWithContent(container, newContent) {
             container.classList.remove('content-fade-in');
         }, 400);
     }, 300);
-}
-
-/**
- * Генерирует детерминированный цвет на основе текста
- * @param {string} text Текст для генерации цвета
- * @returns {string} Цвет в формате HSL для использования в CSS
- */
-function generateColorFromText(text) {
-    // Простая хеш-функция для преобразования текста в число
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-        const char = text.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Преобразуем в 32-битное число
-    }
-    
-    // Используем абсолютное значение хеша
-    hash = Math.abs(hash);
-    
-    // Генерируем HSL значения
-    // Hue: 0-360 (полный спектр цветов)
-    const hue = hash % 360;
-    
-    // Saturation: 50-80% (достаточно насыщенные, но не слишком яркие)
-    const saturation = 50 + (hash % 30);
-    
-    // Lightness: 35-50% (темные, но читаемые цвета)
-    const lightness = 35 + (hash % 15);
-    
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
 /**

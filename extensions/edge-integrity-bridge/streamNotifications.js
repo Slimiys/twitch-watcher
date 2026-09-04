@@ -1,10 +1,10 @@
 /**
- * Уведомления stream-up / stream-down через SSE бота
+ * Уведомления stream-up / stream-down через SSE бота (offscreen + alarm fallback)
  */
 
 const STREAM_EVENTS_ALARM = 'pollStreamEvents';
-const SSE_RECONNECT_MS = 5000;
 const STREAM_EVENT_TYPES = new Set(['stream-up', 'stream-down']);
+const OFFSCREEN_URL = 'offscreen.html';
 
 /**
  * Edge требует iconUrl для chrome.notifications (type, title, message, iconUrl)
@@ -28,12 +28,9 @@ function buildBasicNotificationOptions(title, message, priority = 2) {
   };
 }
 
-/** @type {EventSource|null} */
-let streamEventSource = null;
-/** @type {ReturnType<typeof setTimeout>|null} */
-let streamSseReconnectTimer = null;
 let streamNotificationsEnabled = false;
 let lastStreamEventTimestamp = 0;
+let offscreenSseConnected = false;
 
 /**
  * @returns {Promise<{ botUrl: string, headers: Record<string, string> }>}
@@ -115,27 +112,6 @@ async function handleStreamHubEvent(event) {
   );
 }
 
-function disconnectStreamEventSource() {
-  if (streamSseReconnectTimer != null) {
-    clearTimeout(streamSseReconnectTimer);
-    streamSseReconnectTimer = null;
-  }
-  if (streamEventSource) {
-    streamEventSource.close();
-    streamEventSource = null;
-  }
-}
-
-function scheduleStreamSseReconnect() {
-  if (!streamNotificationsEnabled || streamSseReconnectTimer != null) {
-    return;
-  }
-  streamSseReconnectTimer = setTimeout(() => {
-    streamSseReconnectTimer = null;
-    connectStreamEventSource();
-  }, SSE_RECONNECT_MS);
-}
-
 /**
  * URL SSE с API-ключом (EventSource не поддерживает заголовки)
  * @param {string} botUrl
@@ -150,47 +126,109 @@ function buildStreamEventSourceUrl(botUrl, apiKey) {
 }
 
 /**
- * Подключает SSE /api/events/stream
+ * Есть ли уже offscreen-документ
+ */
+async function hasOffscreenDocument() {
+  if (chrome.offscreen?.hasDocument) {
+    return chrome.offscreen.hasDocument();
+  }
+  const contexts = await chrome.runtime.getContexts?.({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+  });
+  return Array.isArray(contexts) && contexts.length > 0;
+}
+
+/**
+ * Создаёт offscreen-документ для постоянного SSE
+ */
+async function ensureOffscreenDocument() {
+  if (await hasOffscreenDocument()) {
+    return;
+  }
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    reasons: ['WORKERS'],
+    justification: 'Держать SSE-соединение с ботом для мгновенных уведомлений о стримах',
+  });
+}
+
+/**
+ * Закрывает offscreen-документ
+ */
+async function closeOffscreenDocument() {
+  try {
+    if (await hasOffscreenDocument()) {
+      await chrome.offscreen.closeDocument();
+    }
+  } catch (err) {
+    console.warn('[Stream Notify] close offscreen:', err);
+  }
+  offscreenSseConnected = false;
+}
+
+/**
+ * Отправляет сообщение в offscreen с короткими повторами (скрипт мог ещё не загрузиться)
+ * @param {Record<string, unknown>} message
+ */
+async function sendToOffscreen(message) {
+  const delays = [0, 100, 300, 800];
+  let lastError = null;
+  for (const delay of delays) {
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    try {
+      const response = await chrome.runtime.sendMessage(message);
+      if (response?.ok) {
+        return response;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error('Offscreen не ответил на сообщение');
+}
+
+/**
+ * Запускает SSE в offscreen (не в service worker — он засыпает)
  */
 async function connectStreamEventSource() {
   if (!streamNotificationsEnabled) {
     return;
   }
 
-  disconnectStreamEventSource();
-
   const { botUrl, headers } = await getBotRequestConfig();
   const apiKey = headers['X-API-Key'] || '';
+  const url = buildStreamEventSourceUrl(botUrl, apiKey);
+
   try {
-    const source = new EventSource(buildStreamEventSourceUrl(botUrl, apiKey));
-    streamEventSource = source;
-
-    source.onmessage = (messageEvent) => {
-      try {
-        const data = JSON.parse(messageEvent.data);
-        void handleStreamHubEvent(data);
-      } catch (err) {
-        console.warn('[Stream Notify] SSE parse:', err);
-      }
-    };
-
-    source.onerror = () => {
-      source.close();
-      if (streamEventSource === source) {
-        streamEventSource = null;
-      }
-      void pollRecentStreamEvents();
-      scheduleStreamSseReconnect();
-    };
+    await ensureOffscreenDocument();
+    await sendToOffscreen({ type: 'OFFSCREEN_START_SSE', url });
   } catch (err) {
-    console.warn('[Stream Notify] SSE connect:', err);
+    console.warn('[Stream Notify] offscreen SSE:', err);
     void pollRecentStreamEvents();
-    scheduleStreamSseReconnect();
   }
 }
 
 /**
- * Fallback: опрос последних событий (service worker мог уснуть)
+ * Останавливает SSE в offscreen
+ */
+async function disconnectStreamEventSource() {
+  try {
+    if (await hasOffscreenDocument()) {
+      await sendToOffscreen({ type: 'OFFSCREEN_STOP_SSE' });
+    }
+  } catch {
+    // документ уже закрыт
+  }
+  await closeOffscreenDocument();
+}
+
+/**
+ * Fallback: опрос последних событий (если SSE недоступен)
  */
 async function pollRecentStreamEvents() {
   if (!streamNotificationsEnabled) {
@@ -218,6 +256,42 @@ async function pollRecentStreamEvents() {
 }
 
 /**
+ * Сообщения от offscreen-документа
+ * @param {unknown} message
+ * @returns {boolean}
+ */
+function handleOffscreenMessage(message) {
+  if (!message || typeof message !== 'object') {
+    return false;
+  }
+  const msg = /** @type {{ type?: string, raw?: string, connected?: boolean }} */ (message);
+
+  if (msg.type === 'OFFSCREEN_KEEPALIVE') {
+    return true;
+  }
+
+  if (msg.type === 'OFFSCREEN_SSE_STATUS') {
+    offscreenSseConnected = Boolean(msg.connected);
+    if (!offscreenSseConnected && streamNotificationsEnabled) {
+      void pollRecentStreamEvents();
+    }
+    return true;
+  }
+
+  if (msg.type === 'OFFSCREEN_STREAM_EVENT') {
+    try {
+      const data = JSON.parse(String(msg.raw || ''));
+      void handleStreamHubEvent(data);
+    } catch (err) {
+      console.warn('[Stream Notify] SSE parse:', err);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * @param {boolean} enabled
  * @param {{ botUrl?: string, apiKey?: string }} [options]
  */
@@ -234,11 +308,11 @@ async function setStreamNotificationsEnabled(enabled, options = {}) {
 
   if (enabled) {
     await primeStreamEventBaseline();
-    connectStreamEventSource();
+    await connectStreamEventSource();
     chrome.alarms.create(STREAM_EVENTS_ALARM, { periodInMinutes: 1 });
     await pollRecentStreamEvents();
   } else {
-    disconnectStreamEventSource();
+    await disconnectStreamEventSource();
     await chrome.alarms.clear(STREAM_EVENTS_ALARM);
   }
 
@@ -327,7 +401,7 @@ async function initStreamNotifications() {
   updateExtensionActionBadge();
 
   if (streamNotificationsEnabled) {
-    connectStreamEventSource();
+    await connectStreamEventSource();
     chrome.alarms.create(STREAM_EVENTS_ALARM, { periodInMinutes: 1 });
   }
 
@@ -343,16 +417,17 @@ async function initStreamNotifications() {
       return;
     }
     if ((changes.botUrl || changes.apiKey) && streamNotificationsEnabled) {
-      connectStreamEventSource();
+      void connectStreamEventSource();
     }
   });
 
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === STREAM_EVENTS_ALARM) {
-      void pollRecentStreamEvents();
-      if (streamNotificationsEnabled && !streamEventSource) {
-        connectStreamEventSource();
-      }
+    if (alarm.name !== STREAM_EVENTS_ALARM) {
+      return;
+    }
+    void pollRecentStreamEvents();
+    if (streamNotificationsEnabled && !offscreenSseConnected) {
+      void connectStreamEventSource();
     }
   });
 }

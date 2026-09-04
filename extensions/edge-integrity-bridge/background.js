@@ -266,6 +266,13 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (typeof handleOffscreenMessage === 'function' && handleOffscreenMessage(message)) {
+    return false;
+  }
+  if (message?.type === 'OFFSCREEN_START_SSE' || message?.type === 'OFFSCREEN_STOP_SSE' || message?.type === 'OFFSCREEN_PING') {
+    // Сообщения для offscreen-документа — не обрабатываем в service worker
+    return false;
+  }
   if (message?.type === 'SYNC_BRIDGE_CONFIG') {
     void (async () => {
       const botUrl = String(message.botUrl || DEFAULT_BOT_URL).replace(/\/$/, '');
