@@ -32,8 +32,6 @@
             'header.autoUpdate': 'Автообновление:',
             'header.autoUpdateTitle': 'При обнаружении обновления установка запустится без подтверждения',
             'header.actions': 'Действия',
-            'header.tests': 'Тесты',
-            'header.testsTitle': 'Тестирование',
             'header.update': 'Обновиться',
             'header.updateTitle': 'git pull и run-local.sh (Termux)',
             'header.stop': 'Остановить',
@@ -120,16 +118,6 @@
 
             'export.exporting': 'Экспорт…',
 
-            'testData.confirm': 'Вы уверены, что хотите заполнить приложение тестовыми данными?\n\nЭто действие создаст:\n- Около 1000 тестовых событий различных типов\n- Несколько тестовых стримеров\n\nЭто действие предназначено только для тестирования.',
-            'testData.generating': 'Генерация…',
-            'testData.success': 'Тестовые данные созданы.\n- {events} событий\n- {streamers} стримеров',
-            'testData.failed': 'Не удалось создать тестовые данные',
-
-            'tokenInvalid.confirm': 'Вы уверены, что хотите пометить токен как невалидный?\n\nЭто действие вызовет критическое уведомление и может привести к перезапуску контейнера через healthcheck.\n\nЭто действие предназначено только для тестирования.',
-            'tokenInvalid.processing': 'Обработка…',
-            'tokenInvalid.success': 'Токен помечен невалидным. Healthcheck перезапустит контейнер.',
-            'tokenInvalid.failed': 'Не удалось пометить токен невалидным',
-
             'appConfig.settingsLoadFailed': 'Не удалось загрузить настройки просмотра с сервера.',
             'appConfig.settingsLoading': 'Загрузка настроек с сервера…',
             'appConfig.settingsLoadError': 'Не удалось загрузить настройки: {error}',
@@ -203,10 +191,6 @@
             'health.integrity.disabled': 'Приём от расширения отключён (INTEGRITY_BRIDGE_ENABLED=false)',
 
             'token.title': 'Информация о токене',
-            'token.fillTest': 'Тестовые данные',
-            'token.fillTestTitle': 'Заполнить тестовыми данными (1000 событий)',
-            'token.markInvalid': 'Пометить невалидным',
-            'token.markInvalidTitle': 'Пометить токен невалидным (тест перезапуска)',
             'db.title': 'Статус базы данных',
 
             'modal.close': 'Закрыть',
@@ -214,13 +198,6 @@
             'modal.confirm': 'Подтвердить',
             'modal.confirmTitle': 'Подтверждение',
             'modal.save': 'Сохранить',
-
-            'test.title': 'Тестирование',
-            'test.notifications': 'Уведомления',
-            'test.hint': 'Проверка без смены статуса стримера. ОС-уведомления — через браузер на этом ПК. По HTTP с IP браузер их не покажет; на сервере: WEB_SERVER_HTTPS=true, затем https://IP:3001.',
-            'test.toast': 'Toast',
-            'test.os': 'Уведомления ОС',
-            'test.sound': 'Звук',
 
             'settings.title': 'Настройки',
             'settings.display': 'Отображение',
@@ -368,8 +345,6 @@
             'header.autoUpdate': 'Auto-update:',
             'header.autoUpdateTitle': 'When an update is detected, install runs without confirmation',
             'header.actions': 'Actions',
-            'header.tests': 'Tests',
-            'header.testsTitle': 'Testing',
             'header.update': 'Update',
             'header.updateTitle': 'git pull and run-local.sh (Termux)',
             'header.stop': 'Stop',
@@ -456,16 +431,6 @@
 
             'export.exporting': 'Exporting…',
 
-            'testData.confirm': 'Fill the app with test data?\n\nThis will create:\n- About 1000 test events of various types\n- Several test streamers\n\nFor testing only.',
-            'testData.generating': 'Generating…',
-            'testData.success': 'Test data generated.\n- {events} events\n- {streamers} streamers',
-            'testData.failed': 'Failed to generate test data',
-
-            'tokenInvalid.confirm': 'Mark the token as invalid?\n\nThis triggers a critical notification and may restart the container via healthcheck.\n\nFor testing only.',
-            'tokenInvalid.processing': 'Processing…',
-            'tokenInvalid.success': 'Token marked invalid. Healthcheck will restart the container.',
-            'tokenInvalid.failed': 'Failed to mark token as invalid',
-
             'appConfig.settingsLoadFailed': 'Failed to load watch settings from server.',
             'appConfig.settingsLoading': 'Loading settings from server…',
             'appConfig.settingsLoadError': 'Failed to load settings: {error}',
@@ -539,10 +504,6 @@
             'health.integrity.disabled': 'Extension bridge disabled (INTEGRITY_BRIDGE_ENABLED=false)',
 
             'token.title': 'Token Information',
-            'token.fillTest': 'Fill Test Data',
-            'token.fillTestTitle': 'Fill with test data (1000 events)',
-            'token.markInvalid': 'Mark Invalid',
-            'token.markInvalidTitle': 'Mark token invalid (container restart test)',
             'db.title': 'Database Status',
 
             'modal.close': 'Close',
@@ -550,13 +511,6 @@
             'modal.confirm': 'Confirm',
             'modal.confirmTitle': 'Confirmation',
             'modal.save': 'Save',
-
-            'test.title': 'Testing',
-            'test.notifications': 'Notifications',
-            'test.hint': 'Test without changing streamer status. OS notifications use this PC browser. Over HTTP by IP the browser will not show them; on server set WEB_SERVER_HTTPS=true, then https://IP:3001.',
-            'test.toast': 'Toast',
-            'test.os': 'OS notifications',
-            'test.sound': 'Sound',
 
             'settings.title': 'Settings',
             'settings.display': 'Display',

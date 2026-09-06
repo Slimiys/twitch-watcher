@@ -4077,9 +4077,6 @@ function playNotificationSound(isOnline) {
     }
 }
 
-/** Имя стримера для тестовых уведомлений */
-const NOTIFICATION_TEST_STREAMER = 'TestStreamer';
-
 /**
  * Показывает toast для смены статуса стрима
  */
@@ -4714,11 +4711,6 @@ window.addEventListener('load', () => {
     initAutoUpdateToggle();
     
     // Обработчик для кнопки настроек
-    const testBtn = document.getElementById('testBtn');
-    if (testBtn) {
-        testBtn.addEventListener('click', showTestModal);
-    }
-
     const appConfigBtn = document.getElementById('appConfigBtn');
     if (appConfigBtn) {
         appConfigBtn.addEventListener('click', showAppConfigModal);
@@ -4732,12 +4724,6 @@ window.addEventListener('load', () => {
     bindClientIntegrityPanelClick();
     
     // Раздел событий удален
-    
-    // Добавляем обработчик для кнопки заполнения тестовыми данными
-    const fillTestDataBtn = document.getElementById('fillTestDataBtn');
-    if (fillTestDataBtn) {
-        fillTestDataBtn.addEventListener('click', fillTestData);
-    }
     
     // Добавляем обработчик для кнопки пометки токена как невалидного
     const markTokenInvalidBtn = document.getElementById('markTokenInvalidBtn');
@@ -4867,50 +4853,6 @@ window.addEventListener('load', () => {
 /**
  * Заполняет приложение тестовыми данными
  */
-async function fillTestData() {
-    const btn = document.getElementById('fillTestDataBtn');
-    if (!btn) return;
-    
-    // Подтверждение действия
-    if (!confirm(t('testData.confirm'))) {
-        return;
-    }
-    
-    // Отключаем кнопку на время запроса
-    btn.disabled = true;
-    const originalText = btn.textContent;
-    btn.textContent = `⏳ ${t('testData.generating')}`;
-    
-    try {
-        const response = await fetch(`${API_BASE}/test/fill-data`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            showNotification('success', t('testData.success', { events: result.eventsCount || 0, streamers: result.streamersCount || 0 }));
-            // Обновляем все данные
-            await Promise.all([
-                updateStatistics(),
-                updateOverallStats()
-            ]);
-        } else {
-            showNotification('error', result.message || t('testData.failed'));
-        }
-    } catch (error) {
-        console.error('Error filling test data:', error);
-        showNotification('error', t('testData.failed'));
-    } finally {
-        // Восстанавливаем кнопку
-        btn.disabled = false;
-        btn.textContent = originalText;
-    }
-}
-
 /**
  * Помечает токен как невалидный (для тестирования перезапуска контейнера)
  */
@@ -5084,81 +5026,6 @@ function bindModalOverlayClose(modal, closeFn) {
 /**
  * Показывает панель тестирования
  */
-function showTestModal() {
-    const modal = document.getElementById('testModal');
-    if (!modal) {
-        return;
-    }
-    modal.style.display = 'flex';
-    bindModalOverlayClose(modal, closeTestModal);
-
-    const escapeHandler = (e) => {
-        if (e.key === 'Escape') {
-            closeTestModal();
-            document.removeEventListener('keydown', escapeHandler);
-        }
-    };
-    document.addEventListener('keydown', escapeHandler);
-}
-
-/**
- * Закрывает панель тестирования
- */
-function closeTestModal() {
-    const modal = document.getElementById('testModal');
-    if (modal) {
-        modal.style.display = 'none';
-    }
-}
-
-/**
- * Тест toast-уведомления (без проверки настроек)
- */
-function testToastNotification(isOnline) {
-    const type = isOnline ? 'stream-up' : 'stream-down';
-    const message = isOnline
-        ? `${NOTIFICATION_TEST_STREAMER} — начал стрим`
-        : `${NOTIFICATION_TEST_STREAMER} — завершил стрим`;
-    showNotification(type, message, 6000);
-}
-
-/**
- * Тест уведомления ОС (без проверки настроек)
- */
-async function testOsNotification(isOnline) {
-    const permission = await ensureOsNotificationPermission();
-    if (!permission.ok) {
-        showOsPermissionWarning(permission.message || 'Не удалось получить разрешение на уведомления');
-        return;
-    }
-
-    const title = isOnline ? '📺 Стрим онлайн' : '📴 Стрим офлайн';
-    const body = isOnline
-        ? `${NOTIFICATION_TEST_STREAMER} начал трансляцию`
-        : `${NOTIFICATION_TEST_STREAMER} завершил трансляцию`;
-    try {
-        const notification = new Notification(title, buildOsNotificationOptions(NOTIFICATION_TEST_STREAMER, isOnline));
-        if (!notification) {
-            throw new Error('Notification constructor returned empty');
-        }
-    } catch (e) {
-        console.warn('Test OS notification failed:', e);
-        const availability = getOsNotificationAvailability();
-        if (!availability.ok && availability.message) {
-            showOsPermissionWarning(availability.message);
-        } else {
-            showNotification('error', t('notify.osFailed'));
-        }
-    }
-}
-
-/**
- * Тест звукового уведомления (без проверки настроек)
- */
-function testSoundNotification(isOnline) {
-    playNotificationSound(isOnline);
-}
-
 /**
  * Загружает настройки minute-watched с бота
  */
@@ -5868,11 +5735,6 @@ window.showSettingsModal = showSettingsModal;
 window.showAppConfigModal = showAppConfigModal;
 window.closeAppConfigModal = closeAppConfigModal;
 window.saveAppConfig = saveAppConfig;
-window.showTestModal = showTestModal;
-window.closeTestModal = closeTestModal;
-window.testToastNotification = testToastNotification;
-window.testOsNotification = testOsNotification;
-window.testSoundNotification = testSoundNotification;
 window.handleSettingsImport = handleSettingsImport;
 
 /**
