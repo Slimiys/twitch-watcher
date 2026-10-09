@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { PingPongFileLogger } from '../PingPongFileLogger';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PingPongFileLogger, createPingPongFileLoggerFromEnv } from '../PingPongFileLogger';
 
 describe('PingPongFileLogger', () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     for (const dir of tempDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -19,6 +20,32 @@ describe('PingPongFileLogger', () => {
     tempDirs.push(dir);
     return new PingPongFileLogger(dir, 'test', maxBytes);
   }
+
+  it('preserves existing logs by default and when file logging is disabled', () => {
+    const logger = createLogger(100);
+    logger.append('keep');
+    const [file] = logger.getLogPaths();
+    vi.stubEnv('LOG_DIR', path.dirname(file));
+    vi.stubEnv('LOG_TO_FILE', 'true');
+    vi.stubEnv('LOG_CLEAR_ON_START', '');
+    expect(createPingPongFileLoggerFromEnv(true).clearedFiles).toBe(0);
+    vi.stubEnv('LOG_TO_FILE', 'false');
+    vi.stubEnv('LOG_CLEAR_ON_START', 'true');
+    expect(createPingPongFileLoggerFromEnv(true).logger).toBeNull();
+    expect(fs.readFileSync(file, 'utf8')).toContain('keep');
+  });
+
+  it('clears only on explicit startup, never on config reload', () => {
+    const logger = createLogger(100);
+    logger.append('keep');
+    const [file] = logger.getLogPaths();
+    vi.stubEnv('LOG_DIR', path.dirname(file));
+    vi.stubEnv('LOG_TO_FILE', 'true');
+    vi.stubEnv('LOG_CLEAR_ON_START', 'true');
+    expect(createPingPongFileLoggerFromEnv().clearedFiles).toBe(0);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(createPingPongFileLoggerFromEnv(true).clearedFiles).toBe(1);
+  });
 
   it('пишет в первый файл, пока не достигнут лимит', () => {
     const logger = createLogger(50);

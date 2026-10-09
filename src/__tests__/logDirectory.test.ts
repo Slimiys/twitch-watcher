@@ -21,7 +21,7 @@ describe('logDirectory', () => {
     fs.writeFileSync(path.join(tempDir, 'dashboard-update.log'), 'old');
     fs.writeFileSync(path.join(tempDir, 'crash.log'), 'old');
 
-    delete process.env.LOG_CLEAR_ON_START;
+    process.env.LOG_CLEAR_ON_START = 'true';
     const removed = clearLogDirectoryOnStartup(tempDir);
 
     expect(removed).toBe(3);
@@ -44,7 +44,7 @@ describe('logDirectory', () => {
     fs.writeFileSync(path.join(tempDir, 'twitch-watcher.1.log'), 'old');
     fs.writeFileSync(path.join(tempDir, '.dashboard-action.lock'), '123 456');
 
-    delete process.env.LOG_CLEAR_ON_START;
+    process.env.LOG_CLEAR_ON_START = 'true';
     const removed = clearLogDirectoryOnStartup(tempDir);
 
     expect(removed).toBe(1);

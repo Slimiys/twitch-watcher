@@ -96,13 +96,13 @@ export interface PingPongFileLoggerSetup {
 /**
  * Создаёт файловый логгер из переменных окружения или null, если выключено.
  */
-export function createPingPongFileLoggerFromEnv(): PingPongFileLoggerSetup {
+export function createPingPongFileLoggerFromEnv(startup = false): PingPongFileLoggerSetup {
   const logDir = resolveLogDirectory();
-  const clearedFiles = clearLogDirectoryOnStartup(logDir);
 
   if (!isFileLoggingEnabled()) {
-    return { logger: null, clearedFiles, logDir };
+    return { logger: null, clearedFiles: 0, logDir };
   }
+  const clearedFiles = startup ? clearLogDirectoryOnStartup(logDir) : 0;
 
   const baseName = process.env.LOG_FILE_BASENAME || 'twitch-watcher';
   const maxMb = parseInt(process.env.LOG_FILE_MAX_MB || '100', 10);

@@ -16,7 +16,7 @@ export interface CategoryStreamStatsApiResponse {
 /** Провайдер живой статистики категорий (БД + активные сегменты) */
 export interface CategoryStreamStatsProvider {
   getCategoryStreamDurationTotalsForDashboard(): CategoryStreamDurationTotal[];
-  resetCategoryStreamDurationStats?(): void;
+  resetCategoryStreamDurationStats?(): boolean;
 }
 
 export interface CategoryStreamStatsResetResult {
@@ -58,8 +58,9 @@ export function resetCategoryStreamStatsForApi(
   statsProvider: CategoryStreamStatsProvider | null | undefined = null
 ): CategoryStreamStatsResetResult {
   if (typeof statsProvider?.resetCategoryStreamDurationStats === 'function') {
-    statsProvider.resetCategoryStreamDurationStats();
-    return { success: true };
+    return statsProvider.resetCategoryStreamDurationStats()
+      ? { success: true }
+      : { success: false, message: 'Failed to reset category stream stats' };
   }
 
   if (!databaseStorage?.isReady()) {

@@ -69,7 +69,7 @@ describe('categoryStreamStatsApi', () => {
   });
 
   it('resetCategoryStreamStatsForApi вызывает сброс у провайдера', () => {
-    const reset = vi.fn();
+    const reset = vi.fn(() => true);
     const provider = {
       getCategoryStreamDurationTotalsForDashboard: () => [],
       resetCategoryStreamDurationStats: reset,

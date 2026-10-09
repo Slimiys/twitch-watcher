@@ -6,12 +6,9 @@
     <title>Twitch Watcher - Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
-    <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script async src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <script async src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css?v=18">
-    <script src="dashboard-i18n.js?v=6"></script>
-    <script src="dashboard.js?v=55" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=19">
+    <script src="dashboard-i18n.js?v=7"></script>
+    <script src="dashboard.js?v=56" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -250,12 +247,22 @@
                                     </label>
                                 </div>
                             </div>
-                            <button id="toggleOfflineBtn" class="toggle-btn">
-                                <span id="toggleOfflineText" data-i18n="streamers.hideOffline">Скрыть офлайн</span>
-                            </button>
                         </div>
                     </div>
                     <div id="streamersSectionContent">
+                        <div class="streamer-toolbar">
+                            <label class="streamer-search">
+                                <span data-i18n="filters.search">Поиск стримеров</span>
+                                <input type="search" id="streamerSearchInput" autocomplete="off" data-i18n-placeholder="filters.searchPlaceholder" placeholder="Имя стримера…">
+                            </label>
+                            <button type="button" id="toggleOfflineBtn" class="toggle-btn"><span id="toggleOfflineText">Все</span></button>
+                            <button type="button" id="resetStreamerFilters" class="toggle-btn" data-i18n="filters.reset">Сбросить фильтры</button>
+                            <span id="streamerFilterSummary" class="streamer-filter-summary"></span>
+                        </div>
+                        <div class="streamer-load-state">
+                            <span id="streamerLoadStatus" role="status" aria-live="polite"></span>
+                            <button type="button" id="retryStreamerLoad" class="toggle-btn" hidden data-i18n="filters.retry">Повторить</button>
+                        </div>
                         <div id="watchesTable">
                             <!-- Skeleton loader будет добавлен автоматически при первой загрузке -->
                         </div>

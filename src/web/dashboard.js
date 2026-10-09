@@ -35,7 +35,10 @@ let lastConnectionConnected = null;
 function updateToggleOfflineText() {
     const toggleText = document.getElementById('toggleOfflineText');
     if (toggleText) {
-        toggleText.textContent = t(showOffline ? 'streamers.hideOffline' : 'streamers.showOffline');
+        toggleText.textContent = t(showOffline ? 'filters.all' : 'filters.online');
+        const button = document.getElementById('toggleOfflineBtn');
+        button?.setAttribute('aria-pressed', String(!showOffline));
+        if (button) button.title = t('filters.onlineHint');
     }
 }
 
@@ -70,6 +73,7 @@ function translateStreamStatus(status) {
 async function refreshDashboardLocale() {
     applyI18nToDocument();
     updateToggleOfflineText();
+    renderStreamerLoadState();
     if (lastConnectionConnected !== null) {
         updateConnectionStatus(lastConnectionConnected);
     }
@@ -95,6 +99,43 @@ function getNumberLocale() {
 
 // Загружаем состояние из localStorage или используем значения по умолчанию
 let showOffline = safeGetLocalStorage('showOffline') !== 'false'; // По умолчанию показываем всех стримеров
+let streamerSearchQuery = '';
+let statisticsLoadState = 'idle';
+let statisticsRequestId = 0;
+
+function matchesStreamerSearch(name, query) {
+    return String(name || '').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+}
+
+function renderStreamerLoadState() {
+    const status = document.getElementById('streamerLoadStatus');
+    const retry = document.getElementById('retryStreamerLoad');
+    if (status) status.textContent = statisticsLoadState === 'loading' ? t('filters.loading') :
+        statisticsLoadState === 'error' ? t(cachedStatisticsRows ? 'filters.stale' : 'table.loadFailed') : '';
+    if (retry) retry.hidden = statisticsLoadState !== 'error';
+    document.getElementById('watchesTable')?.setAttribute('aria-busy', String(statisticsLoadState === 'loading'));
+}
+
+function renderStreamerFilterSummary(shown, total) {
+    const el = document.getElementById('streamerFilterSummary');
+    const categories = favoriteCategories.filter(cat => selectedFavoriteCategoryFilterIds.has(cat.id));
+    if (el) el.textContent = `${t('filters.count', { shown, total })}${categories.length ? ` · ${categories.map(cat => cat.name).join(', ')}` : ''}`;
+    const reset = document.getElementById('resetStreamerFilters');
+    if (reset) reset.disabled = !streamerSearchQuery && !selectedFavoriteCategoryFilterIds.size && showOffline;
+}
+
+function resetStreamerFilters() {
+    streamerSearchQuery = '';
+    const search = document.getElementById('streamerSearchInput');
+    if (search) search.value = '';
+    selectedFavoriteCategoryFilterIds.clear();
+    persistFavoriteCategoryFilterIds();
+    showOffline = true;
+    safeSetLocalStorage('showOffline', 'true');
+    updateToggleOfflineText();
+    renderFavoriteCategoriesTable();
+    void updateStatistics({ skipFetch: true });
+}
 let updateIntervalMs = parseInt(safeGetLocalStorage('updateIntervalMs')) || 5000; // Интервал обновления в миллисекундах
 let updateMode = safeGetLocalStorage('updateMode') || 'interval'; // 'interval' или 'event'
 let eventSource = null; // Server-Sent Events — push с сервера
@@ -3469,29 +3510,39 @@ async function updateStatistics(options = {}) {
     const hasSkeleton = table && table.querySelector('.skeleton-table');
     
     // Показываем skeleton только при первой загрузке (когда нет контента и нет skeleton)
-    if (!skipFetch && !hasContent && !hasSkeleton && table) {
+    if (!skipFetch && !cachedStatisticsRows && !hasContent && !hasSkeleton && table) {
         table.innerHTML = generateTableSkeleton(5);
     }
     
     let stats;
-    if (skipFetch && cachedStatisticsRows) {
+    if (skipFetch) {
         stats = cachedStatisticsRows;
     } else {
+        const requestId = ++statisticsRequestId;
+        statisticsLoadState = 'loading';
+        renderStreamerLoadState();
         stats = await fetchData('/statistics?includeOffline=true');
-        if (stats) {
+        if (requestId !== statisticsRequestId) return;
+        if (Array.isArray(stats)) {
             cachedStatisticsRows = stats;
+            statisticsLoadState = 'ready';
+        } else {
+            statisticsLoadState = 'error';
+            stats = cachedStatisticsRows;
         }
     }
+    renderStreamerLoadState();
     
     if (!stats) {
         // Если был skeleton, заменяем на сообщение об ошибке
         if (table && table.querySelector('.skeleton-table')) {
-            table.innerHTML = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.loadFailed'))}</p>`;
+            if (statisticsLoadState === 'error') table.innerHTML = '';
         }
         return;
     }
 
     if (stats.length === 0) {
+        renderStreamerFilterSummary(0, 0);
         const emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noStreamers'))}</p>`;
         if (table && table.querySelector('.skeleton-table')) {
             replaceSkeletonWithContent(table, emptyMessage);
@@ -3503,7 +3554,7 @@ async function updateStatistics(options = {}) {
         return;
     }
 
-    if (!skipFetch) {
+    if (!skipFetch && statisticsLoadState === 'ready') {
         try {
             const statusChanges = detectStreamerStatusChanges(stats);
             if (statusChanges.length > 0) {
@@ -3524,6 +3575,8 @@ async function updateStatistics(options = {}) {
             (s) => s.status === 'ONLINE' || isFavoriteStreamer(s.streamerName)
         );
     }
+    filteredStats = filteredStats.filter(s => matchesStreamerSearch(s.streamerName, streamerSearchQuery));
+    renderStreamerFilterSummary(filteredStats.length, stats.length);
 
     // Разница в скобках: только между прошлым и текущим обновлением (Event / interval)
     const currentPreviousStats = {};
@@ -3566,7 +3619,9 @@ async function updateStatistics(options = {}) {
     // Пустая таблица: фильтр категорий, скрытые offline или нет данных
     if (sortedStats.length === 0) {
         let emptyMessage;
-        if (selectedFavoriteCategoryFilterIds.size > 0) {
+        if (streamerSearchQuery.trim()) {
+            emptyMessage = `<p class="streamer-empty">${escapeHtml(t('filters.noMatches'))}</p>`;
+        } else if (selectedFavoriteCategoryFilterIds.size > 0) {
             emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noCategoryFilter'))}</p>`;
         } else if (!showOffline) {
             emptyMessage = `<p style="color: #adadb8; text-align: center; padding: 20px;">${escapeHtml(t('table.noOnline'))}</p>`;
@@ -3580,7 +3635,7 @@ async function updateStatistics(options = {}) {
             table.innerHTML = emptyMessage;
             setTimeout(() => table.classList.remove('updating'), 300);
         }
-        lastDataUpdate.stats = Date.now();
+        if (!skipFetch && statisticsLoadState === 'ready') lastDataUpdate.stats = Date.now();
         updateStaleDataIndicator('stats', table);
         return;
     }
@@ -3758,7 +3813,7 @@ async function updateStatistics(options = {}) {
         setTimeout(() => table.classList.remove('updating'), 300);
     }
     
-    lastDataUpdate.stats = Date.now();
+    if (!skipFetch && statisticsLoadState === 'ready') lastDataUpdate.stats = Date.now();
     updateStaleDataIndicator('stats', table);
     if (favoriteCategories.length) {
         renderFavoriteCategoriesTable();
@@ -4609,7 +4664,7 @@ function setupStickyEventsSection() {
     // Оставляем пустую функцию для совместимости
 }
 
-/** Запуск опроса API и автообновления (не ждём Chart.js CDN и window.load) */
+/** Запуск опроса API и автообновления (не ждём window.load) */
 let dashboardCoreStarted = false;
 
 function startDashboardCore() {
@@ -4733,6 +4788,12 @@ window.addEventListener('load', () => {
     
     // Добавляем обработчик для кнопки переключения офлайн стримеров
     const toggleBtn = document.getElementById('toggleOfflineBtn');
+    document.getElementById('streamerSearchInput')?.addEventListener('input', (event) => {
+        streamerSearchQuery = event.target.value;
+        void updateStatistics({ skipFetch: true });
+    });
+    document.getElementById('resetStreamerFilters')?.addEventListener('click', resetStreamerFilters);
+    document.getElementById('retryStreamerLoad')?.addEventListener('click', () => updateStatistics());
     if (toggleBtn) {
         toggleBtn.addEventListener('click', toggleOfflineStreamers);
     }
@@ -5099,10 +5160,9 @@ async function saveWatchSettingsFromForm() {
 
 const APP_CONFIG_SECRET_PLACEHOLDER = '••••••••';
 
-/** Boolean в конфиге: LOG_TO_FILE и LOG_CLEAR_ON_START включены по умолчанию */
+/** Boolean-настройки, включённые по умолчанию */
 const APP_CONFIG_BOOLEAN_DEFAULT_TRUE = new Set([
     'LOG_TO_FILE',
-    'LOG_CLEAR_ON_START',
     'TWITCH_INTEGRITY_AUTO_REFRESH',
     'TWITCH_INTEGRITY_AUTO_PERSIST',
 ]);
@@ -6309,7 +6369,8 @@ function renderFavoriteCategoriesTable() {
         const onlineCount = onlineCounts.get(cat.id) || 0;
         const selectedTitle = isSelected ? t('fav.clearFilter') : t('fav.applyFilter');
         return `
-            <button type="button" class="favorite-category-chip${selectedClass}" data-category-id="${escapeHtml(cat.id)}" title="${escapeHtml(selectedTitle)}">
+            <button type="button" class="favorite-category-chip${selectedClass}" aria-pressed="${isSelected}" data-category-id="${escapeHtml(cat.id)}" title="${escapeHtml(selectedTitle)}">
+                <span class="favorite-category-selection" aria-hidden="true">${isSelected ? '✓' : ''}</span>
                 <span class="favorite-category-chip-name" style="color: ${color};">${escapeHtml(cat.name)}<span class="favorite-category-chip-online-count"> (${onlineCount})</span></span>
                 <span class="favorite-category-chip-remove" data-category-id="${escapeHtml(cat.id)}" title="${escapeHtml(t('fav.remove'))}" aria-label="${escapeHtml(t('fav.removeAria'))}" role="button" tabindex="0">✕</span>
             </button>

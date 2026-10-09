@@ -37,7 +37,7 @@ class Logger {
    * Пересоздаёт файловый логгер по текущим LOG_* (после сохранения «Конфиг бота»)
    */
   reloadFileLoggingFromEnv(logStartupMessages = false): void {
-    const fileSetup = createPingPongFileLoggerFromEnv();
+    const fileSetup = createPingPongFileLoggerFromEnv(logStartupMessages);
     this.fileLogger = fileSetup.logger;
 
     if (!logStartupMessages) {

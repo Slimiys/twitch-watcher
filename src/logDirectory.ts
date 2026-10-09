@@ -19,10 +19,10 @@ export function resolveLogDirectory(): string {
 }
 
 /**
- * Включена ли очистка логов при старте (LOG_CLEAR_ON_START, по умолчанию да)
+ * Очистка логов при старте включается только явно.
  */
 export function isLogClearOnStartEnabled(): boolean {
-  return process.env.LOG_CLEAR_ON_START !== 'false' && process.env.LOG_CLEAR_ON_START !== '0';
+  return process.env.LOG_CLEAR_ON_START === 'true' || process.env.LOG_CLEAR_ON_START === '1';
 }
 
 /**

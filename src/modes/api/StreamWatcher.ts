@@ -25,6 +25,8 @@ import { WebServer, StatisticsProvider } from '../../web';
 import { TokenManager, TokenManagerConfig } from './TokenManager';
 import { StatisticsStorage } from './StatisticsStorage';
 import { DatabaseStorage, buildStreamSessionKey, CategoryStreamDurationTotal } from './DatabaseStorage';
+import { randomUUID } from 'crypto';
+import { CategoryDurationJournal, PendingCategoryDuration } from './CategoryDurationJournal';
 import {
   applyBriefOfflineResume,
   beginTentativeOfflineState,
@@ -112,6 +114,9 @@ export class StreamWatcher {
     { category: string; categoryId: string | null; since: number }
   > = new Map();
   private processedRaids: Map<string, number> = new Map(); // Map<raidId, timestamp> - отслеживание обработанных рейдов
+  /** Closed segments waiting for a successful database write; their duration no longer grows. */
+  private pendingCategoryDurations: PendingCategoryDuration[] = [];
+  private categoryDurationJournal: CategoryDurationJournal | null = null;
   private raidCooldownMs: number = 30000; // 30 секунд между попытками присоединения к рейду
   private claimCheckInterval: NodeJS.Timeout | null = null;
   private graphqlClient: GraphQLClient | null = null;
@@ -272,6 +277,16 @@ export class StreamWatcher {
       logger.verbose(`📊  Statistics storage initialized`);
     } catch (error: any) {
       logger.warn(`⚠️  Failed to initialize statistics storage: ${error.message || error}`);
+    }
+
+    try {
+      const journal = new CategoryDurationJournal(
+        path.join(loadStatisticsConfig().storagePath, 'category-duration-pending.json')
+      );
+      this.pendingCategoryDurations = journal.load();
+      this.categoryDurationJournal = journal;
+    } catch (error) {
+      logger.error(`Category recovery journal could not be loaded; original file preserved: ${String(error)}`);
     }
 
     // Инициализируем модуль базы данных (опционально, может не работать на некоторых платформах)
@@ -576,8 +591,8 @@ export class StreamWatcher {
     }
 
     // Закрываем соединение с базой данных
+    this.flushAllCategoryDurationWatches();
     if (this.databaseStorage) {
-      this.flushAllCategoryDurationWatches();
       this.databaseStorage.close();
       this.databaseStorage = null;
     }
@@ -2094,11 +2109,35 @@ export class StreamWatcher {
     }
 
     const durationMs = untilMs - active.since;
-    if (durationMs > 0 && this.databaseStorage?.isReady()) {
-      this.databaseStorage.addCategoryStreamDuration(username, active.category, durationMs);
+    if (durationMs > 0) {
+      this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs });
     }
 
     this.activeCategoryWatch.delete(username);
+    this.retryPendingCategoryDurations();
+  }
+
+  private retryPendingCategoryDurations(): void {
+    // Persist before applying anything to SQLite; failures stay in memory for retry.
+    if (!this.savePendingCategoryDurations()) return;
+    if (!this.databaseStorage?.isReady()) return;
+    this.pendingCategoryDurations = this.pendingCategoryDurations.filter(
+      (segment) => !this.databaseStorage!.addCategoryStreamDuration(
+        segment.username, segment.category, segment.durationMs, segment.id
+      )
+    );
+    this.savePendingCategoryDurations();
+  }
+
+  private savePendingCategoryDurations(): boolean {
+    if (!this.categoryDurationJournal) return false;
+    try {
+      this.categoryDurationJournal.save(this.pendingCategoryDurations);
+      return true;
+    } catch (error) {
+      logger.error(`Category recovery journal could not be saved; intervals remain in memory: ${String(error)}`);
+      return false;
+    }
   }
 
   /**
@@ -2106,7 +2145,7 @@ export class StreamWatcher {
    */
   private checkpointCategoryDurationWatch(username: string, untilMs: number = Date.now()): void {
     const active = this.activeCategoryWatch.get(username);
-    if (!active || !this.databaseStorage?.isReady()) {
+    if (!active) {
       return;
     }
 
@@ -2115,14 +2154,16 @@ export class StreamWatcher {
       return;
     }
 
-    this.databaseStorage.addCategoryStreamDuration(username, active.category, durationMs);
+    this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs });
     active.since = untilMs;
+    this.retryPendingCategoryDurations();
   }
 
   /**
    * Промежуточно сохраняет время всех активных категорий
    */
   private checkpointCategoryDurationWatches(untilMs: number = Date.now()): void {
+    this.retryPendingCategoryDurations();
     for (const username of [...this.activeCategoryWatch.keys()]) {
       this.checkpointCategoryDurationWatch(username, untilMs);
     }
@@ -2134,6 +2175,10 @@ export class StreamWatcher {
   private flushAllCategoryDurationWatches(untilMs: number = Date.now()): void {
     for (const username of [...this.activeCategoryWatch.keys()]) {
       this.flushCategoryDurationWatch(username, untilMs);
+    }
+    this.retryPendingCategoryDurations();
+    if (this.pendingCategoryDurations.length > 0) {
+      logger.error(`Category statistics: ${this.pendingCategoryDurations.length} segments remain unsaved`);
     }
   }
 
@@ -2168,6 +2213,7 @@ export class StreamWatcher {
 
     for (let attempt = 0; attempt < 100; attempt++) {
       if (this.databaseStorage.isReady()) {
+        this.retryPendingCategoryDurations();
         this.databaseStorage.dedupeStreamSessionTimestampAliases();
         const counts = this.databaseStorage.getStreamCountsLast30DaysByUsername();
         const categoryCounts = this.databaseStorage.getCategoryStreamCountsByUsername();
@@ -3052,6 +3098,9 @@ export class StreamWatcher {
     }
 
     const now = Date.now();
+    for (const segment of this.pendingCategoryDurations) {
+      addSegment(segment.category, segment.username, segment.durationMs);
+    }
     for (const [username, active] of this.activeCategoryWatch.entries()) {
       addSegment(active.category, username, now - active.since);
     }
@@ -3083,13 +3132,17 @@ export class StreamWatcher {
   /**
    * Сбрасывает статистику времени стримов по категориям (БД и активные сегменты)
    */
-  resetCategoryStreamDurationStats(): void {
-    this.databaseStorage?.clearCategoryStreamDurationStats();
+  resetCategoryStreamDurationStats(): boolean {
+    if (!this.categoryDurationJournal) return false;
+    if (!this.databaseStorage?.clearCategoryStreamDurationStats(this.pendingCategoryDurations.map(s => s.id))) return false;
+    this.pendingCategoryDurations = [];
+    this.savePendingCategoryDurations();
 
     const now = Date.now();
     for (const active of this.activeCategoryWatch.values()) {
       active.since = now;
     }
+    return true;
   }
 
   /**

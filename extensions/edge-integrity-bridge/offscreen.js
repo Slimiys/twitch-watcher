@@ -78,6 +78,7 @@ function connectSse() {
     };
   } catch (err) {
     console.warn('[Offscreen SSE] connect:', err);
+    postToBackground('OFFSCREEN_SSE_STATUS', { connected: false });
     scheduleReconnect();
   }
 }
@@ -87,9 +88,9 @@ function startKeepAlive() {
     return;
   }
   keepAliveTimer = setInterval(() => {
-    postToBackground('OFFSCREEN_KEEPALIVE');
+    postToBackground('OFFSCREEN_KEEPALIVE', { connected: eventSource?.readyState === EventSource.OPEN });
   }, KEEP_ALIVE_MS);
-  postToBackground('OFFSCREEN_KEEPALIVE');
+  postToBackground('OFFSCREEN_KEEPALIVE', { connected: eventSource?.readyState === EventSource.OPEN });
 }
 
 function stopKeepAlive() {

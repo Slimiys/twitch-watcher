@@ -19,6 +19,27 @@ function renderStreamNotifyButton(enabled) {
   toggleStreamNotifyBtn.classList.toggle('off', !enabled);
 }
 
+function diagnosticTime(value) {
+  return value ? new Date(value).toLocaleString() : '—';
+}
+
+async function refreshNotificationDiagnostics() {
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'GET_STREAM_NOTIFICATIONS_STATE' });
+    const d = result?.diagnostics || {};
+    const states = { disabled: 'выключено', connected: 'SSE подключён', reconnecting: 'переподключение / резервный опрос' };
+    document.getElementById('notifyConnection').textContent = `Подключение: ${states[d.connection] || 'нет данных'}`;
+    document.getElementById('notifyLastEvent').textContent = `Последнее событие: ${diagnosticTime(d.lastEventAt)}${d.lastEventStreamer ? ` (${d.lastEventStreamer}, ${d.lastEventType})` : ''}`;
+    const delay = d.lastEventReceivedAt && d.lastEventAt ? `; задержка получения ${Math.max(0, Math.round((d.lastEventReceivedAt - d.lastEventAt) / 1000))} с` : '';
+    document.getElementById('notifyLastDelivery').textContent = `Последняя доставка: ${diagnosticTime(d.lastDeliveredAt)}${delay}`;
+    document.getElementById('notifyLastPoll').textContent = `Успешный резервный опрос: ${diagnosticTime(d.lastPollSucceededAt)}`;
+    document.getElementById('notifyLastError').textContent = d.lastError
+      ? `Последняя ошибка (${diagnosticTime(d.lastError.at)}): ${d.lastError.message}` : 'Последняя ошибка: —';
+  } catch {
+    document.getElementById('notifyConnection').textContent = 'Подключение: расширение не ответило';
+  }
+}
+
 function renderStreamNotifyStatus(enabled) {
   renderStreamNotifyButton(enabled);
   setStatus(
@@ -170,3 +191,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 load();
+void refreshNotificationDiagnostics();
+const diagnosticsTimer = setInterval(refreshNotificationDiagnostics, 3000);
+window.addEventListener('unload', () => clearInterval(diagnosticsTimer));

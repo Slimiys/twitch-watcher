@@ -185,3 +185,6 @@ input[type="password"] {
 .status.err {
   color: #ef4444;
 }
+/* Wrap long streamer names and errors without widening the popup. */
+.notify-diagnostics { font-size: 12px; color: #adadb8; overflow-wrap: anywhere; }
+.notify-diagnostics p { margin: 6px 0; }

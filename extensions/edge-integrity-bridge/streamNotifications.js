@@ -30,7 +30,34 @@ function buildBasicNotificationOptions(title, message, priority = 2) {
 
 let streamNotificationsEnabled = false;
 let lastStreamEventTimestamp = 0;
+let streamEventBaseline = 0;
+let deliveredStreamEvents = new Set();
+let streamEventQueue = Promise.resolve();
 let offscreenSseConnected = false;
+let streamNotifyDiagnostics = {};
+
+async function recordStreamNotifyDiagnostics(changes) {
+  Object.assign(streamNotifyDiagnostics, changes);
+  try {
+    await chrome.storage.local.set({ streamNotifyDiagnostics: { ...streamNotifyDiagnostics } });
+  } catch {
+    console.warn('[Stream Notify] Could not persist diagnostics');
+  }
+}
+
+function recordStreamNotifyError(source, message) {
+  // Use controlled messages, never URLs containing the API key or raw response bodies.
+  return recordStreamNotifyDiagnostics({ lastError: { source, message, at: Date.now() } });
+}
+
+function getStreamNotificationDiagnostics() {
+  const fresh = Date.now() - (streamNotifyDiagnostics.connectionCheckedAt || 0) < 45_000;
+  return {
+    ...streamNotifyDiagnostics,
+    connection: !streamNotificationsEnabled ? 'disabled' :
+      (offscreenSseConnected && fresh ? 'connected' : 'reconnecting'),
+  };
+}
 
 /**
  * @returns {Promise<{ botUrl: string, headers: Record<string, string> }>}
@@ -50,7 +77,11 @@ async function getBotRequestConfig() {
  * Сохраняет метку последнего обработанного события
  */
 async function persistLastStreamEventTimestamp() {
-  await chrome.storage.local.set({ lastStreamEventTimestamp });
+  await chrome.storage.local.set({
+    lastStreamEventTimestamp,
+    streamEventBaseline,
+    deliveredStreamEvents: [...deliveredStreamEvents],
+  });
 }
 
 /**
@@ -65,10 +96,10 @@ async function primeStreamEventBaseline() {
     }
     const body = await res.json();
     const latest = body?.events?.[0];
-    if (latest?.timestamp > lastStreamEventTimestamp) {
-      lastStreamEventTimestamp = latest.timestamp;
-      await persistLastStreamEventTimestamp();
-    }
+    streamEventBaseline = Number(latest?.timestamp) || Date.now();
+    lastStreamEventTimestamp = streamEventBaseline;
+    deliveredStreamEvents.clear();
+    await persistLastStreamEventTimestamp();
   } catch (err) {
     console.warn('[Stream Notify] prime baseline:', err);
   }
@@ -77,12 +108,16 @@ async function primeStreamEventBaseline() {
 /**
  * @param {{ type?: string, streamer?: string, message?: string, timestamp?: number }} event
  */
+function streamEventKey(event) {
+  return JSON.stringify([Number(event.timestamp), event.type, event.streamer?.trim().toLowerCase()]);
+}
+
 function shouldHandleStreamEvent(event) {
   if (!event?.type || !STREAM_EVENT_TYPES.has(event.type)) {
     return false;
   }
   const ts = Number(event.timestamp) || 0;
-  if (ts <= lastStreamEventTimestamp) {
+  if (!Number.isFinite(ts) || ts <= streamEventBaseline || deliveredStreamEvents.has(streamEventKey(event))) {
     return false;
   }
   return Boolean(event.streamer?.trim());
@@ -91,13 +126,25 @@ function shouldHandleStreamEvent(event) {
 /**
  * @param {{ type?: string, streamer?: string, message?: string, timestamp?: number }} event
  */
-async function handleStreamHubEvent(event) {
+function handleStreamHubEvent(event) {
+  // SSE and polling can deliver the same event concurrently.
+  streamEventQueue = streamEventQueue.then(() => deliverStreamHubEvent(event)).catch((err) => {
+    console.warn('[Stream Notify] delivery:', err);
+    void recordStreamNotifyError('delivery', 'Не удалось создать или сохранить уведомление; будет повторная попытка');
+    return false;
+  });
+  return streamEventQueue;
+}
+
+async function deliverStreamHubEvent(event) {
   if (!streamNotificationsEnabled || !shouldHandleStreamEvent(event)) {
     return;
   }
 
-  lastStreamEventTimestamp = Number(event.timestamp) || Date.now();
-  await persistLastStreamEventTimestamp();
+  await recordStreamNotifyDiagnostics({
+    lastEventAt: Number(event.timestamp), lastEventReceivedAt: Date.now(),
+    lastEventStreamer: String(event.streamer), lastEventType: event.type,
+  });
 
   const isUp = event.type === 'stream-up';
   const streamer = String(event.streamer).trim();
@@ -106,10 +153,19 @@ async function handleStreamHubEvent(event) {
     event.message?.trim() ||
     (isUp ? 'Стример вышел в эфир' : 'Стрим завершён');
 
-  chrome.notifications.create(
-    `stream-${streamer}-${lastStreamEventTimestamp}`,
+  await chrome.notifications.create(
+    `stream-${streamEventKey(event)}`,
     buildBasicNotificationOptions(`${title}: ${streamer}`, message, 2)
   );
+  await recordStreamNotifyDiagnostics({ lastDeliveredAt: Date.now() });
+  deliveredStreamEvents.add(streamEventKey(event));
+  // The bot keeps at most 1000 events; retain a larger deduplication window.
+  if (deliveredStreamEvents.size > 2000) {
+    deliveredStreamEvents.delete(deliveredStreamEvents.values().next().value);
+  }
+  lastStreamEventTimestamp = Math.max(lastStreamEventTimestamp, Number(event.timestamp));
+  await persistLastStreamEventTimestamp();
+  return true;
 }
 
 /**
@@ -208,6 +264,7 @@ async function connectStreamEventSource() {
     await ensureOffscreenDocument();
     await sendToOffscreen({ type: 'OFFSCREEN_START_SSE', url });
   } catch (err) {
+    void recordStreamNotifyError('connection', 'Не удалось запустить SSE; используется резервный опрос');
     console.warn('[Stream Notify] offscreen SSE:', err);
     void pollRecentStreamEvents();
   }
@@ -237,12 +294,14 @@ async function pollRecentStreamEvents() {
 
   const { botUrl, headers } = await getBotRequestConfig();
   try {
-    const res = await fetch(`${botUrl}/api/events?limit=20&offset=0`, { headers });
+    const res = await fetch(`${botUrl}/api/events?limit=1000&offset=0`, { headers });
     if (!res.ok) {
+      await recordStreamNotifyError('poll', `Ошибка опроса: HTTP ${res.status}`);
       return;
     }
     const body = await res.json();
     const events = Array.isArray(body?.events) ? body.events : [];
+    await recordStreamNotifyDiagnostics({ lastPollSucceededAt: Date.now() });
     const relevant = events
       .filter((e) => STREAM_EVENT_TYPES.has(e.type))
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -251,6 +310,7 @@ async function pollRecentStreamEvents() {
       await handleStreamHubEvent(event);
     }
   } catch (err) {
+    void recordStreamNotifyError('poll', 'Бот недоступен или вернул некорректный ответ');
     console.warn('[Stream Notify] poll:', err);
   }
 }
@@ -267,12 +327,16 @@ function handleOffscreenMessage(message) {
   const msg = /** @type {{ type?: string, raw?: string, connected?: boolean }} */ (message);
 
   if (msg.type === 'OFFSCREEN_KEEPALIVE') {
+    offscreenSseConnected = Boolean(msg.connected);
+    void recordStreamNotifyDiagnostics({ connectionCheckedAt: Date.now() });
     return true;
   }
 
   if (msg.type === 'OFFSCREEN_SSE_STATUS') {
     offscreenSseConnected = Boolean(msg.connected);
+    void recordStreamNotifyDiagnostics({ connectionCheckedAt: Date.now() });
     if (!offscreenSseConnected && streamNotificationsEnabled) {
+      void recordStreamNotifyError('connection', 'SSE-соединение потеряно; выполняется переподключение');
       void pollRecentStreamEvents();
     }
     return true;
@@ -283,6 +347,7 @@ function handleOffscreenMessage(message) {
       const data = JSON.parse(String(msg.raw || ''));
       void handleStreamHubEvent(data);
     } catch (err) {
+      void recordStreamNotifyError('event', 'Получено некорректное SSE-событие');
       console.warn('[Stream Notify] SSE parse:', err);
     }
     return true;
@@ -303,11 +368,15 @@ async function setStreamNotificationsEnabled(enabled, options = {}) {
     });
   }
 
+  const wasEnabled = streamNotificationsEnabled;
   streamNotificationsEnabled = enabled;
   await chrome.storage.local.set({ streamNotificationsEnabled: enabled });
 
   if (enabled) {
-    await primeStreamEventBaseline();
+    if (!wasEnabled) {
+      streamEventBaseline = Date.now();
+      await primeStreamEventBaseline();
+    }
     await connectStreamEventSource();
     chrome.alarms.create(STREAM_EVENTS_ALARM, { periodInMinutes: 1 });
     await pollRecentStreamEvents();
@@ -332,9 +401,15 @@ async function loadStreamNotificationsState() {
   const data = await chrome.storage.local.get([
     'streamNotificationsEnabled',
     'lastStreamEventTimestamp',
+    'streamEventBaseline',
+    'deliveredStreamEvents',
+    'streamNotifyDiagnostics',
   ]);
   streamNotificationsEnabled = data.streamNotificationsEnabled === true;
   lastStreamEventTimestamp = Number(data.lastStreamEventTimestamp) || 0;
+  streamEventBaseline = Number(data.streamEventBaseline ?? data.lastStreamEventTimestamp) || 0;
+  deliveredStreamEvents = new Set(Array.isArray(data.deliveredStreamEvents) ? data.deliveredStreamEvents : []);
+  streamNotifyDiagnostics = data.streamNotifyDiagnostics || {};
   return streamNotificationsEnabled;
 }
 

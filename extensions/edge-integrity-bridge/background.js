@@ -265,7 +265,7 @@ chrome.commands.onCommand.addListener((command) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (typeof handleOffscreenMessage === 'function' && handleOffscreenMessage(message)) {
     return false;
   }
@@ -277,12 +277,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     void (async () => {
       const botUrl = String(message.botUrl || DEFAULT_BOT_URL).replace(/\/$/, '');
       const apiKey = String(message.apiKey || '').trim();
-      await chrome.storage.local.set({ botUrl, apiKey });
+      const stored = await chrome.storage.local.get(['botUrl', 'apiKey']);
+      // Dashboard may sync only its own origin, and may not redirect an existing setup.
+      const origin = new URL(botUrl).origin;
+      if (new URL(sender.url).origin !== origin ||
+          (stored.botUrl && new URL(stored.botUrl).origin !== origin)) {
+        sendResponse({ ok: false, message: 'Configure the bot URL in the extension first' });
+        return;
+      }
+      const effectiveKey = apiKey || stored.apiKey || '';
+      await chrome.storage.local.set({ botUrl: origin, apiKey: effectiveKey });
       if (typeof connectStreamEventSource === 'function') {
         connectStreamEventSource();
       }
-      sendResponse({ ok: true, botUrl, apiKeySet: apiKey.length > 0 });
-    })();
+      sendResponse({ ok: true, botUrl: origin, apiKeySet: effectiveKey.length > 0 });
+    })().catch((err) => sendResponse({ ok: false, message: String(err) }));
     return true;
   }
   if (message?.type === 'REQUEST_INTEGRITY_CAPTURE') {
@@ -294,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'GET_STREAM_NOTIFICATIONS_STATE') {
     void loadStreamNotificationsState().then((enabled) => {
-      sendResponse({ enabled });
+      sendResponse({ enabled, diagnostics: getStreamNotificationDiagnostics() });
     });
     return true;
   }

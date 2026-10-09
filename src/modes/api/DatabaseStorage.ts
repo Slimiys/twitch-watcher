@@ -268,16 +268,44 @@ export class DatabaseStorage {
   /**
    * Сохраняет базу данных в файл
    */
-  private saveDatabase(): void {
-    if (!this.db || !this.isInitialized) return;
+  private saveDatabase(): boolean {
+    if (!this.db || !this.isInitialized) return false;
 
+    const tempPath = `${this.config.dbPath}.${process.pid}.tmp`;
     try {
       const data = this.db.export();
       const buffer = Buffer.from(data);
-      fs.writeFileSync(this.config.dbPath, buffer);
+      fs.writeFileSync(tempPath, buffer);
+      fs.renameSync(tempPath, this.config.dbPath);
       logger.verbose(`💾  Database saved to ${this.config.dbPath}`);
+      return true;
     } catch (error: any) {
       logger.error(`❌  Failed to save database: ${error.message || error}`);
+      return false;
+    } finally {
+      if (fs.existsSync(tempPath)) {
+        try { fs.unlinkSync(tempPath); } catch { /* Retry on the next save. */ }
+      }
+    }
+  }
+
+  /** Commit both category totals together; restore memory if persistence fails. */
+  private updateCategoryStats(update: () => void): boolean {
+    if (!this.db || !SQL || !this.isInitialized) return false;
+    const snapshot = this.db.export();
+    try {
+      this.db.exec('BEGIN TRANSACTION');
+      update();
+      this.db.exec('COMMIT');
+      if (this.config.autoSave && !this.saveDatabase()) {
+        throw new Error('Category statistics could not be persisted');
+      }
+      return true;
+    } catch (error) {
+      this.db.close();
+      this.db = new SQL.Database(snapshot);
+      logger.error(`Failed to update category statistics: ${String(error)}`);
+      return false;
     }
   }
 
@@ -286,6 +314,9 @@ export class DatabaseStorage {
    */
   private createTables(): void {
     if (!isDatabaseAvailable || !this.db) return;
+
+    // Journal IDs are committed together with totals, making crash recovery idempotent.
+    this.db.exec('CREATE TABLE IF NOT EXISTS category_duration_receipts (id TEXT PRIMARY KEY)');
 
     // Таблица стримеров
     this.db.exec(`
@@ -764,7 +795,7 @@ export class DatabaseStorage {
   /**
    * Добавляет время стрима к суммарной статистике категории и стримера
    */
-  addCategoryStreamDuration(username: string, category: string, durationMs: number): boolean {
+  addCategoryStreamDuration(username: string, category: string, durationMs: number, segmentId?: string): boolean {
     const normalizedUsername = username?.trim();
     const normalizedCategory = category?.trim();
     const delta = Math.floor(durationMs);
@@ -773,16 +804,24 @@ export class DatabaseStorage {
       !this.db ||
       !normalizedUsername ||
       !normalizedCategory ||
-      delta <= 0
+      !Number.isFinite(delta) || delta <= 0
     ) {
       return false;
     }
 
-    try {
+    return this.updateCategoryStats(() => {
+      if (segmentId) {
+        const receipt = this.db!.prepare('SELECT id FROM category_duration_receipts WHERE id = ?');
+        receipt.bind([segmentId]);
+        const applied = receipt.step();
+        receipt.free();
+        if (applied) return;
+        this.recordCategoryDurationReceipt(segmentId);
+      }
       const streamerId = this.getOrCreateStreamer(normalizedUsername);
       const now = Date.now();
 
-      const categoryStmt = this.db.prepare(`
+      const categoryStmt = this.db!.prepare(`
         INSERT INTO category_stream_duration_totals (category, duration_ms, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(category) DO UPDATE SET
@@ -793,7 +832,7 @@ export class DatabaseStorage {
       categoryStmt.step();
       categoryStmt.free();
 
-      const streamerStmt = this.db.prepare(`
+      const streamerStmt = this.db!.prepare(`
         INSERT INTO streamer_category_stream_duration_totals (streamer_id, category, duration_ms, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(streamer_id, category) DO UPDATE SET
@@ -804,14 +843,7 @@ export class DatabaseStorage {
       streamerStmt.step();
       streamerStmt.free();
 
-      if (this.config.autoSave) {
-        this.saveDatabase();
-      }
-      return true;
-    } catch (error: any) {
-      logger.error(`❌  Failed to add category stream duration: ${error.message || error}`);
-      return false;
-    }
+    });
   }
 
   /**
@@ -963,26 +995,24 @@ export class DatabaseStorage {
   /**
    * Удаляет всю накопленную статистику времени стримов по категориям
    */
-  clearCategoryStreamDurationStats(): boolean {
+  private recordCategoryDurationReceipt(id: string): void {
+    const stmt = this.db!.prepare('INSERT OR IGNORE INTO category_duration_receipts (id) VALUES (?)');
+    try { stmt.bind([id]); stmt.step(); } finally { stmt.free(); }
+  }
+
+  clearCategoryStreamDurationStats(discardedSegmentIds: string[] = []): boolean {
     if (!isDatabaseAvailable || !this.db) {
       return false;
     }
 
-    try {
-      this.db.exec(`
+    return this.updateCategoryStats(() => {
+      // A crash before journal cleanup must not resurrect deliberately reset statistics.
+      for (const id of discardedSegmentIds) this.recordCategoryDurationReceipt(id);
+      this.db!.exec(`
         DELETE FROM streamer_category_stream_duration_totals;
         DELETE FROM category_stream_duration_totals;
       `);
-      if (this.config.autoSave) {
-        this.saveDatabase();
-      }
-      return true;
-    } catch (error: any) {
-      logger.error(
-        `❌  Failed to clear category stream duration stats: ${error.message || error}`
-      );
-      return false;
-    }
+    });
   }
 
   /**
