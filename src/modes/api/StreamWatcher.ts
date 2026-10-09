@@ -2089,6 +2089,9 @@ export class StreamWatcher {
     }
 
     if (existing) {
+      if (!this.databaseStorage?.recordCategoryChange(streamerInfo.username, existing.category, category, Date.now())) {
+        logger.warn(`Category change history could not be saved for ${streamerInfo.username}`);
+      }
       this.flushCategoryDurationWatch(streamerInfo.username);
     }
 
@@ -2889,6 +2892,7 @@ export class StreamWatcher {
       appSemver: semver,
       gitRevision: revision,
       watcherRunning: this.isRunning,
+      activeWatchCount: this.getActiveWatchCount(),
       websocket,
       integrity: enrichedIntegrity,
       gqlContext: getGqlContextHealthSnapshot(),
@@ -3066,7 +3070,7 @@ export class StreamWatcher {
   /**
    * Возвращает суммарное время стримов по категориям (БД + текущие активные сегменты)
    */
-  getCategoryStreamDurationTotalsForDashboard(): CategoryStreamDurationTotal[] {
+  getCategoryStreamDurationTotalsForDashboard(includeShort = false): CategoryStreamDurationTotal[] {
     const categoryTotals = new Map<string, number>();
     const streamersByCategory = new Map<string, Map<string, number>>();
 
@@ -3112,7 +3116,7 @@ export class StreamWatcher {
         const streamerMap = streamersByCategory.get(category) ?? new Map<string, number>();
         const streamers = [...streamerMap.entries()]
           .map(([streamerName, durationMs]) => ({ streamerName, durationMs }))
-          .filter((entry) => entry.durationMs > 0 && Math.floor(entry.durationMs / 60_000) > 0)
+          .filter((entry) => entry.durationMs > 0 && (includeShort || Math.floor(entry.durationMs / 60_000) > 0))
           .sort(
             (a, b) =>
               b.durationMs - a.durationMs ||
@@ -3125,7 +3129,7 @@ export class StreamWatcher {
 
         return { category, durationMs, streamers };
       })
-      .filter((entry) => entry.durationMs > 0 && Math.floor(entry.durationMs / 60_000) > 0)
+      .filter((entry) => entry.durationMs > 0 && (includeShort || Math.floor(entry.durationMs / 60_000) > 0))
       .sort((a, b) => b.durationMs - a.durationMs || a.category.localeCompare(b.category, 'ru'));
   }
 

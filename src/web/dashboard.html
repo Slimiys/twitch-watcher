@@ -6,9 +6,10 @@
     <title>Twitch Watcher - Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
-    <link rel="stylesheet" href="dashboard.css?v=19">
-    <script src="dashboard-i18n.js?v=7"></script>
-    <script src="dashboard.js?v=56" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=20">
+    <script src="dashboard-i18n.js?v=8"></script>
+    <script src="dashboard-insights.js?v=1" defer></script>
+    <script src="dashboard.js?v=57" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -296,6 +297,7 @@
             <div class="section bot-health-section collapsible-section" id="botHealthSection">
                 <h2 class="section-header-clickable" data-section="botHealthContent" data-i18n="health.title">Статус бота</h2>
                 <div id="botHealthContent" class="bot-health-content">
+                    <div id="botActivityPanel" class="bot-activity-panel" role="status" aria-live="polite"></div>
                     <div id="botHealthGrid" class="bot-health-grid">
                         <p class="bot-health-loading" data-i18n="health.loading">Загрузка…</p>
                     </div>
@@ -318,9 +320,24 @@
                     </button>
                 </div>
                 <div id="categoryStreamStatsContent">
+                    <details class="insight-section">
+                        <summary id="comparisonHeading" data-i18n="insights.compare">Сравнение стримеров</summary>
+                        <p class="insight-hint" data-i18n="insights.choose">Выберите от 2 до 4 стримеров.</p>
+                        <div id="comparisonOptions" class="comparison-options" role="group" aria-labelledby="comparisonHeading"></div>
+                        <p id="comparisonLoadState" role="status"></p>
+                        <div id="streamerComparisonTable" class="insight-scroll"><p data-i18n="catStats.loading">Загрузка…</p></div>
+                    </details>
                     <div id="categoryStreamStatsWrap">
                         <p class="category-stream-duration-empty" data-i18n="catStats.loading">Загрузка…</p>
                     </div>
+                    <details class="insight-section">
+                        <summary data-i18n="insights.history">История изменений категорий</summary>
+                        <p class="insight-hint" data-i18n="insights.historyHint">Последние 100 переходов, обнаруженных ботом после установки обновления. Время — момент обнаружения.</p>
+                        <label class="streamer-search"><span data-i18n="filters.search">Поиск стримеров</span><input type="search" id="categoryHistorySearch" data-i18n-placeholder="filters.searchPlaceholder"></label>
+                        <p id="historyLoadState" role="status"></p>
+                        <div id="categoryHistoryTable" class="insight-scroll"><p data-i18n="catStats.loading">Загрузка…</p></div>
+                    </details>
+                    <button type="button" class="toggle-btn" id="retryInsights" data-i18n="insights.refresh">Обновить историю и сравнение</button>
                 </div>
             </div>
 

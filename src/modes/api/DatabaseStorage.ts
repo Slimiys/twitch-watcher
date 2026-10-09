@@ -317,6 +317,11 @@ export class DatabaseStorage {
 
     // Journal IDs are committed together with totals, making crash recovery idempotent.
     this.db.exec('CREATE TABLE IF NOT EXISTS category_duration_receipts (id TEXT PRIMARY KEY)');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS category_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL, from_category TEXT NOT NULL,
+      to_category TEXT NOT NULL, observed_at INTEGER NOT NULL
+    ); CREATE INDEX IF NOT EXISTS category_changes_time ON category_changes(observed_at DESC, id DESC);`);
 
     // Таблица стримеров
     this.db.exec(`
@@ -998,6 +1003,33 @@ export class DatabaseStorage {
   private recordCategoryDurationReceipt(id: string): void {
     const stmt = this.db!.prepare('INSERT OR IGNORE INTO category_duration_receipts (id) VALUES (?)');
     try { stmt.bind([id]); stmt.step(); } finally { stmt.free(); }
+  }
+
+  recordCategoryChange(username: string, fromCategory: string, toCategory: string, observedAt: number): boolean {
+    if (!username.trim() || !fromCategory.trim() || !toCategory.trim() || !Number.isFinite(observedAt)) return false;
+    return this.updateCategoryStats(() => {
+      const stmt = this.db!.prepare('INSERT INTO category_changes (username, from_category, to_category, observed_at) VALUES (?, ?, ?, ?)');
+      try {
+        stmt.bind([username, fromCategory, toCategory, observedAt]);
+        stmt.step();
+      } finally { stmt.free(); }
+    });
+  }
+
+  getCategoryChanges(limit = 100): Array<{ id: number; streamerName: string; fromCategory: string; toCategory: string; observedAt: number }> {
+    if (!this.db || !this.isInitialized) throw new Error('Database unavailable');
+    const stmt = this.db.prepare(`SELECT id, username, from_category, to_category, observed_at
+      FROM category_changes ORDER BY observed_at DESC, id DESC LIMIT ?`);
+    const rows = [];
+    try {
+      stmt.bind([Math.max(1, Math.min(500, Math.floor(limit) || 100))]);
+      while (stmt.step()) {
+        const row = stmt.getAsObject();
+        rows.push({ id: Number(row.id), streamerName: String(row.username), fromCategory: String(row.from_category),
+          toCategory: String(row.to_category), observedAt: Number(row.observed_at) });
+      }
+      return rows;
+    } finally { stmt.free(); }
   }
 
   clearCategoryStreamDurationStats(discardedSegmentIds: string[] = []): boolean {

@@ -32,6 +32,18 @@ describe('category statistics persistence', () => {
     expect(storage.getCategoryStreamDurationTotals()[0].durationMs).toBe(60_000);
   });
 
+  it('persists ordered category transitions, including returns to an earlier game', async () => {
+    expect(storage.recordCategoryChange('a', 'Path of Exile', 'Path of Exile 2', 100)).toBe(true);
+    expect(storage.recordCategoryChange('a', 'Path of Exile 2', 'Path of Exile', 200)).toBe(true);
+    expect(storage.getCategoryChanges(1)[0].toCategory).toBe('Path of Exile');
+    storage.close();
+    storage = new DatabaseStorage({ dbPath: path.join(dir, 'stats.db'), autoBackup: false });
+    await vi.waitFor(() => expect(storage.isReady()).toBe(true));
+    expect(storage.getCategoryChanges().map(row => row.observedAt)).toEqual([200, 100]);
+    expect(storage.clearCategoryStreamDurationStats()).toBe(true);
+    expect(storage.getCategoryChanges()).toHaveLength(2);
+  });
+
   it('replays the journal after restart without double counting committed segments', async () => {
     const journalPath = path.join(dir, 'category-duration-pending.json');
     const journal = new CategoryDurationJournal(journalPath);
@@ -117,6 +129,20 @@ describe('category duration retries', () => {
     expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenLastCalledWith('a', 'Path of Exile', 1000, expect.any(String));
     expect(w.pendingCategoryDurations).toHaveLength(0);
     expect(w.activeCategoryWatch.get('a').since).toBe(3000);
+  });
+
+  it('records only detected transitions, not repeated observations or initial category', () => {
+    const w = watcher();
+    w.activeCategoryWatch.clear();
+    w.activeStreamSessionKeys = new Map([['a', 'session']]);
+    w.databaseStorage.recordCategoryChange = vi.fn(() => true);
+    const streamer = { username: 'a', isOnline: true, game: 'Path of Exile', gameId: '1' };
+    w.syncCategoryDurationWithStreamerGame(streamer);
+    w.syncCategoryDurationWithStreamerGame(streamer);
+    expect(w.databaseStorage.recordCategoryChange).not.toHaveBeenCalled();
+    w.syncCategoryDurationWithStreamerGame({ ...streamer, game: 'Path of Exile 2', gameId: '2' });
+    expect(w.databaseStorage.recordCategoryChange).toHaveBeenCalledTimes(1);
+    expect(w.databaseStorage.recordCategoryChange).toHaveBeenCalledWith('a', 'Path of Exile', 'Path of Exile 2', expect.any(Number));
   });
 
   it('retries a closed segment without extending it or changing its category', () => {

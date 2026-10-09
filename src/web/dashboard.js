@@ -84,6 +84,9 @@ async function refreshDashboardLocale() {
     }
     renderFavoriteCategoriesTable();
     renderCategoryStreamStats();
+    renderCategoryHistory();
+    renderStreamerComparison();
+    renderBotActivity();
     if (lastOverallStatsCache) {
         const lastActivityEl = document.getElementById('lastActivity');
         if (lastActivityEl) {
@@ -2572,7 +2575,8 @@ async function updateBotHealth() {
         return;
     }
 
-    const health = await fetchData('/bot-health');
+    const [health, initialization] = await Promise.all([fetchData('/bot-health'), fetchData('/initialization-status')]);
+    renderBotActivity(health, initialization);
     const integrityCard = await renderIntegrityHealthCard(health);
 
     if (!health || health.error) {
@@ -4433,6 +4437,7 @@ async function updateAll() {
             updateOverallStats(),
             updateStatistics(),
             updateCategoryStreamStats(),
+            updateDashboardInsights(),
             updateBotHealth(),
             updateCriticalNotifications(),
             updateTokenInfo(),
@@ -6216,6 +6221,9 @@ async function performCategoryStreamStatsReset() {
             selectedCategoryStreamStreamerKey = '';
             categoryStreamDurationStats = [];
             renderCategoryStreamStats();
+            insightCategories = [];
+            renderStreamerComparison();
+            await updateDashboardInsights();
             await loadCategoryStreamStats();
             showNotification('success', t('notify.catStatsResetSuccess'));
         } else {

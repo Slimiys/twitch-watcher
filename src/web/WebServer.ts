@@ -807,6 +807,32 @@ export class WebServer {
       }
     });
 
+    this.app.get('/api/category-changes', (_req: Request, res: Response) => {
+      try {
+        const db = (this.statisticsProvider as StreamWatcher | null)?.getDatabaseStorage?.();
+        if (!db?.isReady()) {
+          res.status(503).json({ error: 'Database unavailable' });
+          return;
+        }
+        res.json({ changes: db.getCategoryChanges(100) });
+      } catch {
+        res.status(500).json({ error: 'Failed to load category history' });
+      }
+    });
+
+    this.app.get('/api/streamer-comparison', (_req: Request, res: Response) => {
+      try {
+        const watcher = this.statisticsProvider as StreamWatcher | null;
+        if (!watcher?.getCategoryStreamDurationTotalsForDashboard) {
+          res.status(503).json({ error: 'Statistics unavailable' });
+          return;
+        }
+        res.json({ categories: watcher.getCategoryStreamDurationTotalsForDashboard(true) });
+      } catch {
+        res.status(500).json({ error: 'Failed to load comparison' });
+      }
+    });
+
     this.app.post('/api/category-stream-stats/reset', (_req: Request, res: Response) => {
       try {
         const streamWatcher = this.statisticsProvider as StreamWatcher | null;

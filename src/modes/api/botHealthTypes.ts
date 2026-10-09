@@ -83,6 +83,7 @@ export interface BotHealthSnapshot {
   appSemver: string;
   gitRevision: string;
   watcherRunning: boolean;
+  activeWatchCount?: number;
   websocket: WebSocketHealthSnapshot;
   integrity: IntegrityHealthSnapshot;
   gqlContext: GqlContextHealthSnapshot;
