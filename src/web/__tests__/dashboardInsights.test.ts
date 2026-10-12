@@ -20,6 +20,21 @@ function harness() {
 }
 
 describe('dashboard insights', () => {
+  it('renders the host battery, hides unsupported hosts and clears old values on failure', async () => {
+    const h = harness();
+    h.context.fetchData.mockResolvedValue({ available: true, percentage: 0, state: 'discharging', checkedAt: 1000 });
+    await h.run('updateHostBattery()');
+    expect(h.element('hostBatteryPanel').innerHTML).toContain('0%');
+    expect(h.element('hostBatteryPanel').dataset.low).toBe('true');
+    h.context.fetchData.mockResolvedValue(null);
+    await h.run('updateHostBattery()');
+    expect(h.element('hostBatteryPanel').innerHTML).not.toContain('0%');
+    expect(h.element('hostBatteryPanel').innerHTML).toContain('battery.unavailable');
+    h.context.fetchData.mockResolvedValue({ available: false, reason: 'unsupported' });
+    await h.run('updateHostBattery()');
+    expect(h.element('hostBatteryPanel').hidden).toBe(true);
+  });
+
   it('distinguishes missing token, initialization, stopped, connection errors and active watches', () => {
     const h = harness();
     expect(h.run('getBotActivity(null, null)')).toBe('unavailable');

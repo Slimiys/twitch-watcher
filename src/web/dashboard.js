@@ -87,6 +87,7 @@ async function refreshDashboardLocale() {
     renderCategoryHistory();
     renderStreamerComparison();
     renderBotActivity();
+    renderHostBattery();
     if (lastOverallStatsCache) {
         const lastActivityEl = document.getElementById('lastActivity');
         if (lastActivityEl) {
@@ -4439,6 +4440,7 @@ async function updateAll() {
             updateCategoryStreamStats(),
             updateDashboardInsights(),
             updateBotHealth(),
+            updateHostBattery(),
             updateCriticalNotifications(),
             updateTokenInfo(),
             updateDatabaseInfo()

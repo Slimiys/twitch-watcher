@@ -8,6 +8,31 @@ let insightSelection = new Set();
 let insightOptionsKey = '';
 let insightHealth = null;
 let insightInitialization = null;
+let hostBatterySnapshot = null;
+
+function renderHostBattery() {
+    const panel = document.getElementById('hostBatteryPanel');
+    if (!panel) return;
+    const battery = hostBatterySnapshot;
+    panel.hidden = battery?.reason === 'unsupported';
+    if (panel.hidden) return;
+    const available = battery?.available === true && typeof battery.percentage === 'number' &&
+        Number.isFinite(battery.percentage) && battery.percentage >= 0 && battery.percentage <= 100;
+    panel.dataset.low = String(available && battery.percentage <= 20 && battery.state !== 'charging' && battery.state !== 'full');
+    const states = ['charging', 'discharging', 'full', 'not_charging', 'unknown'];
+    const state = states.includes(battery?.state) ? battery.state : 'unknown';
+    const reason = ['api_missing', 'api_unavailable', 'invalid_response'].includes(battery?.reason) ? battery.reason : 'unavailable';
+    panel.innerHTML = `<strong>${escapeHtml(t('battery.title'))}</strong>` + (available
+        ? `<span class="host-battery-value">${battery.percentage}% · ${escapeHtml(t(`battery.${state}`))}</span>
+           <meter min="0" max="100" value="${battery.percentage}" aria-label="${escapeHtml(t('battery.title'))}"></meter>
+           <small>${escapeHtml(t('battery.checked', { time: new Date(battery.checkedAt).toLocaleTimeString(getNumberLocale()) }))}</small>`
+        : `<span>${escapeHtml(t(`battery.${reason}`))}</span>`);
+}
+
+async function updateHostBattery() {
+    hostBatterySnapshot = await fetchData('/host-battery');
+    renderHostBattery();
+}
 
 function getBotActivity(health, initialization) {
     if (!initialization && !health) return 'unavailable';

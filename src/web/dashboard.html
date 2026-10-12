@@ -6,10 +6,10 @@
     <title>Twitch Watcher - Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
-    <link rel="stylesheet" href="dashboard.css?v=20">
-    <script src="dashboard-i18n.js?v=8"></script>
-    <script src="dashboard-insights.js?v=1" defer></script>
-    <script src="dashboard.js?v=57" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=21">
+    <script src="dashboard-i18n.js?v=9"></script>
+    <script src="dashboard-insights.js?v=2" defer></script>
+    <script src="dashboard.js?v=58" defer></script>
 </head>
 <body>
     <!-- Экран загрузки -->
@@ -298,6 +298,7 @@
                 <h2 class="section-header-clickable" data-section="botHealthContent" data-i18n="health.title">Статус бота</h2>
                 <div id="botHealthContent" class="bot-health-content">
                     <div id="botActivityPanel" class="bot-activity-panel" role="status" aria-live="polite"></div>
+                    <div id="hostBatteryPanel" class="host-battery-panel" hidden></div>
                     <div id="botHealthGrid" class="bot-health-grid">
                         <p class="bot-health-loading" data-i18n="health.loading">Загрузка…</p>
                     </div>

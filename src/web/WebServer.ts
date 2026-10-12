@@ -45,6 +45,7 @@ import {
 } from './favoriteCategoriesApi';
 import { readCategoryStreamStatsForApi, resetCategoryStreamStatsForApi } from './categoryStreamStatsApi';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
+import { readHostBattery } from './hostBattery';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -346,6 +347,12 @@ export class WebServer {
         logger.error('Error getting bot health:', error);
         res.status(500).json({ error: error.message || 'Unknown error' });
       }
+    });
+
+    // Host data, not the battery of the browser viewing the dashboard.
+    this.app.get('/api/host-battery', async (_req: Request, res: Response) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await readHostBattery());
     });
 
     this.app.get('/api/initialization-status', (req: Request, res: Response) => {
