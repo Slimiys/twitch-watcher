@@ -20,6 +20,13 @@ function harness() {
 }
 
 describe('dashboard insights', () => {
+  it('places the battery panel immediately below the connection status in the header', () => {
+    const html = readFileSync('src/web/dashboard.html', 'utf8');
+    expect(html.match(/id="hostBatteryPanel"/g)).toHaveLength(1);
+    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    expect(header).toMatch(/id="statusText"[^>]*>[^<]*<\/span>\s*<\/div>\s*<div id="hostBatteryPanel"/);
+  });
+
   it('renders the host battery, hides unsupported hosts and clears old values on failure', async () => {
     const h = harness();
     h.context.fetchData.mockResolvedValue({ available: true, percentage: 0, state: 'discharging', checkedAt: 1000 });
