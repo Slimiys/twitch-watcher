@@ -9,6 +9,7 @@
     const MESSAGES = {
         ru: {
             'battery.title': 'Батарея устройства с ботом',
+            'battery.shortTitle': 'Батарея',
             'battery.charging': 'Заряжается',
             'battery.discharging': 'Работа от батареи',
             'battery.full': 'Полностью заряжена',
@@ -373,6 +374,7 @@
         },
         en: {
             'battery.title': 'Bot device battery',
+            'battery.shortTitle': 'Battery',
             'battery.charging': 'Charging',
             'battery.discharging': 'On battery',
             'battery.full': 'Fully charged',

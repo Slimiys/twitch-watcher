@@ -20,11 +20,15 @@ function harness() {
 }
 
 describe('dashboard insights', () => {
-  it('places the battery panel immediately below the connection status in the header', () => {
+  it('places all five compact metrics in the header before the main content', () => {
     const html = readFileSync('src/web/dashboard.html', 'utf8');
     expect(html.match(/id="hostBatteryPanel"/g)).toHaveLength(1);
     const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
-    expect(header).toMatch(/id="statusText"[^>]*>[^<]*<\/span>\s*<\/div>\s*<div id="hostBatteryPanel"/);
+    for (const id of ['activeWatches', 'totalPoints', 'streamersCount', 'lastActivity', 'hostBatteryPanel']) {
+      expect(header).toContain(`id="${id}"`);
+      expect(html.match(new RegExp(`id="${id}"`, 'g'))).toHaveLength(1);
+    }
+    expect(header).not.toContain('onclick="toggleCard(this)"');
   });
 
   it('renders the host battery, hides unsupported hosts and clears old values on failure', async () => {
@@ -33,6 +37,8 @@ describe('dashboard insights', () => {
     await h.run('updateHostBattery()');
     expect(h.element('hostBatteryPanel').innerHTML).toContain('0%');
     expect(h.element('hostBatteryPanel').dataset.low).toBe('true');
+    expect(h.element('hostBatteryPanel').innerHTML).toMatch(/metric-heading.*<time.*<\/time><\/div>/);
+    expect(h.element('hostBatteryPanel').innerHTML).toContain('datetime="1970-01-01T00:00:01.000Z"');
     h.context.fetchData.mockResolvedValue(null);
     await h.run('updateHostBattery()');
     expect(h.element('hostBatteryPanel').innerHTML).not.toContain('0%');

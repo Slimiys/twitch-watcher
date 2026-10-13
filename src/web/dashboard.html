@@ -6,9 +6,9 @@
     <title>Twitch Watcher - Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/static/favicon.svg">
-    <link rel="stylesheet" href="dashboard.css?v=22">
-    <script src="dashboard-i18n.js?v=9"></script>
-    <script src="dashboard-insights.js?v=2" defer></script>
+    <link rel="stylesheet" href="dashboard.css?v=23">
+    <script src="dashboard-i18n.js?v=10"></script>
+    <script src="dashboard-insights.js?v=3" defer></script>
     <script src="dashboard.js?v=58" defer></script>
 </head>
 <body>
@@ -43,14 +43,12 @@
             </div>
             <div class="dashboard-header-brand">
                 <h1 data-i18n="header.title">Twitch Watcher Dashboard</h1>
-                <p class="dashboard-header-tagline" data-i18n="header.tagline">Мониторинг и статистика в реальном времени</p>
                 <div class="dashboard-header-meta">
                     <p id="botUptimeDisplay" class="dashboard-bot-uptime" aria-live="polite"></p>
                     <div class="connection-status connection-status--brand" id="connectionStatus">
                         <span class="status-dot offline" id="statusDot"></span>
                         <span id="statusText" data-i18n="header.connecting">Подключение…</span>
                     </div>
-                    <div id="hostBatteryPanel" class="host-battery-panel" hidden></div>
                 </div>
             </div>
             <div class="dashboard-header-toolbar">
@@ -92,10 +90,6 @@
                     <span class="header-toolbar-group-label" data-i18n="header.actions">Действия</span>
                     <div class="header-toolbar-group-body">
                         <div class="header-actions-row">
-                            <button class="settings-btn" id="testBtn" data-i18n-title="header.testsTitle" title="Тестирование">
-                                <span>🧪</span>
-                                <span data-i18n="header.tests">Тесты</span>
-                            </button>
                             <button class="settings-btn" id="appUpdateBtn" data-i18n-title="header.updateTitle" title="git pull и run-local.sh (Termux)" style="display: none;">
                                 <span>🔄</span>
                                 <span data-i18n="header.update">Обновиться</span>
@@ -134,46 +128,47 @@
                     </div>
                 </div>
             </div>
-        </header>
-
-        <div class="stats-grid" id="overallStatsGrid">
-            <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)">
+        <div class="stats-grid header-metrics" id="overallStatsGrid">
+            <div class="stat-card" data-i18n-title="stats.activeWatchesLabel">
+                <svg class="metric-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3H3M17 4a3 3 0 0 1 0 6M18 13a5 5 0 0 1 3 5v3"/></svg>
+                <h3>
                     <span data-i18n="stats.activeWatches">Активные просмотры</span>
                 </h3>
                 <div class="stat-card-content">
                     <div class="value" id="activeWatches">0</div>
-                    <div class="label" data-i18n="stats.activeWatchesLabel">Сейчас смотрим</div>
                 </div>
             </div>
-            <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)">
+            <div class="stat-card" data-i18n-title="stats.totalPointsLabel">
+                <svg class="metric-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></svg>
+                <h3>
                     <span data-i18n="stats.totalPoints">Всего баллов</span>
                 </h3>
                 <div class="stat-card-content">
                     <div class="value" id="totalPoints">0</div>
-                    <div class="label" data-i18n="stats.totalPointsLabel">Заработано за сессию</div>
                 </div>
             </div>
-            <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)">
+            <div class="stat-card" data-i18n-title="stats.streamersLabel">
+                <svg class="metric-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 21v-3a8 6 0 0 1 16 0v3H4"/></svg>
+                <h3>
                     <span data-i18n="stats.streamers">Стримеры</span>
                 </h3>
                 <div class="stat-card-content">
                     <div class="value" id="streamersCount">0</div>
-                    <div class="label" data-i18n="stats.streamersLabel">Всего стримеров</div>
                 </div>
             </div>
-            <div class="stat-card collapsible-card">
-                <h3 onclick="toggleCard(this)">
+            <div class="stat-card metric-last-online" data-i18n-title="stats.lastOnlineLabel">
+                <svg class="metric-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 3"/></svg>
+                <h3>
                     <span data-i18n="stats.lastOnline">Последний онлайн</span>
                 </h3>
                 <div class="stat-card-content">
                     <div class="value" id="lastActivity">—</div>
-                    <div class="label" data-i18n="stats.lastOnlineLabel">Когда стример вышел в эфир</div>
                 </div>
             </div>
+            <div id="hostBatteryPanel" class="host-battery-panel" hidden></div>
         </div>
+
+        </header>
 
         <!-- Критические уведомления -->
         <div id="criticalNotifications" class="critical-notifications" style="display: none;">

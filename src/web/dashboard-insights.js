@@ -22,11 +22,13 @@ function renderHostBattery() {
     const states = ['charging', 'discharging', 'full', 'not_charging', 'unknown'];
     const state = states.includes(battery?.state) ? battery.state : 'unknown';
     const reason = ['api_missing', 'api_unavailable', 'invalid_response'].includes(battery?.reason) ? battery.reason : 'unavailable';
-    panel.innerHTML = `<strong>${escapeHtml(t('battery.title'))}</strong>` + (available
-        ? `<span class="host-battery-value">${battery.percentage}% · ${escapeHtml(t(`battery.${state}`))}</span>
-           <meter min="0" max="100" value="${battery.percentage}" aria-label="${escapeHtml(t('battery.title'))}"></meter>
-           <small>${escapeHtml(t('battery.checked', { time: new Date(battery.checkedAt).toLocaleTimeString(getNumberLocale()) }))}</small>`
-        : `<span>${escapeHtml(t(`battery.${reason}`))}</span>`);
+    const checkedAt = available && Number.isFinite(battery.checkedAt) ? new Date(battery.checkedAt) : null;
+    const time = checkedAt && Number.isFinite(checkedAt.getTime())
+        ? checkedAt.toLocaleTimeString(getNumberLocale(), { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    panel.innerHTML = `<div class="metric-heading"><span>${escapeHtml(t('battery.shortTitle'))}</span>${time
+        ? `<time title="${escapeHtml(t('battery.checked', { time }))}" datetime="${checkedAt.toISOString()}">${escapeHtml(time)}</time>` : ''}</div>` + (available
+        ? `<div class="host-battery-value"><span class="battery-icon" aria-hidden="true"><span style="width:${battery.percentage}%"></span></span>${battery.percentage}% · ${escapeHtml(t(`battery.${state}`))}${state === 'charging' ? ' ⚡' : ''}</div>`
+        : `<span class="battery-error">${escapeHtml(t(`battery.${reason}`))}</span>`);
 }
 
 async function updateHostBattery() {

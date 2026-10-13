@@ -3585,3 +3585,39 @@ tr.is-favorite-streamer:hover {
 .host-battery-panel[data-low="true"] .host-battery-value { color: #ffb84d; }
 .host-battery-panel meter { width: 100px; }
 .host-battery-panel small { color: #adadb8; }
+
+/* Compact dashboard header: identity, metrics, then controls. */
+.dashboard-header { display: flex; flex-direction: column; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid #2b2b31; margin-bottom: 20px; }
+.dashboard-header-brand { flex: none; order: 1; width: 100%; }
+.dashboard-header-meta { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; }
+.dashboard-header-meta .connection-status { order: -1; background: none; padding: 0; border: 0; }
+.dashboard-bot-uptime { color: #adadb8; font-weight: 400; }
+.dashboard-header .header-metrics { order: 2; display: flex; flex-wrap: wrap; gap: 10px; width: 100%; margin: 0; }
+.header-metrics .stat-card, .header-metrics .host-battery-panel { flex: 1 1 140px; min-width: 0; min-height: 64px; margin: 0; padding: 8px 10px; box-sizing: border-box; background: #18181b; border: 1px solid #2b2b31; border-radius: 8px; }
+.header-metrics .metric-last-online { flex: 1.6 1 240px; }
+.dashboard-header .header-metrics .stat-card { position: relative; padding: 8px 10px 8px 36px; }
+.metric-icon { position: absolute; left: 10px; top: 14px; width: 16px; height: 16px; fill: none; stroke: #adadb8; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.header-metrics .host-battery-panel { flex: 1.3 1 210px; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; }
+.header-metrics .host-battery-panel[hidden] { display: none; }
+.header-metrics .stat-card h3, .metric-heading { font-size: 11px; font-weight: 500; line-height: 16px; color: #adadb8; text-transform: uppercase; margin: 0 0 6px; }
+.metric-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; }
+.metric-heading time { font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.header-metrics .stat-card .value, .header-metrics #lastActivity, .host-battery-value { font-size: 16px; line-height: 22px; font-weight: 600; color: #efeff1; overflow-wrap: anywhere; }
+.header-metrics .stat-card-content { padding: 0; }
+.host-battery-value { display: flex; align-items: center; gap: 6px; }
+.battery-icon { display: inline-block; flex: 0 0 18px; height: 10px; padding: 1px; border: 1px solid currentColor; border-radius: 2px; color: #00cc70; }
+.battery-icon > span { display: block; height: 100%; background: currentColor; }
+.host-battery-panel[data-low="true"] .battery-icon { color: #ffb84d; }
+.battery-error { font-size: 12px; line-height: 16px; color: #adadb8; }
+.dashboard-header-toolbar { order: 3; flex: none; width: 100%; justify-content: space-between; align-items: center; gap: 12px; }
+.dashboard-header .header-toolbar-group { padding: 0; border: 0; background: none; max-width: 100%; }
+.dashboard-header .header-toolbar-group-label { display: none; }
+.dashboard-header .settings-btn, .dashboard-header .export-btn { font-size: 13px; padding: 8px 12px; border-radius: 8px; }
+.dashboard-header #appStopBtn { background: #351c20; border-color: #663035; }
+@media (max-width: 600px) {
+    .dashboard-header .header-metrics { gap: 8px; }
+    .header-metrics .stat-card, .header-metrics .host-battery-panel { flex-basis: calc(50% - 8px); }
+    .header-metrics .metric-last-online { flex-basis: 100%; }
+    .dashboard-header .header-toolbar-group-body, .dashboard-header .update-interval-control { flex-wrap: wrap; }
+    .dashboard-header h1 { font-size: 24px; }
+}
