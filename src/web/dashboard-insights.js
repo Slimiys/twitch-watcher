@@ -10,6 +10,23 @@ let insightHealth = null;
 let insightInitialization = null;
 let hostBatterySnapshot = null;
 
+function formatBatteryAge(checkedAt, now = Date.now(), locale = getNumberLocale()) {
+    if (!Number.isFinite(checkedAt) || !Number.isFinite(now)) return '';
+    const seconds = Math.max(0, Math.floor((now - checkedAt) / 1000));
+    const unit = seconds < 60 ? 'second' : seconds < 3600 ? 'minute' : 'hour';
+    const value = unit === 'second' ? seconds : Math.floor(seconds / (unit === 'minute' ? 60 : 3600));
+    return new Intl.RelativeTimeFormat(locale, { numeric: 'always' }).format(-value, unit);
+}
+
+function updateHostBatteryAge() {
+    const label = document.getElementById('hostBatteryTime');
+    if (!label || hostBatterySnapshot?.available !== true) return;
+    const checkedAt = hostBatterySnapshot.checkedAt;
+    if (!Number.isFinite(checkedAt) || !Number.isFinite(new Date(checkedAt).getTime())) return;
+    const time = new Date(checkedAt).toLocaleTimeString(getNumberLocale(), { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    label.textContent = `${time} · ${formatBatteryAge(checkedAt)}`;
+}
+
 function renderHostBattery() {
     const panel = document.getElementById('hostBatteryPanel');
     if (!panel) return;
@@ -26,7 +43,7 @@ function renderHostBattery() {
     const time = checkedAt && Number.isFinite(checkedAt.getTime())
         ? checkedAt.toLocaleTimeString(getNumberLocale(), { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
     panel.innerHTML = `<div class="metric-heading"><span>${escapeHtml(t('battery.shortTitle'))}</span>${time
-        ? `<time title="${escapeHtml(t('battery.checked', { time }))}" datetime="${checkedAt.toISOString()}">${escapeHtml(time)}</time>` : ''}</div>` + (available
+        ? `<time id="hostBatteryTime" title="${escapeHtml(t('battery.checked', { time }))}" datetime="${checkedAt.toISOString()}">${escapeHtml(time)} · ${escapeHtml(formatBatteryAge(battery.checkedAt))}</time>` : ''}</div>` + (available
         ? `<div class="host-battery-value"><span class="battery-icon" aria-hidden="true"><span style="width:${battery.percentage}%"></span></span>${battery.percentage}% · ${escapeHtml(t(`battery.${state}`))}${state === 'charging' ? ' ⚡' : ''}</div>`
         : `<span class="battery-error">${escapeHtml(t(`battery.${reason}`))}</span>`);
 }

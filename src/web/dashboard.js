@@ -1324,7 +1324,10 @@ function startBotUptimeClock() {
     if (botUptimeTickTimer) {
         return;
     }
-    botUptimeTickTimer = setInterval(renderBotUptimeLabel, 1000);
+    botUptimeTickTimer = setInterval(() => {
+        renderBotUptimeLabel();
+        updateHostBatteryAge();
+    }, 1000);
     if (!botUptimeSyncTimer) {
         botUptimeSyncTimer = setInterval(() => {
             void refreshBotUptimeFromServer();

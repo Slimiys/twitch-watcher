@@ -3601,7 +3601,7 @@ tr.is-favorite-streamer:hover {
 .header-metrics .host-battery-panel[hidden] { display: none; }
 .header-metrics .stat-card h3, .metric-heading { font-size: 11px; font-weight: 500; line-height: 16px; color: #adadb8; text-transform: uppercase; margin: 0 0 6px; }
 .metric-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; }
-.metric-heading time { font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.metric-heading time { font-size: 10px; text-align: right; text-transform: none; font-variant-numeric: tabular-nums; }
 .header-metrics .stat-card .value, .header-metrics #lastActivity, .host-battery-value { font-size: 16px; line-height: 22px; font-weight: 600; color: #efeff1; overflow-wrap: anywhere; }
 .header-metrics .stat-card-content { padding: 0; }
 .host-battery-value { display: flex; align-items: center; gap: 6px; }

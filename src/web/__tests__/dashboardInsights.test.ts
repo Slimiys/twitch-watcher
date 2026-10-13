@@ -20,6 +20,34 @@ function harness() {
 }
 
 describe('dashboard insights', () => {
+  it('formats battery age in seconds, minutes and hours in both languages', () => {
+    const h = harness();
+    for (const [elapsed, en, ru] of [
+      [0, '0 seconds ago', '0 секунд назад'],
+      [1000, '1 second ago', '1 секунду назад'],
+      [59000, '59 seconds ago', '59 секунд назад'],
+      [60000, '1 minute ago', '1 минуту назад'],
+      [120000, '2 minutes ago', '2 минуты назад'],
+      [3599000, '59 minutes ago', '59 минут назад'],
+      [3600000, '1 hour ago', '1 час назад'],
+      [7200000, '2 hours ago', '2 часа назад'],
+    ]) {
+      expect(h.run(`formatBatteryAge(0, ${elapsed}, 'en-US')`)).toBe(en);
+      expect(h.run(`formatBatteryAge(0, ${elapsed}, 'ru-RU')`)).toBe(ru);
+    }
+    expect(h.run("formatBatteryAge(1000, 0, 'en-US')")).toBe('0 seconds ago');
+    expect(h.run('formatBatteryAge(null)')).toBe('');
+  });
+
+  it('updates battery age without fetching new battery data', async () => {
+    const h = harness();
+    h.context.fetchData.mockResolvedValue({ available: true, percentage: 80, state: 'discharging', checkedAt: 1000 });
+    await h.run('updateHostBattery()');
+    h.run('Date.now = () => 121000; updateHostBatteryAge()');
+    expect(h.element('hostBatteryTime').textContent).toContain('2 minutes ago');
+    expect(h.context.fetchData).toHaveBeenCalledTimes(1);
+  });
+
   it('places all five compact metrics in the header before the main content', () => {
     const html = readFileSync('src/web/dashboard.html', 'utf8');
     expect(html.match(/id="hostBatteryPanel"/g)).toHaveLength(1);
