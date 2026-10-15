@@ -33,12 +33,12 @@ function safeSetLocalStorage(key, value) {
 let lastConnectionConnected = null;
 
 function updateToggleOfflineText() {
-    const toggleText = document.getElementById('toggleOfflineText');
-    if (toggleText) {
-        toggleText.textContent = t(showOffline ? 'filters.all' : 'filters.online');
-        const button = document.getElementById('toggleOfflineBtn');
-        button?.setAttribute('aria-pressed', String(!showOffline));
-        if (button) button.title = t('filters.onlineHint');
+    for (const [id, all, key] of [['showOnlineStreamersBtn', false, 'filters.online'], ['showAllStreamersBtn', true, 'filters.all']]) {
+        const button = document.getElementById(id);
+        if (!button) continue;
+        button.textContent = t(key);
+        button.disabled = showOffline === all;
+        button.setAttribute('aria-pressed', String(showOffline === all));
     }
 }
 
@@ -3578,7 +3578,7 @@ async function updateStatistics(options = {}) {
     if (selectedFavoriteCategoryFilterIds.size > 0) {
         filteredStats = filteredStats.filter((s) => streamerMatchesFavoriteCategoryFilters(s));
     }
-    if (!showOffline) {
+    if (!showOffline && !streamerSearchQuery.trim()) {
         filteredStats = filteredStats.filter(
             (s) => s.status === 'ONLINE' || isFavoriteStreamer(s.streamerName)
         );
@@ -4587,8 +4587,9 @@ function startAutoUpdate() {
     updateInterval = setInterval(updateAll, updateIntervalMs);
 }
 
-function toggleOfflineStreamers() {
-    showOffline = !showOffline;
+function setStreamerVisibility(all) {
+    if (showOffline === all) return;
+    showOffline = all;
     
     safeSetLocalStorage('showOffline', showOffline.toString());
     updateToggleOfflineText();
@@ -4797,16 +4798,14 @@ window.addEventListener('load', () => {
     }
     
     // Добавляем обработчик для кнопки переключения офлайн стримеров
-    const toggleBtn = document.getElementById('toggleOfflineBtn');
     document.getElementById('streamerSearchInput')?.addEventListener('input', (event) => {
         streamerSearchQuery = event.target.value;
         void updateStatistics({ skipFetch: true });
     });
     document.getElementById('resetStreamerFilters')?.addEventListener('click', resetStreamerFilters);
     document.getElementById('retryStreamerLoad')?.addEventListener('click', () => updateStatistics());
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', toggleOfflineStreamers);
-    }
+    document.getElementById('showOnlineStreamersBtn')?.addEventListener('click', () => setStreamerVisibility(false));
+    document.getElementById('showAllStreamersBtn')?.addEventListener('click', () => setStreamerVisibility(true));
     
     // Добавляем обработчики для кнопок интервала обновления
     document.querySelectorAll('.interval-btn').forEach(btn => {

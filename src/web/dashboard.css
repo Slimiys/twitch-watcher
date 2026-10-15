@@ -3602,6 +3602,8 @@ tr.is-favorite-streamer:hover {
 .header-metrics .stat-card h3, .metric-heading { font-size: 11px; font-weight: 500; line-height: 16px; color: #adadb8; text-transform: uppercase; margin: 0 0 6px; }
 .metric-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; }
 .metric-heading time { font-size: 10px; text-align: right; text-transform: none; font-variant-numeric: tabular-nums; }
+.streamer-visibility-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.streamer-visibility-buttons .toggle-btn:disabled { background: #9147ff; border-color: #9147ff; color: #fff; opacity: 1; cursor: default; }
 .header-metrics .stat-card .value, .header-metrics #lastActivity, .host-battery-value { font-size: 16px; line-height: 22px; font-weight: 600; color: #efeff1; overflow-wrap: anywhere; }
 .header-metrics .stat-card-content { padding: 0; }
 .host-battery-value { display: flex; align-items: center; gap: 6px; }

@@ -35,6 +35,40 @@ function harness() {
 }
 
 describe('streamer toolbar and loading state', () => {
+  it('searches offline non-favorites in online mode and restores visibility when cleared', async () => {
+    const h = harness();
+    h.context.cachedStatisticsRows = [
+      { streamerName: 'matchOffline', status: 'OFFLINE' },
+      { streamerName: 'matchOnline', status: 'ONLINE' },
+      { streamerName: 'favorite', status: 'OFFLINE' },
+    ];
+    h.run("showOffline = false; streamerSearchQuery = ' MATCH '");
+    await h.run('updateStatistics({skipFetch:true})');
+    expect(h.context.sortTableData.mock.calls.at(-1)[0].map((s: any) => s.streamerName)).toEqual(['matchOffline', 'matchOnline']);
+    expect(h.run('showOffline')).toBe(false);
+    h.run("streamerSearchQuery = '   '");
+    await h.run('updateStatistics({skipFetch:true})');
+    expect(h.context.sortTableData.mock.calls.at(-1)[0].map((s: any) => s.streamerName)).toEqual(['matchOnline', 'favorite']);
+  });
+
+  it('disables only the selected visibility button and persists explicit selections', () => {
+    const h = harness();
+    runInContext(source.slice(source.indexOf('function updateToggleOfflineText()'), source.indexOf('function getTableColumnLabel')), h.context);
+    runInContext(source.slice(source.indexOf('function setStreamerVisibility('), source.indexOf('function exportLogs(')), h.context);
+    h.context.updateStatistics = vi.fn();
+    h.run('updateToggleOfflineText()');
+    expect(h.element('showAllStreamersBtn').disabled).toBe(true);
+    expect(h.element('showOnlineStreamersBtn').disabled).toBe(false);
+    h.run('setStreamerVisibility(false)');
+    expect(h.element('showOnlineStreamersBtn').disabled).toBe(true);
+    expect(h.element('showAllStreamersBtn').disabled).toBe(false);
+    expect(h.context.safeSetLocalStorage).toHaveBeenCalledWith('showOffline', 'false');
+    h.run('setStreamerVisibility(false)');
+    expect(h.context.updateStatistics).toHaveBeenCalledTimes(1);
+    h.run('setStreamerVisibility(true)');
+    expect(h.element('showAllStreamersBtn').disabled).toBe(true);
+  });
+
   it('combines search, selected category and visibility while retaining offline favorites', async () => {
     const h = harness();
     h.context.cachedStatisticsRows = [
