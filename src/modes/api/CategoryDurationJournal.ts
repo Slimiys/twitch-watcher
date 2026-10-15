@@ -6,6 +6,8 @@ export interface PendingCategoryDuration {
   username: string;
   category: string;
   durationMs: number;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 /** Write-ahead queue. Never overwrite an unreadable journal with an empty queue. */
@@ -27,6 +29,11 @@ export class CategoryDurationJournal {
         throw new Error('Invalid category duration journal segment');
       }
       ids.add(entry.id);
+      if ((entry.startedAt !== undefined || entry.endedAt !== undefined) &&
+          (!Number.isSafeInteger(entry.startedAt) || !Number.isSafeInteger(entry.endedAt) ||
+           entry.startedAt < 0 || entry.endedAt - entry.startedAt !== entry.durationMs)) {
+        throw new Error('Invalid category duration interval');
+      }
     }
     return data.segments;
   }

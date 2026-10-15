@@ -46,6 +46,7 @@ import {
 import { readCategoryStreamStatsForApi, resetCategoryStreamStatsForApi } from './categoryStreamStatsApi';
 import { StreamWatcher } from '../modes/api/StreamWatcher';
 import { readHostBattery } from './hostBattery';
+import { comparisonPeriodStart } from './comparisonPeriod';
 
 /**
  * Интерфейс для провайдера данных статистики
@@ -827,14 +828,26 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/streamer-comparison', (_req: Request, res: Response) => {
+    this.app.get('/api/streamer-comparison', (req: Request, res: Response) => {
       try {
         const watcher = this.statisticsProvider as StreamWatcher | null;
         if (!watcher?.getCategoryStreamDurationTotalsForDashboard) {
           res.status(503).json({ error: 'Statistics unavailable' });
           return;
         }
-        res.json({ categories: watcher.getCategoryStreamDurationTotalsForDashboard(true) });
+        const period = String(req.query.period || 'all');
+        const now = Date.now();
+        const since = comparisonPeriodStart(period, now);
+        if (since === null) {
+          res.status(400).json({ error: 'Invalid comparison period' });
+          return;
+        }
+        const db = watcher.getDatabaseStorage();
+        if (!db?.isReady()) { res.status(503).json({ error: 'Database unavailable' }); return; }
+        const dated = db.getComparisonIntervals(since, now);
+        const allCategories = watcher.getCategoryStreamDurationTotalsForDashboard(true);
+        res.json({ ...dated, categories: period === 'all' ? allCategories : dated.categories,
+          names: [...new Set(allCategories.flatMap(c => (c.streamers || []).map(s => s.streamerName)))], period });
       } catch {
         res.status(500).json({ error: 'Failed to load comparison' });
       }

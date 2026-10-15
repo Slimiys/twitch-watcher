@@ -2113,7 +2113,7 @@ export class StreamWatcher {
 
     const durationMs = untilMs - active.since;
     if (durationMs > 0) {
-      this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs });
+      this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs, startedAt: active.since, endedAt: untilMs });
     }
 
     this.activeCategoryWatch.delete(username);
@@ -2126,7 +2126,7 @@ export class StreamWatcher {
     if (!this.databaseStorage?.isReady()) return;
     this.pendingCategoryDurations = this.pendingCategoryDurations.filter(
       (segment) => !this.databaseStorage!.addCategoryStreamDuration(
-        segment.username, segment.category, segment.durationMs, segment.id
+        segment.username, segment.category, segment.durationMs, segment.id, segment.startedAt, segment.endedAt
       )
     );
     this.savePendingCategoryDurations();
@@ -2157,7 +2157,7 @@ export class StreamWatcher {
       return;
     }
 
-    this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs });
+    this.pendingCategoryDurations.push({ id: randomUUID(), username, category: active.category, durationMs, startedAt: active.since, endedAt: untilMs });
     active.since = untilMs;
     this.retryPendingCategoryDurations();
   }

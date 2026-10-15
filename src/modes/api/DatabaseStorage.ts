@@ -317,6 +317,12 @@ export class DatabaseStorage {
 
     // Journal IDs are committed together with totals, making crash recovery idempotent.
     this.db.exec('CREATE TABLE IF NOT EXISTS category_duration_receipts (id TEXT PRIMARY KEY)');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS category_duration_intervals (
+      streamer_id INTEGER NOT NULL, category TEXT NOT NULL,
+      started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
+      session_id INTEGER,
+      FOREIGN KEY (streamer_id) REFERENCES streamers(id) ON DELETE CASCADE
+    ); CREATE INDEX IF NOT EXISTS idx_category_intervals_end ON category_duration_intervals(ended_at);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS category_changes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL, from_category TEXT NOT NULL,
@@ -800,7 +806,7 @@ export class DatabaseStorage {
   /**
    * Добавляет время стрима к суммарной статистике категории и стримера
    */
-  addCategoryStreamDuration(username: string, category: string, durationMs: number, segmentId?: string): boolean {
+  addCategoryStreamDuration(username: string, category: string, durationMs: number, segmentId?: string, startedAt?: number, endedAt?: number): boolean {
     const normalizedUsername = username?.trim();
     const normalizedCategory = category?.trim();
     const delta = Math.floor(durationMs);
@@ -825,6 +831,17 @@ export class DatabaseStorage {
       }
       const streamerId = this.getOrCreateStreamer(normalizedUsername);
       const now = Date.now();
+
+      // Legacy journal entries have no dates: preserve totals without inventing history.
+      if (Number.isSafeInteger(startedAt) && Number.isSafeInteger(endedAt) &&
+          startedAt! >= 0 && endedAt! - startedAt! === delta) {
+        const interval = this.db!.prepare(`INSERT INTO category_duration_intervals
+          (streamer_id, category, started_at, ended_at, session_id)
+          VALUES (?, ?, ?, ?, (SELECT id FROM stream_sessions WHERE streamer_id = ? AND started_at <= ? ORDER BY started_at DESC LIMIT 1))`);
+        interval.bind([streamerId, normalizedCategory, startedAt!, endedAt!, streamerId, startedAt!]);
+        interval.step();
+        interval.free();
+      }
 
       const categoryStmt = this.db!.prepare(`
         INSERT INTO category_stream_duration_totals (category, duration_ms, updated_at)
@@ -854,6 +871,38 @@ export class DatabaseStorage {
   /**
    * Возвращает время стримов по стримерам для одной категории
    */
+  getComparisonIntervals(since: number, until = Date.now()) {
+    if (!this.db || !isDatabaseAvailable) throw new Error('Database unavailable');
+    const categories = new Map<string, { category: string; streamers: { streamerName: string; durationMs: number }[] }>();
+    const summaries = new Map<string, { streamerName: string; durationMs: number; sessions: Set<number>; sessionDurationMs: number }>();
+    const stmt = this.db.prepare(`SELECT s.username, i.category, i.session_id,
+      SUM(MIN(i.ended_at, ?) - MAX(i.started_at, ?)) AS duration
+      FROM category_duration_intervals i JOIN streamers s ON s.id = i.streamer_id
+      WHERE i.ended_at > ? AND i.started_at < ?
+      GROUP BY s.username, i.category, i.session_id`);
+    stmt.bind([until, since, since, until]);
+    try {
+      while (stmt.step()) {
+        const row = stmt.getAsObject();
+        const name = String(row.username), category = String(row.category), durationMs = Number(row.duration);
+        if (!categories.has(category)) categories.set(category, { category, streamers: [] });
+        categories.get(category)!.streamers.push({ streamerName: name, durationMs });
+        if (!summaries.has(name)) summaries.set(name, { streamerName: name, durationMs: 0, sessions: new Set(), sessionDurationMs: 0 });
+        const summary = summaries.get(name)!;
+        summary.durationMs += durationMs;
+        if (row.session_id != null) {
+          summary.sessions.add(Number(row.session_id));
+          summary.sessionDurationMs += durationMs;
+        }
+      }
+    } finally { stmt.free(); }
+    return {
+      categories: [...categories.values()],
+      summaries: [...summaries.values()].map(s => ({ streamerName: s.streamerName, durationMs: s.durationMs,
+        streamCount: s.sessions.size, averageDurationMs: s.sessions.size ? s.sessionDurationMs / s.sessions.size : null })),
+    };
+  }
+
   getStreamerCategoryStreamDurations(category: string): StreamerCategoryStreamDurationEntry[] {
     const normalizedCategory = category?.trim();
     const result: StreamerCategoryStreamDurationEntry[] = [];
@@ -1043,6 +1092,7 @@ export class DatabaseStorage {
       this.db!.exec(`
         DELETE FROM streamer_category_stream_duration_totals;
         DELETE FROM category_stream_duration_totals;
+        DELETE FROM category_duration_intervals;
       `);
     });
   }

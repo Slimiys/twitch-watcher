@@ -1,6 +1,11 @@
 /* Category history, streamer comparison and a plain-language bot activity summary. */
 let insightHistory = [];
 let insightCategories = [];
+let insightNames = [];
+let insightSummaries = [];
+let comparisonPeriod = 'all';
+let comparisonMode = 'duration';
+let comparisonSort = 'total';
 let insightHistoryFailed = false;
 let insightComparisonFailed = false;
 let insightRequest = 0;
@@ -75,7 +80,7 @@ function renderBotActivity(health = insightHealth, initialization = insightIniti
         <span>${escapeHtml(t(`activity.${state}Hint`, { count: health?.activeWatchCount || 0 }))}</span>`;
 }
 
-function buildStreamerComparison(categories, names) {
+function buildStreamerComparison(categories, names, sort = comparisonSort) {
     const totals = names.map(() => 0);
     const rows = categories.map(category => {
         const durations = names.map((name, index) => {
@@ -86,7 +91,8 @@ function buildStreamerComparison(categories, names) {
         });
         return { category: category.category, durations };
     }).filter(row => row.durations.some(ms => ms > 0));
-    rows.sort((a, b) => b.durations.reduce((x, y) => x + y, 0) - a.durations.reduce((x, y) => x + y, 0));
+    const score = row => sort === 'difference' ? Math.max(...row.durations) - Math.min(...row.durations) : row.durations.reduce((x, y) => x + y, 0);
+    rows.sort((a, b) => (sort === 'name' ? 0 : score(b) - score(a)) || a.category.localeCompare(b.category, getNumberLocale()));
     return { rows, totals };
 }
 
@@ -98,7 +104,7 @@ function renderStreamerComparison() {
     const options = document.getElementById('comparisonOptions');
     const wrap = document.getElementById('streamerComparisonTable');
     if (!options || !wrap) return;
-    const names = [...new Set(insightCategories.flatMap(c => (c.streamers || []).map(s => s.streamerName)))].sort();
+    const names = [...new Set([...insightNames, ...insightCategories.flatMap(c => (c.streamers || []).map(s => s.streamerName))])].sort();
     for (const name of insightSelection) if (!names.includes(name)) insightSelection.delete(name);
     const key = JSON.stringify([names, [...insightSelection]]);
     if (key !== insightOptionsKey) {
@@ -114,10 +120,20 @@ function renderStreamerComparison() {
     }
     const selected = [...insightSelection];
     const { rows, totals } = buildStreamerComparison(insightCategories, selected);
-    wrap.innerHTML = `<table class="insight-table"><caption>${escapeHtml(t('insights.comparisonCaption'))}</caption>
+    const value = (ms, index) => comparisonMode === 'percent'
+        ? `${(totals[index] ? ms / totals[index] * 100 : 0).toLocaleString(getNumberLocale(), { maximumFractionDigits: 1 })}%`
+        : formatComparisonDuration(ms);
+    const summary = selected.map((name, index) => {
+        const data = insightSummaries.find(s => s.streamerName === name);
+        return `<div class="comparison-summary-card"><strong>${escapeHtml(name)}</strong>
+          <span>${escapeHtml(t('insights.airtime'))}: ${escapeHtml(formatComparisonDuration(totals[index]))}</span>
+          <span>${escapeHtml(t('insights.streamCount'))}: ${data ? data.streamCount : '—'}</span>
+          <span>${escapeHtml(t('insights.average'))}: ${escapeHtml(data?.averageDurationMs != null ? formatComparisonDuration(data.averageDurationMs) : '—')}</span></div>`;
+    }).join('');
+    wrap.innerHTML = `<div class="comparison-summary">${summary}</div><table class="insight-table"><caption>${escapeHtml(t('insights.comparisonCaption'))}</caption>
         <thead><tr><th scope="col">${escapeHtml(t('insights.category'))}</th>${selected.map(n => `<th scope="col">${escapeHtml(n)}</th>`).join('')}</tr></thead>
-        <tbody>${rows.map(row => `<tr><th scope="row">${escapeHtml(row.category)}</th>${row.durations.map(ms => `<td>${escapeHtml(ms > 0 ? formatComparisonDuration(ms) : '—')}</td>`).join('')}</tr>`).join('')}</tbody>
-        <tfoot><tr><th scope="row">${escapeHtml(t('insights.total'))}</th>${totals.map(ms => `<td>${escapeHtml(formatComparisonDuration(ms))}</td>`).join('')}</tr></tfoot></table>`;
+        <tbody>${rows.map(row => `<tr><th scope="row">${escapeHtml(row.category)}</th>${row.durations.map((ms, index) => `<td${ms > 0 && ms === Math.max(...row.durations) ? ` class="comparison-leader" title="${escapeHtml(t('insights.leader'))}"` : ''}>${escapeHtml(ms > 0 ? value(ms, index) : '—')}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tfoot><tr><th scope="row">${escapeHtml(t('insights.total'))}</th>${totals.map((ms, index) => `<td>${escapeHtml(value(ms, index))}</td>`).join('')}</tr></tfoot></table>`;
 }
 
 function renderCategoryHistory() {
@@ -139,24 +155,37 @@ function renderCategoryHistory() {
 
 async function updateDashboardInsights() {
     const request = ++insightRequest;
-    const [history, comparison] = await Promise.all([fetchData('/category-changes'), fetchData('/streamer-comparison')]);
+    const [history, comparison] = await Promise.all([fetchData('/category-changes'), fetchData(comparisonPeriod === 'all' ? '/streamer-comparison' : `/streamer-comparison?period=${comparisonPeriod}`)]);
     if (request !== insightRequest) return;
     insightHistoryFailed = !Array.isArray(history?.changes);
     insightComparisonFailed = !Array.isArray(comparison?.categories);
     if (!insightHistoryFailed) insightHistory = history.changes;
-    if (!insightComparisonFailed) insightCategories = comparison.categories;
+    if (!insightComparisonFailed) {
+        insightCategories = comparison.categories;
+        insightNames = comparison.names || [];
+        insightSummaries = comparison.summaries || [];
+    }
     renderCategoryHistory();
     renderStreamerComparison();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('comparisonPeriod')?.addEventListener('change', event => {
+        comparisonPeriod = event.target.value;
+        insightCategories = []; insightSummaries = [];
+        // Do not display the previous period's numbers while the next request is pending.
+        document.getElementById('streamerComparisonTable').textContent = t('catStats.loading');
+        void updateDashboardInsights();
+    });
+    document.getElementById('comparisonMode')?.addEventListener('change', event => { comparisonMode = event.target.value; renderStreamerComparison(); });
+    document.getElementById('comparisonSort')?.addEventListener('change', event => { comparisonSort = event.target.value; renderStreamerComparison(); });
     document.getElementById('comparisonOptions')?.addEventListener('change', event => {
         const input = event.target;
         if (input.type !== 'checkbox') return;
         if (input.checked && insightSelection.size < 4) insightSelection.add(input.value);
         else insightSelection.delete(input.value);
         // Preserve keyboard focus: do not recreate options on selection changes.
-        const names = [...new Set(insightCategories.flatMap(c => (c.streamers || []).map(s => s.streamerName)))].sort();
+        const names = [...new Set([...insightNames, ...insightCategories.flatMap(c => (c.streamers || []).map(s => s.streamerName))])].sort();
         insightOptionsKey = JSON.stringify([names, [...insightSelection]]);
         renderStreamerComparison();
     });

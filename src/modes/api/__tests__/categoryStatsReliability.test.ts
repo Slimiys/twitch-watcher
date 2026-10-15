@@ -32,6 +32,23 @@ describe('category statistics persistence', () => {
     expect(storage.getCategoryStreamDurationTotals()[0].durationMs).toBe(60_000);
   });
 
+  it('clips dated intervals, deduplicates retries and excludes legacy totals from periods', async () => {
+    storage.recordStreamSession('a', 1000, 'broadcast-a');
+    expect(storage.addCategoryStreamDuration('a', 'Old', 60000, 'legacy')).toBe(true);
+    expect(storage.addCategoryStreamDuration('a', 'Game', 2000, 'dated', 1000, 3000)).toBe(true);
+    expect(storage.addCategoryStreamDuration('a', 'Game', 2000, 'dated', 1000, 3000)).toBe(true);
+    expect(storage.addCategoryStreamDuration('a', 'Game 2', 1000, 'dated-2', 3000, 4000)).toBe(true);
+    const result = storage.getComparisonIntervals(2000, 3500);
+    expect(result.categories.map(c => [c.category, c.streamers[0].durationMs])).toEqual([['Game', 1000], ['Game 2', 500]]);
+    expect(result.summaries[0]).toMatchObject({ durationMs: 1500, streamCount: 1, averageDurationMs: 1500 });
+    storage.close();
+    storage = new DatabaseStorage({ dbPath: path.join(dir, 'stats.db'), autoBackup: false });
+    await vi.waitFor(() => expect(storage.isReady()).toBe(true));
+    expect(storage.getComparisonIntervals(0, 5000).summaries[0].durationMs).toBe(3000);
+    storage.clearCategoryStreamDurationStats();
+    expect(storage.getComparisonIntervals(0, 5000).categories).toEqual([]);
+  });
+
   it('persists ordered category transitions, including returns to an earlier game', async () => {
     expect(storage.recordCategoryChange('a', 'Path of Exile', 'Path of Exile 2', 100)).toBe(true);
     expect(storage.recordCategoryChange('a', 'Path of Exile 2', 'Path of Exile', 200)).toBe(true);
@@ -126,7 +143,7 @@ describe('category duration retries', () => {
     expect(w.categoryDurationJournal.save).toHaveBeenCalled();
     w.databaseStorage.addCategoryStreamDuration.mockReturnValue(true);
     w.checkpointCategoryDurationWatch('a', 3000);
-    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenLastCalledWith('a', 'Path of Exile', 1000, expect.any(String));
+    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenLastCalledWith('a', 'Path of Exile', 1000, expect.any(String), 2000, 3000);
     expect(w.pendingCategoryDurations).toHaveLength(0);
     expect(w.activeCategoryWatch.get('a').since).toBe(3000);
   });
@@ -149,12 +166,12 @@ describe('category duration retries', () => {
     const w = watcher();
     w.flushCategoryDurationWatch('a', 2000);
     expect(w.activeCategoryWatch.size).toBe(0);
-    expect(w.pendingCategoryDurations).toEqual([{ id: expect.any(String), username: 'a', category: 'Path of Exile', durationMs: 1000 }]);
+    expect(w.pendingCategoryDurations).toEqual([{ id: expect.any(String), username: 'a', category: 'Path of Exile', durationMs: 1000, startedAt: 1000, endedAt: 2000 }]);
     w.activeCategoryWatch.set('a', { category: 'Path of Exile 2', categoryId: '2', since: 2000 });
     w.databaseStorage.addCategoryStreamDuration.mockReturnValue(true);
     w.checkpointCategoryDurationWatches(4000);
-    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenCalledWith('a', 'Path of Exile', 1000, expect.any(String));
-    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenLastCalledWith('a', 'Path of Exile 2', 2000, expect.any(String));
+    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenCalledWith('a', 'Path of Exile', 1000, expect.any(String), 1000, 2000);
+    expect(w.databaseStorage.addCategoryStreamDuration).toHaveBeenLastCalledWith('a', 'Path of Exile 2', 2000, expect.any(String), 2000, 4000);
     expect(w.pendingCategoryDurations).toEqual([]);
   });
 

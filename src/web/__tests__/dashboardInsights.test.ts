@@ -117,4 +117,21 @@ describe('dashboard insights', () => {
     h.run('renderCategoryHistory()');
     expect(h.element('categoryHistoryTable').innerHTML).toContain('filters.noMatches');
   });
+
+  it('sorts by name and difference and renders percentage shares and tied leaders', () => {
+    const h = harness();
+    h.run(`insightCategories = [
+      { category: 'B', streamers: [{streamerName:'a',durationMs:60000},{streamerName:'b',durationMs:60000}] },
+      { category: 'A', streamers: [{streamerName:'a',durationMs:180000}] }
+    ]; insightSelection = new Set(['a','b']); comparisonMode = 'percent';`);
+    expect(h.run("buildStreamerComparison(insightCategories, ['a','b'], 'name').rows[0].category")).toBe('A');
+    expect(h.run("buildStreamerComparison(insightCategories, ['a','b'], 'difference').rows[0].category")).toBe('A');
+    h.run('renderStreamerComparison()');
+    const html = h.element('streamerComparisonTable').innerHTML;
+    expect(html).toContain('75%');
+    expect(html).toContain('25%');
+    expect(html.match(/class="comparison-leader"/g)).toHaveLength(3);
+    expect(html).toContain('comparison-summary-card');
+    expect(html).not.toContain('NaN');
+  });
 });
